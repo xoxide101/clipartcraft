@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ClipArtCraft</title>
+<link rel="stylesheet" href="fonts/fonts.css">
+<link rel="stylesheet" href="css/clipartcraft.css">
+</head>
+<body>
+<div class="app" id="app">
+  <main class="work">
+    <aside class="side left" aria-label="Categories">
+      <div class="pad"><input class="input" id="search" type="search" placeholder="Search names and tags…" aria-label="Search the library"></div>
+      <nav class="cats" id="cats" aria-label="Categories"></nav>
+    </aside>
+    <section class="desk" id="desk" aria-label="The library">
+      <div class="grid" id="grid" role="listbox" aria-multiselectable="true" aria-label="Clip art"></div>
+      <div class="start" id="start" hidden></div>
+      <div class="drop" id="drop" hidden>Drop pictures, SVGs or a library ZIP to add them</div>
+    </section>
+    <aside class="side right" id="details" aria-label="Details"></aside>
+  </main>
+  <footer class="statusbar" id="status"></footer>
+</div>
+<div class="toast" id="toast" hidden></div>
+<script src="js/craft-titlebar.js"></script>
+<script src="js/library.js"></script>
+<script src="js/ui.js"></script>
+</body>
+</html>
