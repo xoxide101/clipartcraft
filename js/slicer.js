@@ -66,27 +66,56 @@
     const W = img.width, H = img.height, x0 = Math.max(0, item.x - pad), y0 = Math.max(0, item.y - pad), x1 = Math.min(W, item.x + item.w + pad), y1 = Math.min(H, item.y + item.h + pad), w = x1 - x0, h = y1 - y0;
     let o = new ImageData(w, h); const bg = sheet.bg, solid = new Uint8Array(w * h), out = new Uint8Array(w * h), st = new Int32Array(w * h); let top = 0;
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const p = (y0 + y) * W + x0 + x, i = p * 4, q = (y * w + x) * 4; o.data[q] = img.data[i]; o.data[q + 1] = img.data[i + 1]; o.data[q + 2] = img.data[i + 2]; o.data[q + 3] = img.data[i + 3]; solid[y * w + x] = sheet.lab[p] === item.id && sheet.m[p] ? 1 : 0; }
-    if (!see) { for (let k = 0; k < w * h; k++) if (!solid[k] && sheet.lab[(y0 + ((k / w) | 0)) * W + x0 + (k % w)] !== item.id) { o.data[k * 4] = bg[0]; o.data[k * 4 + 1] = bg[1]; o.data[k * 4 + 2] = bg[2]; } return o; }
+    if (!see) { for (let k = 0; k < w * h; k++) if (!solid[k] && sheet.lab[(y0 + ((k / w) | 0)) * W + x0 + (k % w)] !== item.id) { o.data[k * 4] = bg[0]; o.data[k * 4 + 1] = bg[1]; o.data[k * 4 + 2] = bg[2]; } o.at = { x: x0, y: y0, w, h }; return o; }
     const push = (k) => { if (!solid[k] && !out[k]) { out[k] = 1; st[top++] = k; } };
     for (let x = 0; x < w; x++) { push(x); push((h - 1) * w + x); } for (let y = 0; y < h; y++) { push(y * w); push(y * w + w - 1); }
     while (top) { const k = st[--top], x = k % w, y = (k / w) | 0; if (x > 0) push(k - 1); if (x < w - 1) push(k + 1); if (y > 0) push(k - w); if (y < h - 1) push(k + w); }
     for (let k = 0; k < w * h; k++) if (out[k]) o.data[k * 4 + 3] = 0;
     if (!sheet.clear) o = defringe(o, bg, { reach: 2 });
-    return o;
+    o.at = { x: x0, y: y0, w, h }; return o;
   }
-  // a grid montage: rows × columns of equal cells, an even margin taken off each cell (borders and gutters)
-  function gridCells(img, { rows = 3, cols = 3, inset = 0 } = {}) {
-    const out = [], cw = img.width / cols, ch = img.height / rows;
-    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) { const x = Math.round(c * cw + inset), y = Math.round(r * ch + inset), x1 = Math.round((c + 1) * cw - inset), y1 = Math.round((r + 1) * ch - inset); if (x1 - x > 2 && y1 - y > 2) out.push({ x, y, w: x1 - x, h: y1 - y }); }
+  // the part of the sheet that is not plain margin (the corner colour all round)
+  function contentBox(img, tolerance = 40) {
+    const W = img.width, H = img.height, d = img.data, bg = cornerBg(img), off = (x, y) => { const i = (y * W + x) * 4; return Math.abs(d[i] - bg[0]) + Math.abs(d[i + 1] - bg[1]) + Math.abs(d[i + 2] - bg[2]) > tolerance; };
+    let x0 = W, y0 = H, x1 = -1, y1 = -1; for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (off(x, y)) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    return x1 < 0 ? { x: 0, y: 0, w: W, h: H } : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+  }
+  // a grid montage: rows × columns of equal cells over the sheet (its plain margins left off), an even margin taken off
+  // each cell (borders and gutters)
+  function gridCells(img, { rows = 3, cols = 3, inset = 0, margins = true } = {}) {
+    const a = margins ? contentBox(img) : { x: 0, y: 0, w: img.width, h: img.height }, out = [], cw = a.w / cols, ch = a.h / rows;
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) { const x = Math.round(a.x + c * cw + inset), y = Math.round(a.y + r * ch + inset), x1 = Math.round(a.x + (c + 1) * cw - inset), y1 = Math.round(a.y + (r + 1) * ch - inset); if (x1 - x > 2 && y1 - y > 2) out.push({ x, y, w: x1 - x, h: y1 - y }); }
     return out;
   }
   // one grid cell: as it is, or its picture found in it and cut out (everything in the cell kept together)
   function gridItem(img, cell, { cut = true, pad = 6 } = {}) {
-    const c = cropOf(img, cell.x, cell.y, cell.w, cell.h); if (!cut) return c;
+    const c = cropOf(img, cell.x, cell.y, cell.w, cell.h); c.at = { ...cell }; if (!cut) return c;
     const sh = splitSheet(c, { gap: Math.max(c.width, c.height), min: 0.002 }); if (!sh.items.length) return c;
     const keep = new Set(sh.items.map((i) => i.id)), x0 = Math.min(...sh.items.map((i) => i.x)), y0 = Math.min(...sh.items.map((i) => i.y)), x1 = Math.max(...sh.items.map((i) => i.x + i.w)), y1 = Math.max(...sh.items.map((i) => i.y + i.h));
     for (let p = 0; p < sh.lab.length; p++) if (keep.has(sh.lab[p])) sh.lab[p] = 1;
-    return sheetItem(c, sh, { id: 1, x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, { pad, see: true });
+    const o = sheetItem(c, sh, { id: 1, x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, { pad, see: true }); o.at = { x: cell.x + o.at.x, y: cell.y + o.at.y, w: o.at.w, h: o.at.h }; return o;
+  }
+  // An SVG sheet: each picture cut out of the drawing itself (exact, not traced). The SVG keeps only the shapes that
+  // reach into the picture's box, leaves out the sheet's background (shapes covering half the sheet or more), and its
+  // viewBox is the box. `at` is the box in the pixels of the picture the sheet was drawn as (W × H).
+  function svgCut(src, at) {
+    const host = document.createElement('div'); host.style.cssText = 'position:fixed;left:-100000px;top:0;width:1px;height:1px;overflow:hidden;pointer-events:none';
+    host.innerHTML = src.text; const root = host.querySelector('svg'); document.body.append(host);
+    try {
+      const vb = src.vb, kx = vb.w / src.W, ky = vb.h / src.H, ux = vb.x + at.x * kx, uy = vb.y + at.y * ky, uw = at.w * kx, uh = at.h * ky, big = vb.w * vb.h * 0.5;
+      root.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`); root.setAttribute('width', src.W); root.setAttribute('height', src.H); root.setAttribute('preserveAspectRatio', 'none');
+      const toRoot = root.getScreenCTM().inverse(), gone = [];
+      for (const e of root.querySelectorAll('path, rect, circle, ellipse, line, polyline, polygon, text, image, use')) {
+        if (e.parentElement.closest('defs, clipPath, mask, pattern, symbol, marker')) continue;
+        let b; try { b = e.getBBox(); } catch (err) { continue; } const sm = e.getScreenCTM(); if (!sm) continue; const m = toRoot.multiply(sm);
+        const pts = [[b.x, b.y], [b.x + b.width, b.y], [b.x, b.y + b.height], [b.x + b.width, b.y + b.height]].map(([x, y]) => [m.a * x + m.c * y + m.e, m.b * x + m.d * y + m.f]);
+        const X0 = Math.min(...pts.map((q) => q[0])), X1 = Math.max(...pts.map((q) => q[0])), Y0 = Math.min(...pts.map((q) => q[1])), Y1 = Math.max(...pts.map((q) => q[1]));
+        const meets = X1 >= ux && X0 <= ux + uw && Y1 >= uy && Y0 <= uy + uh; if (!meets || (X1 - X0) * (Y1 - Y0) >= big) gone.push(e);
+      }
+      gone.forEach((e) => e.remove());
+      root.setAttribute('viewBox', `${+ux.toFixed(3)} ${+uy.toFixed(3)} ${+uw.toFixed(3)} ${+uh.toFixed(3)}`); root.setAttribute('width', at.w); root.setAttribute('height', at.h); root.removeAttribute('preserveAspectRatio');
+      return new XMLSerializer().serializeToString(root);
+    } finally { host.remove(); }
   }
 
   // ------------------------------------------------------------------ the slicer window
@@ -97,7 +126,18 @@
   const nameList = () => String(S.names || '').split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean);
   const safe = (s) => s.replace(/[\\/:*?"<>|]+/g, '-').trim();
 
+  // an SVG sheet is drawn as a picture (its longer side at least 2,000 pixels) to find the pictures; its text is kept
+  let svgSheet = null;
   async function readSheet(file) {
+    svgSheet = null;
+    if (/\.svg$/i.test(file.name) || file.type === 'image/svg+xml') {
+      const text = await file.text(), doc = new DOMParser().parseFromString(text, 'image/svg+xml'), root = doc.documentElement; if (root.nodeName !== 'svg') throw new Error('Not an SVG');
+      let v = (root.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number); if (v.length !== 4 || v.some((n) => !isFinite(n)) || !v[2] || !v[3]) v = [0, 0, parseFloat(root.getAttribute('width')) || 1000, parseFloat(root.getAttribute('height')) || 1000];
+      const k = Math.min(4000, Math.max(2000, v[2], v[3])) / Math.max(v[2], v[3]), W = Math.round(v[2] * k), H = Math.round(v[3] * k);
+      root.setAttribute('viewBox', v.join(' ')); root.setAttribute('width', W); root.setAttribute('height', H); root.setAttribute('preserveAspectRatio', 'none');
+      const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(root)], { type: 'image/svg+xml' }));
+      try { const i = new Image(); i.src = url; await i.decode(); const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(i, 0, 0, W, H); svgSheet = { text, vb: { x: v[0], y: v[1], w: v[2], h: v[3] }, W, H }; return x.getImageData(0, 0, W, H); } finally { URL.revokeObjectURL(url); }
+    }
     const url = URL.createObjectURL(file); try { const i = new Image(); i.src = url; await i.decode(); const c = document.createElement('canvas'); c.width = i.naturalWidth; c.height = i.naturalHeight; const k = c.getContext('2d', { willReadFrequently: true }); k.drawImage(i, 0, 0); return k.getImageData(0, 0, c.width, c.height); } finally { URL.revokeObjectURL(url); }
   }
   function field(label, html) { return `<label class="field"><span>${label}</span>${html}</label>`; }
@@ -121,7 +161,7 @@
         ${S.cut ? field('Room round each (pixels)', num('pad', 0, 80)) : ''}`}
       <div class="field"><span>Names, in order <small class="hint">(one per line or with commas)</small></span><textarea class="input" rows="4" data-k="names" placeholder="Barn, Bible, Buffalo…">${esc(S.names)}</textarea></div>
       ${field('Category', `<input class="input" data-k="category" list="sl-cats" value="${esc(S.category)}" placeholder="${esc(sheetName || 'Americana, Buildings…')}"><datalist id="sl-cats">${cats}</datalist>`)}
-      ${chk('svg', 'Also make an SVG of each (traced)')}
+      <p class="hint">Each picture is added as PNG and SVG: ${svgSheet ? 'this sheet is an SVG, so each is cut out of the drawing itself' : 'the SVG is traced from the picture'}.</p>
       <p class="hint" id="sl-count"></p>
       <button class="btn primary wide" type="button" data-sl="add" ${sheet ? '' : 'disabled'}>Add to the library</button>
       <p class="hint">Click a box on the sheet to leave that picture out (or put it back).</p></div>`;
@@ -156,7 +196,8 @@
       onStep(n, nm); await wait(0);
       const img = S.mode === 'find' ? sheetItem(sheet, found, b.item, { pad: +S.pad, see: S.see }) : gridItem(sheet, b, { cut: S.cut, pad: +S.pad });
       const png = await new Promise((r) => canvasOf(img).toBlob(r, 'image/png')); let svg = null;
-      if (S.svg && window.CRAFT_RASTERTRACE) { try { svg = CRAFT_RASTERTRACE.traceImage(img, { profile: 'icon' }).svg; } catch (e) { console.warn('Tracing failed', nm, e); } }
+      if (svgSheet && img.at) { try { svg = svgCut(svgSheet, img.at); } catch (e) { console.warn('Cutting the SVG failed', nm, e); } }
+      if (!svg && window.CRAFT_RASTERTRACE) { try { svg = CRAFT_RASTERTRACE.traceImage(img, { profile: 'icon' }).svg; } catch (e) { console.warn('Tracing failed', nm, e); } }
       out.push({ name: nm, png, svg, img });
     }
     return out;
@@ -174,7 +215,7 @@
     if (!file) return; try { sheet = await readSheet(file); } catch (e) { opts.toast && opts.toast('That picture could not be read.'); return; }
     sheetName = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim(); skip.clear(); S.names = ''; S.category = ''; el.querySelector('.sl-empty').hidden = true; renderPanel(); find();
   }
-  function pickSheet() { return new Promise((ok) => { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.onchange = () => ok(i.files[0]); i.click(); }); }
+  function pickSheet() { return new Promise((ok) => { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*,.svg'; i.onchange = () => ok(i.files[0]); i.click(); }); }
   function build() {
     el = document.createElement('div'); el.className = 'slicer'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Montage Slicer');
     el.innerHTML = `<div class="sl-bar"><b>Montage Slicer</b><span class="hint">Cut a sheet of clip art into separate pictures for the library</span><span class="grow"></span><button class="btn outline" type="button" data-sl="close">Close</button></div>
@@ -200,5 +241,5 @@
     opts = o; if (!el) { build(); document.addEventListener('keydown', onKey); } el.hidden = false; renderPanel(); el.querySelector('.sl-empty').hidden = !!sheet; if (o.file) load(o.file); else if (sheet) find();
   }
   function close() { if (el) el.hidden = true; }
-  window.ClipArtSlicer = { open, close, splitSheet, sheetItem, gridCells, gridItem, state: () => ({ mode: S.mode, boxes: boxes.length, skipped: skip.size }) };
+  window.ClipArtSlicer = { open, close, splitSheet, sheetItem, gridCells, gridItem, svgCut, readSheet, state: () => ({ mode: S.mode, boxes: boxes.length, skipped: skip.size }) };
 })();
