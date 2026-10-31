@@ -13,7 +13,7 @@
 
   // ------------------------------------------------------------------ what is shown
   const cats = () => { const m = new Map(); items.forEach((it) => { const c = it.category || ''; m.set(c, (m.get(c) || 0) + 1); }); return [...m].sort((a, b) => (a[0] === '' ? 1 : b[0] === '' ? -1 : a[0].localeCompare(b[0]))); };
-  const shown = () => { const q = query.trim().toLowerCase(); return items.filter((it) => (cat === '*' || (it.category || '') === cat) && (!q || it.name.toLowerCase().includes(q) || (it.tags || []).some((t) => t.toLowerCase().includes(q)) || (it.category || '').toLowerCase().includes(q))).sort((a, b) => a.name.localeCompare(b.name)); };
+  const shown = () => { const q = query.trim().toLowerCase(); return items.filter((it) => (cat === '*' || (it.category || '') === cat) && (!q || it.name.toLowerCase().includes(q) || (it.tags || []).some((t) => t.toLowerCase().includes(q)) || (it.category || '').toLowerCase().includes(q))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })); };
   async function reload() { items = await L.all(); [...sel].forEach((id) => { if (!items.some((it) => it.id === id)) sel.delete(id); }); render(); }
   function render() {
     const C = cats(); $('cats').innerHTML = [['*', 'All clip art', items.length], ...C.map(([c, n]) => [c, c || 'No category', n])].map(([k, l, n]) => `<button type="button" class="cat" data-cat="${esc(k)}" aria-current="${cat === k}"><span>${esc(l)}</span><b>${n}</b></button>`).join('');
