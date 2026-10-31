@@ -8,6 +8,7 @@ Runs in the browser, offline, straight from the folder (open `index.html`); no i
 
 - **Add pictures**: PNG, JPEG, GIF, WebP or SVG (drop them on the window too). A PNG and an SVG with the same name become one item with both.
 - **Import a library**: a ZIP with `library.json` (from ImageCraft's Split a sheet, or exported here), or any ZIP of pictures.
+- **Montage Slicer** (Home › Slice, or *Slice a montage* on the start screen): choose a sheet of clip art and it is cut into separate pictures. *Find the pictures* finds each one on a plain or old-paper background (parts closer than the join distance stay together; only the background outside each picture is taken away, with clean edges). *Grid* cuts rows × columns of equal cells for montages whose pictures touch, and can cut each picture out of its cell. Click a box to leave that picture out; type names in order and a category; each can also be traced to SVG. **Add to the library** and they are there, chosen, ready to tag.
 - **Name, category, tags**: click an item; Ctrl-click or Shift-click several to give them a category or tags together; double-click to rename.
 - **Find**: categories on the left, search by name, tag or category.
 - **Export (ZIP)**: everything shown (all, or the category you are in) with `library.json`.
@@ -26,3 +27,7 @@ Runs in the browser, offline, straight from the folder (open `index.html`); no i
 An item in the browser store: `{ id, name, category, tags, width, height, added, source, png (Blob), svg (text), thumb (small PNG data URL) }`. Other apps keep their own copy of the reading code (`js/library.js`).
 
 Firefox keeps each page opened from disk separate, so there the library is per app; use the folder or ZIPs to move it.
+
+## Credits
+
+SVG tracing uses RasterTrace by bradsec (MIT) with VTracer by VisionCortex (MIT), bundled in `lib/craft-rastertrace.js` to work offline. The slicer's finding and cutting is ClipArtCraft's own copy of ImageCraft's Split a sheet.

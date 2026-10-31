@@ -94,3 +94,15 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 .start .tiles small { color: var(--muted); line-height: 1.4; }
 .drop { position: absolute; inset: 10px; display: grid; place-items: center; border: 3px dashed var(--accent); border-radius: 16px; background: var(--accent-soft); color: var(--accent); font-size: 18px; font-weight: 600; pointer-events: none; z-index: 5; }
 @media (max-width: 900px) { .work { grid-template-columns: 1fr; } .side.left, .side.right { display: none; } }
+
+/* the Montage Slicer */
+.slicer { position: fixed; inset: 0; z-index: 2000; display: flex; flex-direction: column; background: var(--bg); }
+.sl-bar { display: flex; align-items: center; gap: 14px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.sl-bar .grow { flex: 1; }
+.sl-main { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 320px; }
+.sl-desk { position: relative; min-width: 0; min-height: 0; overflow: auto; background: var(--desk); display: flex; align-items: center; justify-content: center; padding: 20px; }
+.sl-desk canvas { max-width: 100%; max-height: 100%; object-fit: contain; cursor: pointer; box-shadow: 0 4px 20px rgba(0,0,0,.25); }
+.sl-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.sl-side .sec { display: flex; flex-direction: column; gap: 10px; }
+.sl-side .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+@media (max-width: 760px) { .sl-main { grid-template-columns: 1fr; grid-template-rows: 1fr auto; } .sl-side { max-height: 45vh; } }

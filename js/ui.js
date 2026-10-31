@@ -25,6 +25,7 @@
   function renderStart() {
     $('start').innerHTML = `<div class="start-in"><h2>What do you want to do?</h2><div class="tiles">
       <button type="button" data-act="add"><b>Add pictures</b><small>PNG, JPEG, GIF, WebP or SVG files (a PNG and an SVG with the same name become one item)</small></button>
+      <button type="button" data-act="slice"><b>Slice a montage</b><small>A sheet of clip art cut into separate pictures, named and added</small></button>
       <button type="button" data-act="zip"><b>Import a library ZIP</b><small>From ImageCraft’s Split a sheet, or one exported here</small></button>
       <button type="button" data-act="folder-in"><b>Open a library folder</b><small>A folder with library.json and its pictures (backup, or shared from another computer)</small></button></div>
       <p class="hint">The library is kept in this browser and shared with every Craft app opened in it. Nothing is uploaded.</p></div>`;
@@ -48,10 +49,13 @@
   function pick(accept, multiple = true) { return new Promise((ok) => { const i = document.createElement('input'); i.type = 'file'; i.accept = accept; i.multiple = multiple; i.onchange = () => ok([...i.files]); i.click(); }); }
   async function addFiles(files, how = 'Added') { if (!files.length) return; try { const made = await L.add(files, { category: cat !== '*' ? cat : '' }); await reload(); sel = new Set(made.map((m) => m.id)); render(); toast(`${how}: ${made.length} item${made.length === 1 ? '' : 's'}.`); } catch (e) { fail(e); } }
   const chosen = () => items.filter((it) => sel.has(it.id));
+  // the Montage Slicer (js/slicer.js): what it added is shown and chosen
+  const slicer = (file) => window.ClipArtSlicer.open({ file, toast, categories: cats().map(([c]) => c).filter(Boolean), done: async (made, category) => { await reload(); cat = category; sel = new Set(made.map((m) => m.id)); render(); toast(`${made.length} picture${made.length === 1 ? '' : 's'} added to “${category}”.`); } });
   async function act(a) {
     try {
       if (a === 'add') return addFiles(await pick('image/*,.svg,.zip'));
       if (a === 'zip') return addFiles(await pick('.zip', false), 'Imported');
+      if (a === 'slice') return slicer();
       if (a === 'export-all') { if (!items.length) return toast('The library is empty.'); download(await L.toZip(shown()), cat === '*' ? 'Clip art library.zip' : `${cat || 'No category'} clip art.zip`); return; }
       if (a === 'export-sel') { download(await L.toZip(chosen()), chosen().length === 1 ? `${chosen()[0].name}.zip` : 'Clip art.zip'); return; }
       if (a === 'folder-out') { const n = await L.toFolder(items); toast(`Saved ${items.length} items to the folder “${n}”.`); return; }
@@ -96,6 +100,7 @@
     add: '<rect x="3" y="5" width="18" height="14" rx="2" class="fill"/><circle cx="8.5" cy="10" r="1.6"/><path d="m21 16-5-5-9 8M18 2v6M15 5h6"/>',
     zip: '<path d="M6 3h9l4 4v14H6Z" class="fill"/><path d="M10 3v2h2v2h-2v2h2v2h-2v3h2"/>',
     exportZ: '<path d="M6 3h9l4 4v14H6Z" class="fill"/><path d="M12 10v7M9 14l3 3 3-3"/>',
+    slice: '<rect x="3" y="3" width="18" height="18" rx="2" class="fill"/><path d="M12 3v18M3 12h18" stroke-dasharray="2 2"/><path d="m16 14 3 3m0-3-3 3"/>',
     folder: '<path d="M3 6h6l2 2h10v11H3Z" class="fill"/>',
     up: '<path d="M3 6h6l2 2h10v11H3Z" class="fill"/><path d="M12 17v-6M9 13l3-3 3 3"/>',
     down: '<path d="M3 6h6l2 2h10v11H3Z" class="fill"/><path d="M12 10v6M9 13l3 3 3-3"/>',
@@ -107,6 +112,7 @@
     tabs: [
       { id: 'home', label: 'Home', hue: '#c2410c', groups: [
         ['Add', [B('Add pictures', IK.add, () => act('add'), { big: true, key: 'Ctrl+O', title: 'PNG, JPEG, GIF, WebP or SVG files, or a library ZIP' }), B('Import a library', IK.zip, () => act('zip'), { big: true, title: 'A library ZIP (from ImageCraft’s Split a sheet, or exported here)' })]],
+        ['Slice', [B('Montage Slicer', IK.slice, () => act('slice'), { big: true, title: 'Cut a sheet (montage) of clip art into separate pictures: found by themselves or by a grid, named in order, added to the library' })]],
         ['Library', [B('Export (ZIP)', IK.exportZ, () => act('export-all'), { big: true, title: 'Everything shown (the category you are in, or all) as one ZIP: pictures, SVGs and library.json' }), { col: [B('Save to the folder', IK.up, () => act('folder-out'), { title: 'Write the whole library to its folder (backup, sync, sharing)' }), B('Add from a folder', IK.down, () => act('folder-in'), { title: 'Read a library folder into this library' }), B('Choose the folder…', IK.folder, () => act('folder-pick'), { title: 'Which folder the library is saved to' })] }]],
         ['Edit', [{ col: [B('Choose all', I.selectAll, () => act('select-all'), { key: 'Ctrl+A' }), B('Delete', I.trash, () => act('delete'), { key: 'Delete', disabled: () => !sel.size })] }]],
       ] },
