@@ -1,0 +1,10 @@
+{
+  "name": "craft-clipart-server",
+  "version": "1.0.0",
+  "description": "The Craft clip-art library over http (SQLite built in; MySQL/MariaDB with the optional mysql2 package)",
+  "main": "clipart-server.js",
+  "scripts": { "start": "node clipart-server.js" },
+  "engines": { "node": ">=22.5" },
+  "optionalDependencies": { "mysql2": "^3.11.0" },
+  "license": "MIT"
+}

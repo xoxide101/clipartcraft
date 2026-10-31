@@ -4,7 +4,11 @@
    - Browser store: IndexedDB database 'craft-clipart', version 1, object store 'items' (keyPath 'id') and 'meta'.
      Pages opened from disk (file://) share it in Chrome and Edge, and so do apps hosted on one site.
    - An item: { id, name, category, tags: [], width, height, added (ISO time), source, png: Blob | null,
-     svg: string | null, thumb: 'data:image/png…' (at most 160 px) }.
+     svg: string | null, thumb: 'data:image/png…' (at most 160 px) }. Optional: description, kind ('colour' | 'grey' | 'bw'),
+     author, licence, hash (to spot copies), frames + anim: Blob (an animated GIF/APNG/WebP; png is its first frame),
+     serverId + links { png, svg, … } (where the clip-art server keeps it, real http links).
+   - The clip-art server (server/clipart-server.js, or clipart-server.php on a web host) keeps libraries in SQLite or
+     MySQL/MariaDB with the pictures in a folder; server/API.md lists its API.
    - A library on disk or in a ZIP: library.json { library, made, by, items: [{ name, category, tags, width, height,
      png: 'Name.png', svg: 'Name.svg' }] } beside the files (what ImageCraft's Split a sheet writes).
 
@@ -104,5 +108,43 @@
   async function toFolder(items, h) { h = h || (await folder(true)) || (await pickFolder()); for (const f of await entriesOf(items)) { const fh = await h.getFileHandle(f.name, { create: true }), w = await fh.createWritable(); await w.write(f.bytes); await w.close(); } return h.name; }
   async function fromFolder(h, opts = {}) { h = h || (await folder(true)) || (await pickFolder()); const entries = []; for await (const [name, e] of h.entries()) if (e.kind === 'file' && /\.(png|jpe?g|gif|webp|svg|json)$/i.test(name)) entries.push({ name, bytes: new Uint8Array(await (await e.getFile()).arrayBuffer()) }); return fromEntries(entries, { source: h.name, ...opts }); }
 
-  window.CraftClipart = { DB, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip };
+  // ------------------------------------------------------------------ the clip-art server (optional)
+  const b64 = (blob) => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result).replace(/^data:[^,]*,/, '')); r.onerror = () => no(r.error); r.readAsDataURL(blob); });
+  const META = ['name', 'category', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash'];
+  async function server(url) { if (url !== undefined) { await meta('server', url ? String(url).trim().replace(/\/+$/, '') : ''); } return (await meta('server')) || ''; }
+  async function serverKey(k) { if (k !== undefined) await meta('serverKey', k || ''); return (await meta('serverKey')) || ''; }
+  async function call(path, opts = {}) { const u = await server(); if (!u) throw new Error('No clip-art server is connected.'); const k = await serverKey(); if (k) opts = { ...opts, headers: { ...(opts.headers || {}), 'x-craft-key': k } }; let r; try { r = await fetch(u + path, opts); } catch (e) { throw new Error(`The clip-art server at ${u} did not answer (is it running?).`); } const j = r.headers.get('content-type')?.includes('json') ? await r.json() : null; if (!r.ok) throw Object.assign(new Error((j && j.error) || `The server said ${r.status}.`), { status: r.status }); return j; }
+  const serverInfo = () => call('/api/info');
+  // send items to the server (new ones are added, ones it has are updated); the server may number a name (Cat_002)
+  async function push(items, progress = () => {}) {
+    const out = []; let n = 0;
+    for (const it of items) {
+      const j = Object.fromEntries(META.filter((k) => it[k] !== undefined).map((k) => [k, it[k]]));
+      if (it.png) { j.png = await b64(it.png); j.pngExt = it.png.type === 'image/jpeg' ? 'jpg' : 'png'; }
+      if (it.svg) j.svg = it.svg; if (it.anim) { j.anim = await b64(it.anim); j.animExt = (it.anim.type.split('/')[1] || 'gif').replace('apng', 'png'); }
+      if (it.thumb) { j.thumb = it.thumb.replace(/^data:[^,]*,/, ''); j.thumbExt = 'png'; }
+      let s; try { s = await call(it.serverId ? '/api/items/' + it.serverId : '/api/items', { method: it.serverId ? 'PATCH' : 'POST', body: JSON.stringify(j) }); } catch (e) { if (!it.serverId || !/No such item/.test(e.message)) throw e; delete it.serverId; s = await call('/api/items', { method: 'POST', body: JSON.stringify(j) }); }
+      it.serverId = s.id; it.links = s.links; it.name = s.name; await tx('items', 'readwrite', (st) => req(st.put(it))); out.push(it); progress(++n, items.length);
+    }
+    changed(); return out;
+  }
+  // bring the server's items into this browser (ones already here are updated if the server's copy is newer)
+  async function pull(progress = () => {}, { q = '', category } = {}) {
+    const here = new Map((await all()).filter((it) => it.serverId).map((it) => [it.serverId, it])), made = []; let n = 0, total = 0;
+    for (let off = 0; ; off += 500) {
+      const r = await call(`/api/items?limit=500&offset=${off}&q=${encodeURIComponent(q)}${category !== undefined ? '&category=' + encodeURIComponent(category) : ''}`); total = r.total; if (!r.items.length) break;
+      for (const s of r.items) {
+        const old = here.get(s.id); progress(++n, total); if (old && old.serverChanged === s.changed) continue;
+        const get = async (k) => s.links[k] ? (await fetch(s.links[k])).blob() : null, png = await get('png'), svg = s.links.svg ? await (await fetch(s.links.svg)).text() : null, anim = await get('anim');
+        const it = old || { id: uid(), added: s.added || new Date().toISOString() };
+        Object.assign(it, Object.fromEntries(META.map((k) => [k, s[k] ?? it[k] ?? (k === 'tags' ? [] : '')])), { png, svg, anim, serverId: s.id, links: s.links, serverChanged: s.changed, source: s.source || 'clip-art server' });
+        if (!it.thumb || !old) it.thumb = (await thumbOf(png ? URL.createObjectURL(png) : svgUrl(svg))).thumb;
+        await tx('items', 'readwrite', (st) => req(st.put(it))); made.push(it);
+      }
+    }
+    changed(); return { made, total };
+  }
+  async function removeFromServer(items) { for (const it of items) if (it.serverId) { try { await call('/api/items/' + it.serverId, { method: 'DELETE' }); } catch (e) { if (!/No such item/.test(e.message)) throw e; } delete it.serverId; delete it.links; await tx('items', 'readwrite', (st) => req(st.put(it))); } changed(); }
+
+  window.CraftClipart = { DB, server, serverKey, serverInfo, push, pull, removeFromServer, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip };
 })();

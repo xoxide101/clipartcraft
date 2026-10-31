@@ -106,3 +106,9 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 .sl-side .sec { display: flex; flex-direction: column; gap: 10px; }
 .sl-side .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 @media (max-width: 760px) { .sl-main { grid-template-columns: 1fr; grid-template-rows: 1fr auto; } .sl-side { max-height: 45vh; } }
+
+/* links to the clip-art server */
+.links { display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; align-items: center; font-size: 12px; }
+.links .hint { grid-column: 1 / -1; }
+.links a { font-weight: 600; color: var(--accent, #c2410c); }
+.links button { justify-self: start; padding: 2px 8px; font-size: 12px; }

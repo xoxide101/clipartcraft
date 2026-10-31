@@ -5,7 +5,7 @@
   'use strict';
   const $ = (id) => document.getElementById(id), L = window.CraftClipart, I = window.CraftIcons;
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-  let items = [], cat = '*', query = '', sel = new Set(), last = null, size = 140;
+  let items = [], cat = '*', query = '', sel = new Set(), last = null, size = 140, serverUrl = '', serverOk = false;
   try { size = +localStorage.getItem('clipartcraft-size') || 140; } catch (e) { /* blocked storage */ }
   const toast = (m) => { const t = $('toast'); t.textContent = m; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => { t.hidden = true; }, 3200); };
   const download = (blob, name) => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); };
@@ -40,10 +40,11 @@
       <label class="field"><span>Category</span><input class="input" data-f="category" list="catlist" value="${esc(one ? one.category : (new Set(S.map((x) => x.category)).size === 1 ? S[0].category : ''))}" placeholder="Americana, Buildings, Transport…"><datalist id="catlist">${catList.map((c) => `<option value="${esc(c)}">`).join('')}</datalist></label>
       <label class="field"><span>Tags <small class="hint">(separated by commas)</small></span><input class="input" data-f="tags" value="${esc(one ? (one.tags || []).join(', ') : '')}" placeholder="${one ? 'farm, red, barn' : 'added to each'}"></label>
       ${one ? `<p class="hint">${one.width} × ${one.height} pixels · ${[one.png ? 'PNG' : '', one.svg ? 'SVG' : ''].filter(Boolean).join(' and ')}${one.source ? ` · from ${esc(one.source)}` : ''}</p>
+      ${one.links ? `<div class="links"><span class="hint">On the server:</span>${Object.entries(one.links).filter(([k]) => k !== 'thumb').map(([k, u]) => `<a href="${esc(u)}" target="_blank" rel="noopener" title="${esc(u)}">${k.toUpperCase()}</a><button type="button" class="btn ghost sm" data-copy="${esc(u)}" title="Copy the link">Copy link</button>`).join('')}</div>` : ''}
       <div class="btns">${one.png ? '<button class="btn outline" type="button" data-act="dl-png">PNG</button>' : ''}${one.svg ? '<button class="btn outline" type="button" data-act="dl-svg">SVG</button>' : ''}<button class="btn outline" type="button" data-act="copy">Copy</button></div>` : ''}
       <div class="btns"><button class="btn outline" type="button" data-act="export-sel">Export ${one ? 'it' : 'these'} (ZIP)</button><button class="btn outline danger" type="button" data-act="delete">Delete</button></div></div>`;
   }
-  function status() { const S = shown(); $('status').innerHTML = `<span><b>${items.length}</b> in the library</span><span>${cat === '*' && !query ? '' : `<b>${S.length}</b> shown`}</span><span>${sel.size ? `<b>${sel.size}</b> chosen` : ''}</span><span class="grow"></span><label class="hint">Size <input type="range" id="size" min="80" max="260" value="${size}" aria-label="Thumbnail size"></label>`; $('size').oninput = (e) => { size = +e.target.value; $('grid').style.setProperty('--tile', size + 'px'); try { localStorage.setItem('clipartcraft-size', size); } catch (err) { /* blocked */ } }; }
+  function status() { const S = shown(); $('status').innerHTML = `<span><b>${items.length}</b> in the library</span><span>${cat === '*' && !query ? '' : `<b>${S.length}</b> shown`}</span><span>${sel.size ? `<b>${sel.size}</b> chosen` : ''}</span><span class="grow"></span><span title="${esc(serverUrl)}">${serverUrl ? `Server: <b>${serverOk ? 'connected' : 'not answering'}</b> · ${items.filter((it) => it.serverId).length} on it` : 'No server'}</span><label class="hint">Size <input type="range" id="size" min="80" max="260" value="${size}" aria-label="Thumbnail size"></label>`; $('size').oninput = (e) => { size = +e.target.value; $('grid').style.setProperty('--tile', size + 'px'); try { localStorage.setItem('clipartcraft-size', size); } catch (err) { /* blocked */ } }; }
 
   // ------------------------------------------------------------------ actions
   function pick(accept, multiple = true) { return new Promise((ok) => { const i = document.createElement('input'); i.type = 'file'; i.accept = accept; i.multiple = multiple; i.onchange = () => ok([...i.files]); i.click(); }); }
@@ -63,11 +64,23 @@
       if (a === 'folder-pick') { const h = await L.pickFolder(); toast(`Library folder: “${h.name}”.`); return; }
       if (a === 'select-all') { sel = new Set(shown().map((it) => it.id)); render(); return; }
       if (a === 'delete') { const S = chosen(); if (!S.length) return toast('Choose something first.'); if (!confirm(`Delete ${S.length === 1 ? `“${S[0].name}”` : `${S.length} items`} from the library? (Export first if you might want ${S.length === 1 ? 'it' : 'them'} back.)`)) return; await L.remove(S.map((x) => x.id)); sel.clear(); await reload(); toast('Deleted.'); return; }
+      if (a === 'connect') { const u = prompt('The clip-art server’s address (start it with server/start-server.cmd; on a web host, the folder where clipart-server.php is):', serverUrl || 'http://localhost:8790'); if (u === null) return; await L.server(u); await checkServer(true); return; }
+      if (a === 'disconnect') { await L.server(''); await checkServer(); toast('Not using a server now (the pictures stay here).'); return; }
+      if (a === 'push') { const S = sel.size ? chosen() : items; if (!S.length) return toast('The library is empty.'); await need(); const done = await L.push(S, (n, t) => busy(`Sending ${n} of ${t}…`)); busy(); await reload(); toast(`Sent ${done.length} item${done.length === 1 ? '' : 's'} to the server.`); return; }
+      if (a === 'pull') { await need(); const r = await L.pull((n, t) => busy(`Getting ${n} of ${t}…`)); busy(); await reload(); toast(r.made.length ? `Got ${r.made.length} new or changed item${r.made.length === 1 ? '' : 's'} from the server (it has ${r.total}).` : `Already up to date (the server has ${r.total}).`); return; }
+      if (a === 'sync') { await need(); const r = await L.pull((n, t) => busy(`Getting ${n} of ${t}…`)); const fresh = (await L.all()).filter((it) => !it.serverId); const d = await L.push(fresh, (n, t) => busy(`Sending ${n} of ${t}…`)); busy(); await reload(); toast(`In step with the server: got ${r.made.length}, sent ${d.length}.`); return; }
+      if (a === 'unserver') { const S = chosen().filter((it) => it.serverId); if (!S.length) return toast('Choose something that is on the server.'); if (!confirm(`Take ${S.length === 1 ? `“${S[0].name}”` : `${S.length} items`} off the server? (They stay in this library.)`)) return; await L.removeFromServer(S); await reload(); toast('Taken off the server.'); return; }
+      if (a === 'open-server') { if (!serverUrl) return toast('Connect to a server first.'); window.open(serverUrl + '/', '_blank'); return; }
       const one = chosen()[0]; if (!one) return;
       if (a === 'dl-png') download(one.png, `${one.name}.png`);
       if (a === 'dl-svg') download(new Blob([one.svg], { type: 'image/svg+xml' }), `${one.name}.svg`);
       if (a === 'copy') { if (one.png && navigator.clipboard && window.ClipboardItem) { await navigator.clipboard.write([new ClipboardItem({ 'image/png': one.png })]); toast('Copied the picture.'); } else if (one.svg) { await navigator.clipboard.writeText(one.svg); toast('Copied the SVG as text.'); } }
-    } catch (e) { if (e && e.name === 'AbortError') return; fail(e); }
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;
+      // a server elsewhere wants its key before anything changes: ask once, keep it, try again
+      if (e && e.status === 403 && !act.asked) { const k = prompt('This clip-art server needs its key to change the library (it is in clipart-config.php or clipart-server.json on the server):', ''); if (k) { await L.serverKey(k.trim()); act.asked = true; try { return await act(a); } finally { act.asked = false; } } }
+      busy(); fail(e);
+    }
   }
   // a name, category or tags changed (for one, or the category/tags for several at once)
   $('details').addEventListener('change', async (e) => {
@@ -75,7 +88,11 @@
     for (const it of S) { if (f === 'name' && v) it.name = v; if (f === 'category') it.category = v; if (f === 'tags') it.tags = S.length === 1 ? v.split(',').map((t) => t.trim()).filter(Boolean) : [...new Set([...(it.tags || []), ...v.split(',').map((t) => t.trim()).filter(Boolean)])]; await L.put(it); }
     await reload(); if (f === 'category' && v && cat !== '*' && cat !== v) toast(`Moved to “${v}”.`);
   });
-  document.addEventListener('click', (e) => { const b = e.target.closest('[data-act]'); if (b) act(b.dataset.act); });
+  document.addEventListener('click', (e) => { const c = e.target.closest('[data-copy]'); if (c) { navigator.clipboard.writeText(c.dataset.copy).then(() => toast('Link copied: paste it into any app or web page.')); return; } const b = e.target.closest('[data-act]'); if (b) act(b.dataset.act); });
+  // the clip-art server (optional): is it there?
+  const busy = (m) => { const t = $('toast'); if (m) { t.textContent = m; t.hidden = false; clearTimeout(toast.t); } else t.hidden = true; };
+  async function checkServer(say) { serverUrl = await L.server(); serverOk = false; if (serverUrl) { try { const i = await L.serverInfo(); serverOk = true; if (say) toast(`Connected to the clip-art server (${i.libraries.map((l) => `${l.name}: ${l.database}`).join(', ')}).${i.writable ? '' : ' It can only be read from here.'}`); } catch (e) { if (say) toast(e.message); } } status(); }
+  async function need() { if (!serverUrl) { await act('connect'); if (!serverUrl) throw new Error('Connect to a server first.'); } if (!serverOk) await checkServer(); if (!serverOk) throw new Error(`The clip-art server at ${serverUrl} did not answer (is it running?).`); }
   $('cats').onclick = (e) => { const b = e.target.closest('[data-cat]'); if (!b) return; cat = b.dataset.cat; sel.clear(); render(); };
   $('search').oninput = (e) => { query = e.target.value; render(); };
   $('grid').addEventListener('click', (e) => {
@@ -103,6 +120,11 @@
     slice: '<rect x="3" y="3" width="18" height="18" rx="2" class="fill"/><path d="M12 3v18M3 12h18" stroke-dasharray="2 2"/><path d="m16 14 3 3m0-3-3 3"/>',
     folder: '<path d="M3 6h6l2 2h10v11H3Z" class="fill"/>',
     up: '<path d="M3 6h6l2 2h10v11H3Z" class="fill"/><path d="M12 17v-6M9 13l3-3 3 3"/>',
+    server: '<rect x="4" y="3" width="16" height="7" rx="1.5" class="fill"/><rect x="4" y="14" width="16" height="7" rx="1.5" class="fill"/><path d="M8 6.5h.01M8 17.5h.01"/>',
+    send: '<rect x="4" y="13" width="16" height="7" rx="1.5" class="fill"/><path d="M12 10V2M8.5 5.5 12 2l3.5 3.5"/>',
+    get: '<rect x="4" y="13" width="16" height="7" rx="1.5" class="fill"/><path d="M12 2v8M8.5 6.5 12 10l3.5-3.5"/>',
+    sync: '<path d="M4 12a8 8 0 0 1 14-5.3M20 12a8 8 0 0 1-14 5.3"/><path d="M18 3v4h-4M6 21v-4h4"/>',
+    link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
     down: '<path d="M3 6h6l2 2h10v11H3Z" class="fill"/><path d="M12 10v6M9 13l3 3 3-3"/>',
   };
   const LOGO = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1.5" fill="currentColor" opacity=".35"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><path d="m14 20 2.5-4 2 3 1-1.5 1.5 2.5Z" fill="currentColor"/></svg>';
@@ -116,6 +138,11 @@
         ['Library', [B('Export (ZIP)', IK.exportZ, () => act('export-all'), { big: true, title: 'Everything shown (the category you are in, or all) as one ZIP: pictures, SVGs and library.json' }), { col: [B('Save to the folder', IK.up, () => act('folder-out'), { title: 'Write the whole library to its folder (backup, sync, sharing)' }), B('Add from a folder', IK.down, () => act('folder-in'), { title: 'Read a library folder into this library' }), B('Choose the folder…', IK.folder, () => act('folder-pick'), { title: 'Which folder the library is saved to' })] }]],
         ['Edit', [{ col: [B('Choose all', I.selectAll, () => act('select-all'), { key: 'Ctrl+A' }), B('Delete', I.trash, () => act('delete'), { key: 'Delete', disabled: () => !sel.size })] }]],
       ] },
+      { id: 'server', label: 'Server', hue: '#0f766e', groups: [
+        ['Connect', [B('Connect…', IK.server, () => act('connect'), { big: true, title: 'Use a clip-art server: on this computer (server/start-server.cmd) or on a web host. Every picture then has a real http link any app can use.' }), { col: [B('Open the server page', IK.link, () => act('open-server')), B('Stop using it', IK.link, () => act('disconnect'), { title: 'Forget the server (nothing is deleted anywhere)' })] }]],
+        ['Share', [B('Sync', IK.sync, () => act('sync'), { big: true, title: 'Get what is new on the server, and send what is new here' }), B('Send to the server', IK.send, () => act('push'), { big: true, title: 'The chosen items (or everything) go to the server' }), B('Get from the server', IK.get, () => act('pull'), { big: true, title: 'Everything on the server comes into this library' })]],
+        ['Remove', [B('Take off the server', I.trash, () => act('unserver'), { title: 'The chosen items are deleted from the server but stay here', disabled: () => !sel.size })]],
+      ] },
     ],
   });
   const tb = window.CraftTitlebar({ appName: 'ClipArtCraft', storageKey: 'clipartcraft', colors: ['#ea580c', '#b23a0a'], mount: $('app'), toast, logo: LOGO, menus: () => [], ribbon,
@@ -125,6 +152,6 @@
   const ic = document.createElement('link'); ic.rel = 'icon'; ic.href = 'data:image/svg+xml,' + encodeURIComponent(LOGO.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ')); document.head.append(ic);
   document.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') { e.preventDefault(); act('add'); } });
 
-  reload().catch(fail);
+  reload().then(() => checkServer()).catch(fail);
   window.ClipArtCraft = { reload, items: () => items };
 })();

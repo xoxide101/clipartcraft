@@ -1,0 +1,12 @@
+# Nice links (/clipart/Name.png, /api/items) for the PHP clip-art server; without this they work as clipart-server.php/...
+Options -Indexes
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule ^(api|clipart)(/.*)?$ clipart-server.php/$1$2 [L,QSA]
+  RewriteRule ^$ clipart-server.php [L]
+</IfModule>
+# keep the database, settings and private parts out of reach
+<FilesMatch "^(clipart-config\.php|clipart-server\.json|.*\.sqlite|.*\.js|package\.json|.*\.cmd)$">
+  Require all denied
+</FilesMatch>
+RedirectMatch 403 ^.*/libraries/
