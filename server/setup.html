@@ -61,7 +61,9 @@
   const setLogin = (user, pass) => { login = btoa(unescape(encodeURIComponent(`${user}:${pass}`))); try { sessionStorage.setItem('craft-clipart-login', login); } catch (e) { /* blocked */ } };
 
   async function load() {
-    const r = await call('');
+    // opened straight from the folder: it needs the server running, and to be opened through it
+    if (location.protocol === 'file:') { $('#main').innerHTML = `<section><h2>Start the server first</h2><p>This page works when the clip-art server sends it, not opened from the folder.</p><p class="hint">On this computer: double-click <b>start-server.cmd</b> in the server folder, then open <a href="http://localhost:8790/setup">http://localhost:8790/setup</a>.<br>On a web server (the QNAP): put the folder in the Web share and open …/clipart/setup.</p></section>`; return; }
+    let r; try { r = await call(''); } catch (e) { $('#main').innerHTML = `<section><p class="no">The clip-art server did not answer (${esc(e.message)}). Is it running?</p></section>`; return; }
     if (r.needAdmin) return makeAdmin();
     if (r.status === 403) return askLogin(r.error && login ? r.error : '');
     if (r.error) { $('#main').innerHTML = `<section><p class="no">${esc(r.error)}</p></section>`; return; }
