@@ -160,5 +160,7 @@
 
   // the category, style and form lists (editable; shared by every Craft app through the store)
   async function lists(value) { return meta('lists', value); }
-  window.CraftClipart = { DB, lists, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip };
+  // the user's corrections the AI learns from: [{ id (the picture's), vec, name, category, style, form, at }]
+  async function lessons(value) { return value === undefined ? (await meta('lessons')) || [] : meta('lessons', value); }
+  window.CraftClipart = { DB, lists, lessons, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip };
 })();

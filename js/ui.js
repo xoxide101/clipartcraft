@@ -27,6 +27,15 @@
   const sources = () => { const m = new Map(); items.forEach((it) => { const k = srcOf(it); m.set(k, (m.get(k) || 0) + 1); }); return [...m].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([k, n]) => [k, k, n]); };
   const placeholderName = (n) => /^(sheet\b.*[–-]\s*\d+|clip ?art(\s*[–-]?\s*\d+)?|img[ _-]?\d+|dsc\S*\d+|untitled|picture\s*\d*|item\s*\d*)$/i.test(String(n).trim()) || /^(sheet\b.*[–-]\s*\d+|clip ?art(\s*[–-]?\s*\d+)?|untitled|picture\s*\d*|item\s*\d*)$/i.test(String(n).replace(/_\d{3,}$/, '').trim());
   const needsSort = (it) => !KNOWN().includes(it.category || '') || placeholderName(it.name);
+  // learning from a correction: the picture's look and the user's answer are remembered (and a new name word is added
+  // to that category's words), so pictures like it are named and sorted that way from now on
+  async function teach(it) {
+    if (!it.vec || !window.CraftNamer) return; const subject = subjectOf(it), all = (await L.lessons()).filter((l) => l.id !== it.id);
+    all.push({ id: it.id, vec: it.vec, name: subject, category: it.category || '', style: it.style || '', form: it.form || '', at: new Date().toISOString() });
+    await L.lessons(all.slice(-2000));
+    if (it.category && CraftNamer.learnWord(subject, it.category)) await L.lists(CraftNamer.lists());
+    toast(`The AI will remember: pictures like this are “${subject}”${it.category ? ` in ${it.category}` : ''}.`);
+  }
   async function sortWithAI(list, { quiet = false, again = false } = {}) {
     const N = window.CraftNamer; if (!N || !list.length) return 0;
     return L.guard(async () => {
@@ -36,7 +45,7 @@
         busy(`Sorting ${++n} of ${list.length}: ${it.name}…`);
         let src; try { src = it.png ? await createImageBitmap(it.png) : await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = L.svgUrl(it.svg); }); } catch (e) { continue; }
         const c = document.createElement('canvas'); c.width = src.width || 224; c.height = src.height || 224; c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
-        const ai = await N.name(c); it.ai = ai.words;
+        const ai = await N.name(c, { lessons: await L.lessons() }); it.ai = ai.words; it.vec = ai.vec;
         if (!KNOWN().includes(it.category || '') || again) it.category = it.checked && !again ? it.category : ai.category;
         it.style = it.style || ai.style; it.form = it.form || ai.form; it.tags = [...new Set([...(it.tags || []), ...ai.tags])];
         if (placeholderName(it.name) || (again && !it.checked)) { taken.delete(it.name.toLowerCase()); let nm = ai.name; for (let k = 2; taken.has(nm.toLowerCase()); k++) nm = `${ai.name}_${String(k).padStart(3, '0')}`; it.name = nm; taken.add(nm.toLowerCase()); }
@@ -178,14 +187,16 @@
   // a name, category or tags changed (for one, or the category/tags for several at once)
   $('details').addEventListener('change', async (e) => {
     const f = e.target.dataset.f; if (!f) return; const S = chosen(), v = e.target.value.trim(); if (e.target.tagName === 'SELECT' && S.length > 1 && !v) return;
+    const teachIt = S.length === 1 && S[0].vec && ['name', 'category', 'style', 'form'].includes(f);
     for (const it of S) { if (f === 'name' && v) it.name = v; if (f === 'category') it.category = v; if (f === 'style' || f === 'form') it[f] = v; it.checked = true; if (f === 'tags') it.tags = S.length === 1 ? v.split(',').map((t) => t.trim()).filter(Boolean) : [...new Set([...(it.tags || []), ...v.split(',').map((t) => t.trim()).filter(Boolean)])]; await L.put(it); }
-    await reload(); if (f === 'category' && v && cat !== '*' && cat !== v) toast(`Moved to “${v}”.`);
+    if (teachIt) await teach(S[0]);
+    await reload(); if (!teachIt && f === 'category' && v && cat !== '*' && cat !== v) toast(`Moved to “${v}”.`);
   });
   // one of the AI's guesses chosen: its name (numbered if taken) and its category
   $('details').addEventListener('click', async (e) => {
     const b = e.target.closest('[data-ai]'); if (!b) return; const it = chosen()[0]; if (!it || !it.ai) return; const w = it.ai[+b.dataset.ai];
     const base = w.word.charAt(0).toUpperCase() + w.word.slice(1), taken = new Set(items.filter((x) => x.id !== it.id).map((x) => x.name.toLowerCase())); let nm = base; for (let k = 2; taken.has(nm.toLowerCase()); k++) nm = `${base}_${String(k).padStart(3, '0')}`;
-    it.name = nm; it.category = w.category; it.checked = true; await L.put(it); await reload(); toast(`Now “${nm}” in ${w.category}.`);
+    it.name = nm; it.category = w.category; it.checked = true; await L.put(it); await teach(it); await reload();
   });
   document.addEventListener('click', (e) => { if (startOpen && e.target.closest('.start .tiles [data-act]')) { startOpen = false; $('start').hidden = true; } const c = e.target.closest('[data-copy]'); if (c) { navigator.clipboard.writeText(c.dataset.copy).then(() => toast('Link copied: paste it into any app or web page.')); return; } const b = e.target.closest('[data-act]'); if (b) act(b.dataset.act); });
   // the clip-art server (optional): is it there?
@@ -279,7 +290,8 @@
           <div class="lists-rows">${l.categories.map((c, i) => `<div class="lists-row" data-i="${i}"><input class="input" data-k="name" value="${esc(c.name)}" aria-label="Category name"><textarea class="input" data-k="words" rows="2" aria-label="Words for ${esc(c.name)}">${esc(c.words.join(', '))}</textarea><button class="btn ghost sm" type="button" data-l="del" title="Remove this category (its pictures become Not sorted yet)">✕</button></div>`).join('')}</div>
           <button class="btn outline" type="button" data-l="add">Add a category</button>`
         : `<p class="hint">One per line.</p><textarea class="input lists-one" data-k="${tab}" rows="14">${esc(l[tab].join('\n'))}</textarea>`}
-        <div class="lists-foot"><button class="btn ghost" type="button" data-l="reset">Back to the starting lists</button><span class="grow"></span><button class="btn primary" type="button" data-l="save">Save the lists</button></div></div>`;
+        <p class="hint" data-lessons>The AI also learns from your corrections (a name, category, style or form you change, or a guess you pick): pictures that look like a corrected one get your answer.</p>
+        <div class="lists-foot"><button class="btn ghost" type="button" data-l="reset">Back to the starting lists</button><button class="btn ghost" type="button" data-l="forget">Forget my corrections</button><span class="grow"></span><button class="btn primary" type="button" data-l="save">Save the lists</button></div></div>`;
     };
     const read = () => { box.querySelectorAll('.lists-row').forEach((r) => { const c = l.categories[+r.dataset.i]; c.name = r.querySelector('[data-k=name]').value.trim(); c.words = r.querySelector('[data-k=words]').value.split(/[,\n]+/).map((w) => w.trim()).filter(Boolean); }); const one = box.querySelector('.lists-one'); if (one) l[one.dataset.k] = one.value.split('\n').map((w) => w.trim()).filter(Boolean); };
     box.addEventListener('click', async (e) => {
@@ -289,6 +301,7 @@
       if (b.dataset.l === 'close') { box.remove(); return; }
       if (b.dataset.l === 'add') { l.categories.push({ name: 'New category', words: [] }); paint(); const rows = box.querySelectorAll('.lists-row'); const n = rows[rows.length - 1].querySelector('[data-k=name]'); n.focus(); n.select(); return; }
       if (b.dataset.l === 'del') { l.categories.splice(+b.closest('.lists-row').dataset.i, 1); paint(); return; }
+      if (b.dataset.l === 'forget') { const n = (await L.lessons()).length; if (!n) return toast('There are no corrections to forget.'); if (!confirm(`Forget the ${n} correction${n === 1 ? '' : 's'} the AI has learnt from?`)) return; await L.lessons([]); toast('Forgotten. The AI goes by its own judgement again.'); return; }
       if (b.dataset.l === 'reset') { if (!confirm('Go back to the starting lists? (Your own categories and words are removed from the lists; pictures keep their category.)')) return; l = N.startingLists(); paint(); return; }
       if (b.dataset.l === 'save') { l.categories = l.categories.filter((c) => c.name); const seen = new Set(); l.categories = l.categories.filter((c) => !seen.has(c.name.toLowerCase()) && seen.add(c.name.toLowerCase()));
         N.configure(l); await L.lists(N.lists()); box.remove(); render(); toast(`Lists saved: ${l.categories.length} categories, ${l.styles.length} styles, ${l.forms.length} forms. Every Craft app sees them.`); }
