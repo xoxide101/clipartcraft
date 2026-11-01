@@ -25,7 +25,7 @@
   const srcOf = (it) => String(it.source || '').replace(/^Montage Slicer:\s*/i, '').replace(/^ImageCraft:\s*/i, '').replace(/\.[a-z0-9]{2,5}$/i, '').trim() || 'Added by hand';
   // the sheets and files pictures came from, most first: [key, label, count]
   const sources = () => { const m = new Map(); items.forEach((it) => { const k = srcOf(it); m.set(k, (m.get(k) || 0) + 1); }); return [...m].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([k, n]) => [k, k, n]); };
-  const placeholderName = (n) => /^(sheet\b.*[–-]\s*\d+|clip ?art(\s*[–-]?\s*\d+)?|img[ _-]?\d+|dsc\S*\d+|untitled|picture\s*\d*|item\s*\d*)$/i.test(String(n).trim()) || /^(sheet\b.*[–-]\s*\d+|clip ?art(\s*[–-]?\s*\d+)?|untitled|picture\s*\d*|item\s*\d*)$/i.test(String(n).replace(/_\d{3,}$/, '').trim());
+  const placeholderName = (n) => { const t = String(n).trim(), u = t.replace(/_\d{3,}$/, ''); return /^(sheet\b.*[–-]\s*\d+|clip ?art(\s*[–-]?\s*\d+)?|img[ _-]?\d+|dsc\S*\d+|untitled|picture\s*\d*|item\s*\d*)$/i.test(t) || /^(clip ?art(\s*[–-]?\s*\d+)?|untitled|picture\s*\d*|item\s*\d*)$/i.test(u) || /^[0-9a-f]{6,}(?:[\s-]+[0-9a-f]{3,})+/i.test(u) || /\s[–-]\s*\d+$/.test(u); };
   const needsSort = (it) => !KNOWN().includes(it.category || '') || placeholderName(it.name);
   // learning from a correction: the picture's look and the user's answer are remembered (and a new name word is added
   // to that category's words), so pictures like it are named and sorted that way from now on
@@ -304,7 +304,7 @@
       if (b.dataset.l === 'forget') { const n = (await L.lessons()).length; if (!n) return toast('There are no corrections to forget.'); if (!confirm(`Forget the ${n} correction${n === 1 ? '' : 's'} the AI has learnt from?`)) return; await L.lessons([]); toast('Forgotten. The AI goes by its own judgement again.'); return; }
       if (b.dataset.l === 'reset') { if (!confirm('Go back to the starting lists? (Your own categories and words are removed from the lists; pictures keep their category.)')) return; l = N.startingLists(); paint(); return; }
       if (b.dataset.l === 'save') { l.categories = l.categories.filter((c) => c.name); const seen = new Set(); l.categories = l.categories.filter((c) => !seen.has(c.name.toLowerCase()) && seen.add(c.name.toLowerCase()));
-        N.configure(l); await L.lists(N.lists()); box.remove(); render(); toast(`Lists saved: ${l.categories.length} categories, ${l.styles.length} styles, ${l.forms.length} forms. Every Craft app sees them.`); }
+        N.configure({ ...l, removed: N.startingLists().categories.flatMap((c) => c.words).filter((w) => !l.categories.some((c) => c.words.map((x) => x.toLowerCase()).includes(w.toLowerCase()))) }); await L.lists(N.lists()); box.remove(); render(); toast(`Lists saved: ${l.categories.length} categories, ${l.styles.length} styles, ${l.forms.length} forms. Every Craft app sees them.`); }
     });
     document.body.append(box); paint();
   }

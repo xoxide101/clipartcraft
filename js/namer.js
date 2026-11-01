@@ -24,7 +24,7 @@
     'Healthcare & services': 'stethoscope syringe pill medicine_bottle bandage first_aid_kit thermometer tooth toothbrush human_heart brain hospital ambulance wheelchair crutches hospital_bed dentist veterinarian pharmacy mail_carrier delivery_truck plumber electrician hairdresser barber_pole',
     'Sports & recreation': 'football soccer_ball basketball baseball baseball_bat tennis_racket golf_ball golf_club hockey_stick bowling_pin volleyball boxing_glove trophy medal whistle dumbbell skis snowboard surfboard swimmer runner cyclist sports_field stadium chess_piece playing_cards dice jigsaw_puzzle kite teddy_bear doll toy_train camping_tent fishing_rod',
     'Buildings & architecture': 'house barn farmhouse castle church cathedral temple mosque school_building hospital_building store restaurant hotel bank factory office_building skyscraper lighthouse windmill tower bridge cabin igloo pyramid palace greenhouse gazebo garage city_skyline column arch doorway window staircase living_room kitchen bedroom bathroom classroom',
-    'Transportation & travel': 'stagecoach covered_wagon horse_carriage horse_and_buggy wagon carriage car truck van bus taxi police_car fire_truck tractor bulldozer crane motorcycle scooter bicycle skateboard train locomotive tram airplane jet helicopter hot_air_balloon rocket spaceship boat sailboat ship canoe submarine anchor wheel traffic_light road_sign gas_pump suitcase passport compass eiffel_tower statue_of_liberty',
+    'Transportation & travel': 'tank army_tank armoured_vehicle military_jeep military_truck rocket_launcher missile_launcher warship battleship fighter_plane biplane stagecoach covered_wagon horse_carriage horse_and_buggy wagon carriage car truck van bus taxi police_car fire_truck tractor bulldozer crane motorcycle scooter bicycle skateboard train locomotive tram airplane jet helicopter hot_air_balloon rocket spaceship boat sailboat ship canoe submarine anchor wheel traffic_light road_sign gas_pump suitcase passport compass eiffel_tower statue_of_liberty',
     'Technology & media': 'computer laptop monitor keyboard computer_mouse smartphone tablet printer robot computer_chip circuit_board satellite_dish solar_panel wind_turbine lightbulb battery plug camera video_camera movie_camera film_strip clapperboard projector video_player play_button television radio headphones microphone game_controller floppy_disk cd usb_stick cloud_upload wifi_symbol email chat_bubble web_browser settings_gear map_pin padlock notification_bell',
     'Games & software': 'video_game arcade_machine game_cartridge game_console joystick game_box retro_computer floppy_disk_box pixel_character space_invader maze_game racing_game platform_game title_screen high_score_table pinball_machine handheld_game',
     'Home & equipment': 'chair table sofa bed lamp candle clock mirror key lock bathtub toilet sink towel broom vacuum_cleaner bucket basket vase flower_pot picture_frame rug pillow fireplace telephone mailbox fence ladder umbrella cup mug teapot kettle plate bowl fork knife spoon frying_pan cooking_pot oven stove refrigerator toaster blender hammer saw screwdriver wrench pliers drill axe shovel rake wheelbarrow toolbox paintbrush gear magnet flashlight forklift factory_machine welding_torch hard_hat oil_barrel conveyor_belt',
@@ -52,7 +52,12 @@
   }
   // the user's lists: { categories: [{ name, words: [] }], styles: [names], forms: [names] } (missing parts keep the starting ones)
   function configure(l = {}) {
-    if (Array.isArray(l.categories) && l.categories.length) cats = l.categories.filter((c) => c && c.name).map((c) => ({ name: String(c.name), words: (c.words || []).map(String) }));
+    if (Array.isArray(l.categories) && l.categories.length) {
+      cats = l.categories.filter((c) => c && c.name).map((c) => ({ name: String(c.name), words: (c.words || []).map(String) }));
+      // words added to the starting lists since (a stagecoach, a tank…) join the user's same category, unless the user took them out
+      const removed = new Set((l.removed || []).map((w) => String(w).toLowerCase()));
+      for (const sc of START.categories) { const c = cats.find((x) => x.name === sc.name); if (!c) continue; const have = new Set(c.words.map((w) => w.toLowerCase())); for (const w of sc.words) if (!have.has(w.toLowerCase()) && !removed.has(w.toLowerCase())) c.words.push(w); }
+    }
     if (Array.isArray(l.styles) && l.styles.length) styles = l.styles.map((n) => [n, PROMPT[n] || `${/^[aeiou]/i.test(n) ? 'an' : 'a'} ${n} picture`]);
     if (Array.isArray(l.forms) && l.forms.length) forms = l.forms.map((n) => [n, PROMPT[n] || `${/^[aeiou]/i.test(n) ? 'an' : 'a'} ${n}`]);
     build();
@@ -146,6 +151,6 @@
 
   window.CraftNamer = { ready, downloaded, name, fromFile, colourWords, configure, learnWord, MB,
     get WORDS() { return WORDS; }, get CATEGORIES() { return cats.map((c) => c.name); }, get STYLES() { return styles.map((x) => x[0]); }, get FORMS() { return forms.map((x) => x[0]); },
-    lists: () => ({ categories: cats.map((c) => ({ name: c.name, words: c.words.slice() })), styles: styles.map((x) => x[0]), forms: forms.map((x) => x[0]) }),
+    lists: () => { const all = new Set(cats.flatMap((c) => c.words.map((w) => w.toLowerCase()))); return { categories: cats.map((c) => ({ name: c.name, words: c.words.slice() })), styles: styles.map((x) => x[0]), forms: forms.map((x) => x[0]), removed: START.categories.flatMap((c) => c.words).filter((w) => !all.has(w.toLowerCase())) }; },
     startingLists: () => JSON.parse(JSON.stringify(START)) };
 })();
