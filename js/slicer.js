@@ -214,7 +214,7 @@
   // rows and columns left out, their names (row labels, column headings), captions read, and boxes moved by hand
   // (keyed by where the box was found). `work` is the main area with ruled-out parts and left-out text painted over as
   // page: everything is found and cut from it; (wx, wy) is where it sits on the sheet.
-  let area = null, outs = [], table = null, offRows = new Set(), offCols = new Set(), rowNames = [], colNames = [], captions = [], readText = new Map(), moved = new Map(), prefs = new Map(), splits = new Map(), zones = [], marks = [], sheetTitle = '', tool = 'pick', work = null, wx = 0, wy = 0;
+  let area = null, outs = [], table = null, offRows = new Set(), offCols = new Set(), rowNames = [], colNames = [], captions = [], readText = new Map(), moved = new Map(), prefs = new Map(), splits = new Map(), zones = [], marks = [], joins = [], chosenBoxes = new Set(), sheetTitle = '', tool = 'pick', work = null, wx = 0, wy = 0;
   const keyOf = (b) => `${Math.round(b.x + wx)},${Math.round(b.y + wy)},${Math.round(b.w)},${Math.round(b.h)}`;
   function prep() {
     const a = area || { x: 0, y: 0, w: sheet.width, h: sheet.height }; wx = a.x; wy = a.y; work = cropOf(sheet, a.x, a.y, a.w, a.h); pagePlain = null;
@@ -306,7 +306,7 @@
       <p class="hint">Click a box on the sheet to leave that picture out (or put it back); drag its edges to make it bigger or smaller.</p></div>`;
   }
   // the main area, ruled-out parts and text: what a drag on the sheet does, and the margins as numbers
-  const TOOLS = { pick: 'Click a box to leave it out; drag a box’s edge to move it (to trim off a name, or take in a bit that was missed).', area: 'Drag a box round the part to cut: everything outside it is left out. Drag its edges to move them.', out: 'Drag a box over anything to leave out (a title, a label, a watermark, a picture). Click one to take it away again.', solid: 'Draw a box, an ellipse or a lasso on a picture (lasso: drag to draw freehand, click or Shift-click for straight corners, close on the first corner, a double-click or Enter; Backspace takes a corner off, Escape cancels; hold Alt to erase with that one). Keep puts that part back exactly as on the sheet (a face the colour of the page); Erase makes it see-through. Outside does it to the rest of that picture instead. They are done after everything automatic, in order; click one to take it away.', grid: 'Drag a box over a row or a part that came out wrong, then say how many pictures across and down: it is cut as that grid. Right-click one of its pictures to change or remove it.' };
+  const TOOLS = { pick: 'Click a box to leave it out; Ctrl-click several to join them (right-click); drag a box’s edge to move it (to trim off a name, or take in a bit that was missed).', area: 'Drag a box round the part to cut: everything outside it is left out. Drag its edges to move them.', out: 'Drag a box over anything to leave out (a title, a label, a watermark, a picture). Click one to take it away again.', solid: 'Draw a box, an ellipse or a lasso on a picture (lasso: drag to draw freehand, click or Shift-click for straight corners, close on the first corner, a double-click or Enter; Backspace takes a corner off, Escape cancels; hold Alt to erase with that one). Keep puts that part back exactly as on the sheet (a face the colour of the page); Erase makes it see-through. Outside does it to the rest of that picture instead. They are done after everything automatic, in order; click one to take it away.', grid: 'Drag a box over a row or a part that came out wrong, then say how many pictures across and down: it is cut as that grid. Right-click one of its pictures to change or remove it.' };
   function areaHtml() {
     if (!sheet) return '';
     const a = area || { x: 0, y: 0, w: sheet.width, h: sheet.height }, m = { t: a.y, l: a.x, b: sheet.height - a.y - a.h, r: sheet.width - a.x - a.w };
@@ -385,6 +385,10 @@
       for (let i = 0; i < sp.k; i++) { const part = sp.down ? { x: b.x, y: b.y + (b.h * i) / sp.k, w: b.w, h: b.h / sp.k } : { x: b.x + (b.w * i) / sp.k, y: b.y, w: b.w / sp.k, h: b.h };
         out.push(fit({ ...b, item: null, x: Math.round(part.x), y: Math.round(part.y), w: Math.round(part.w), h: Math.round(part.h), fixed: true, key: `${b.key}/${i}`, part: i })); }
       return out; });
+    // boxes joined by hand: one box over all of them, where the first one was
+    for (const j of joins) { const at = boxes.findIndex((b) => j.keys.includes(b.key)); if (at < 0) continue;
+      const one = { x: j.rect.x - wx, y: j.rect.y - wy, w: j.rect.w, h: j.rect.h, fixed: true, key: 'join:' + j.keys.join('+'), joined: j.keys.length, r: boxes[at].r, c: boxes[at].c, row: boxes[at].row, col: boxes[at].col };
+      boxes = [...boxes.slice(0, at).filter((b) => !j.keys.includes(b.key)), fit(one), ...boxes.slice(at).filter((b) => !j.keys.includes(b.key))]; }
     skip = new Set([...skip].filter((i) => i < boxes.length)); draw(); count(); renderNames();
   }
   // What the sheet itself says about a picture, which is more than an AI can see: the row's label (its subject; words in
@@ -507,6 +511,22 @@
     const m = String(v).match(/(\d+)\s*(?:[x×*,\s]\s*(\d+))?/i); if (!m) return null; const cols = Math.max(1, Math.min(60, +m[1])), rows = Math.max(1, Math.min(60, +(m[2] || 1)));
     return { cols, rows };
   }
+  // the chosen boxes (Ctrl-click) joined into one picture: the box round them all
+  function joinChosen() {
+    const bs = boxes.filter((b) => chosenBoxes.has(b.key)); if (bs.length < 2) return;
+    const r = bs.map(sheetBox), x0 = Math.min(...r.map((q) => q.x)), y0 = Math.min(...r.map((q) => q.y)), x1 = Math.max(...r.map((q) => q.x + q.w)), y1 = Math.max(...r.map((q) => q.y + q.h));
+    const keys = bs.flatMap((b) => (b.key.startsWith('join:') ? (joins.find((j) => 'join:' + j.keys.join('+') === b.key) || { keys: [b.key] }).keys : [b.key]));
+    joins = joins.filter((j) => !j.keys.some((k) => keys.includes(k))); joins.push({ keys, rect: clampBox({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }) });
+    chosenBoxes.clear(); skip.clear(); renderPanel(); find(); opts.toast && opts.toast(`${bs.length} joined into one picture.`);
+  }
+  // a table's row joined with the one below (a row cut in two), or a column with the next: every column (row) at once
+  function joinTable(b, down) {
+    const list = down ? table.rows : table.cols, kinds = down ? table.rowKind : table.colKind, i = down ? b.row : b.col; let n = i + 1; while (n < list.length && kinds[n] !== 'pic' && kinds[n] !== 'caption' && kinds[n] !== 'gap') n++;
+    if (n >= list.length) return opts.toast && opts.toast(down ? 'There is no row below it.' : 'There is no column after it.');
+    list.splice(i, n - i + 1, [list[i][0], list[n][1]]); kinds.splice(i, n - i + 1, 'pic');
+    if (down) { offRows.clear(); rowNames = []; } else { offCols.clear(); colNames = []; }
+    skip.clear(); moved.clear(); prefs.clear(); splits.clear(); joins = []; renderPanel(); find();
+  }
   // a box split by hand (its parts are then moved and set one by one)
   function splitBox(b, k, down) { splits.set(b.key, { k, down }); skip.clear(); renderPanel(); find(); if (opts.toast) opts.toast(`Split into ${k}: drag the edges to fit each one (zoom in with the mouse wheel to be exact).`); }
   // a table's column or row split into equal parts (a line too faint to find): every row (or column) at once
@@ -521,11 +541,11 @@
   // Everything set on the sheet is kept as a snapshot each time the sheet is redrawn after a change; Undo and Redo step
   // through them (Ctrl+Z, Ctrl+Y, the tool bar, the right-click menus).
   let past = [], future = [], now = '', restoring = false;
-  const snapshot = () => JSON.stringify({ area, outs, zones, marks, moved: [...moved], prefs: [...prefs], splits: [...splits], skip: [...skip], offRows: [...offRows], offCols: [...offCols], rowNames, colNames, sheetTitle, table, mode: S.mode, rows: S.rows, cols: S.cols, inset: S.inset, cut: S.cut, see: S.see, notext: S.notext });
+  const snapshot = () => JSON.stringify({ area, outs, zones, marks, joins, moved: [...moved], prefs: [...prefs], splits: [...splits], skip: [...skip], offRows: [...offRows], offCols: [...offCols], rowNames, colNames, sheetTitle, table, mode: S.mode, rows: S.rows, cols: S.cols, inset: S.inset, cut: S.cut, see: S.see, notext: S.notext });
   function checkpoint() { if (!sheet || restoring) return; const s2 = snapshot(); if (s2 === now) return; if (now) { past.push(now); if (past.length > 200) past.shift(); } now = s2; future = []; undoButtons(); }
   function restore(js) {
     const o = JSON.parse(js); restoring = true;
-    ({ area, outs, zones, marks, rowNames, colNames, sheetTitle, table } = o); moved = new Map(o.moved); prefs = new Map(o.prefs); splits = new Map(o.splits); skip = new Set(o.skip); offRows = new Set(o.offRows); offCols = new Set(o.offCols);
+    ({ area, outs, zones, marks, rowNames, colNames, sheetTitle, table } = o); joins = o.joins || []; chosenBoxes.clear(); moved = new Map(o.moved); prefs = new Map(o.prefs); splits = new Map(o.splits); skip = new Set(o.skip); offRows = new Set(o.offRows); offCols = new Set(o.offCols);
     Object.assign(S, { mode: o.mode, rows: o.rows, cols: o.cols, inset: o.inset, cut: o.cut, see: o.see, notext: o.notext }); now = js;
     renderPanel(); find(); restoring = false; undoButtons();
   }
@@ -538,7 +558,7 @@
   function resetSheet() {
     if (!sheet) return; // (Undo brings it all back)
     const keepNames = { rowNames: rowNames.slice(), colNames: colNames.slice(), sheetTitle };
-    area = null; outs = []; zones = []; marks = []; table = null; offRows.clear(); offCols.clear(); moved.clear(); prefs.clear(); splits.clear(); skip.clear(); poly = null; showLasso(null);
+    area = null; outs = []; zones = []; marks = []; joins = []; chosenBoxes.clear(); table = null; offRows.clear(); offCols.clear(); moved.clear(); prefs.clear(); splits.clear(); skip.clear(); poly = null; showLasso(null);
     try { const a = autoCut(sheet); Object.assign(S, a.settings); autoSaid = a.said; table = a.table || null; area = a.area || null; S.notext = !!a.notext; } catch (e) { autoSaid = ''; }
     ({ rowNames, colNames, sheetTitle } = keepNames); tool = 'pick'; renderPanel(); find(); opts.toast && opts.toast('The sheet is back to how it was found (Undo brings your changes back).');
   }
@@ -579,6 +599,9 @@
       '-', { label: 'Keep its shadow', checked: !b.noShadow, run: () => setPref(b, { noShadow: false }) }, { label: 'Leave out its shadow', checked: !!b.noShadow, run: () => setPref(b, { noShadow: true }) },
       '-', { label: 'Cut the picture out', checked: !b.whole && !b.boxOnly && (S.cut || b.cutOut), run: () => setPref(b, { whole: false, boxOnly: false, cutOut: true }) }, { label: 'Keep the whole box', checked: !!b.boxOnly || (!S.cut && !b.whole && !b.cutOut), run: () => setPref(b, { whole: false, boxOnly: true, cutOut: false }) }, { label: 'Keep the whole box as it is (a photo)', checked: !!b.whole, run: () => setPref(b, { whole: true, boxOnly: false, cutOut: false }) }] },
       '-', { label: 'Split this box', sub: [{ label: 'Into 2, side by side', run: () => splitBox(b, 2, false) }, { label: 'Into 3, side by side', run: () => splitBox(b, 3, false) }, '-', { label: 'Into 2, one above the other', run: () => splitBox(b, 2, true) }, { label: 'Into 3, one above the other', run: () => splitBox(b, 3, true) }] },
+      ...(chosenBoxes.size >= 2 ? [{ label: `Join the ${chosenBoxes.size} chosen into one picture`, run: joinChosen }] : [{ label: 'Join with others: Ctrl-click the boxes, then right-click', disabled: true }]),
+      ...(b.joined ? [{ label: `Undo this join (${b.joined} boxes)`, run: () => { joins = joins.filter((j) => 'join:' + j.keys.join('+') !== b.key); renderPanel(); find(); } }] : []),
+      ...(S.mode === 'table' && table && b.row !== undefined ? [{ label: 'Join this row with the one below (all columns)', run: () => joinTable(b, true) }, { label: 'Join this column with the next (all rows)', run: () => joinTable(b, false) }] : []),
       ...(S.mode === 'table' && table && b.col !== undefined ? [{ label: 'Split this column (all rows)', sub: [{ label: 'Into 2', run: () => splitTable(b, 2, false) }, { label: 'Into 3', run: () => splitTable(b, 3, false) }] }, { label: 'Split this row (all columns)', sub: [{ label: 'Into 2', run: () => splitTable(b, 2, true) }, { label: 'Into 3', run: () => splitTable(b, 3, true) }] }] : []),
       '-', ...(isCell ? [{ label: 'Leave out this whole row', run: () => { offRows.add(b.r); skip.clear(); renderPanel(); find(); } }, { label: 'Leave out this whole column', run: () => { offCols.add(b.c); skip.clear(); renderPanel(); find(); } }, '-'] : []),
       ...(b.zone !== undefined ? [{ label: `Change this grid (${zones[b.zone].cols} × ${zones[b.zone].rows})…`, run: () => { const z = zones[b.zone], n = askGrid(z, z); if (!n) return; Object.assign(z, n); skip.clear(); renderPanel(); find(); } }, { label: 'Remove this grid', run: () => { zones.splice(b.zone, 1); skip.clear(); renderPanel(); find(); } }] : []),
@@ -645,6 +668,7 @@
       const skipped = skip.has(i), p = S.mode === 'find' && !b.fixed ? pad : 0, bx = b.x - p, by = b.y - p, bw = b.w + p * 2, bh = b.h + p * 2;
       if (skipped && !live) { x.fillStyle = 'rgba(30,30,40,.55)'; x.fillRect(bx, by, bw, bh); }
       x.strokeStyle = skipped ? '#8a8fa3' : live ? 'rgba(230,57,70,.45)' : '#e63946'; x.setLineDash(skipped || live ? [lw * 3, lw * 2] : []); x.strokeRect(bx, by, bw, bh); x.setLineDash([]);
+      if (chosenBoxes.has(b.key)) { x.fillStyle = 'rgba(37,99,235,.25)'; x.fillRect(bx, by, bw, bh); x.strokeStyle = '#2563eb'; x.lineWidth = lw * 1.5; x.setLineDash([]); x.strokeRect(bx, by, bw, bh); x.lineWidth = Math.max(1, Math.round(lw / (live ? 2 : 1))); }
       if (b.fixed && !skipped) { x.fillStyle = '#e63946'; const hs = lw * 2.5; for (const [hx, hy] of [[bx + bw / 2, by], [bx + bw / 2, by + bh], [bx, by + bh / 2], [bx + bw, by + bh / 2]]) x.fillRect(hx - hs, hy - hs, hs * 2, hs * 2); }
       const nm = skipped ? '' : names[n] || labelOf(b), label = skipped ? '✕' : `${++n}${nm ? ' ' + nm : ''}`, tw = x.measureText(label).width, ly = by; // (inside the box's top: above it, it reads as the row above's)
       if (S.showNames !== false || skipped) { x.fillStyle = skipped ? '#8a8fa3' : '#e63946'; x.fillRect(bx, ly, tw + 10, fs + 6); x.fillStyle = '#fff'; x.fillText(label, bx + 5, ly + 3); }
@@ -779,7 +803,7 @@
     if (window.CraftWork) window.CraftWork.add(file, { used: 0, pending: 'slice' }).catch(() => {});
     pagePlain = null; sheetFile = file; sheetName = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim(); skip.clear(); S.names = ''; S.category = ''; el.querySelector('.sl-empty').hidden = true;
     original = sheet; zoom = 1; past = []; future = []; now = '';
-    area = null; outs = []; table = null; offRows.clear(); offCols.clear(); rowNames = []; colNames = []; captions = []; readText.clear(); moved.clear(); prefs.clear(); splits.clear(); zones = []; marks = []; sheetTitle = ''; tool = 'pick';
+    area = null; outs = []; table = null; offRows.clear(); offCols.clear(); rowNames = []; colNames = []; captions = []; readText.clear(); moved.clear(); prefs.clear(); splits.clear(); zones = []; marks = []; joins = []; chosenBoxes.clear(); sheetTitle = ''; tool = 'pick';
     try { const a = autoCut(sheet); Object.assign(S, a.settings); autoSaid = a.said; table = a.table || null; area = a.area || null; S.notext = !!a.notext; } catch (e) { console.warn('Working out the cut failed', e); autoSaid = ''; S.notext = false; }
     renderPanel(); find(); applyZoom(); const d = desk(); d.scrollLeft = d.scrollTop = 0;
     if (S.autoread !== false && ((S.mode === 'table' && table) || captions.some((t) => t.own))) readLabels(null, true);
@@ -1117,6 +1141,9 @@
       if (tool === 'solid') { let i = -1; marks.forEach((mk, j) => { if (inPoly(mk.pts, p.x, p.y)) i = j; }); if (i >= 0) { marks.splice(i, 1); renderPanel(); draw(); } return; }
       if (tool !== 'pick') return;
       const i = boxes.findIndex((b) => { const sb = sheetBox(b); return p.x >= sb.x && p.x <= sb.x + sb.w && p.y >= sb.y && p.y <= sb.y + sb.h; });
+      // Ctrl-click: choose several (to join them); a plain click leaves a picture out (or puts it back)
+      if (i >= 0 && (e.ctrlKey || e.metaKey)) { const k = boxes[i].key; if (chosenBoxes.has(k)) chosenBoxes.delete(k); else chosenBoxes.add(k); draw(); if (chosenBoxes.size === 2) opts.toast && opts.toast('Right-click to join the chosen boxes into one picture.'); return; }
+      if (chosenBoxes.size) { chosenBoxes.clear(); draw(); }
       if (i >= 0) { if (skip.has(i)) skip.delete(i); else skip.add(i); draw(); count(); return; }
       // a table's row label or column heading: that whole row or column out (or back)
       if (S.mode === 'table' && table) { const pr = table.rows.map((r, j) => j).filter((j) => table.rowKind[j] === 'pic'), pc = table.cols.map((c, j) => j).filter((j) => table.colKind[j] === 'pic');
@@ -1169,7 +1196,7 @@
       x.translate(c.width / 2, c.height / 2); if (kind === 'flipx') x.scale(-1, 1); else if (kind === 'flipy') x.scale(1, -1); else x.rotate(a); x.imageSmoothingQuality = 'high'; x.drawImage(src, -W / 2, -H / 2);
       sheet = x.getImageData(0, 0, c.width, c.height);
     }
-    past = []; future = []; now = ''; svgSheet = null; area = null; outs = []; zones = []; marks = []; table = null; offRows.clear(); offCols.clear(); rowNames = []; colNames = []; captions = []; readText.clear(); moved.clear(); prefs.clear(); splits.clear(); skip.clear(); pagePlain = null;
+    past = []; future = []; now = ''; svgSheet = null; area = null; outs = []; zones = []; marks = []; joins = []; chosenBoxes.clear(); table = null; offRows.clear(); offCols.clear(); rowNames = []; colNames = []; captions = []; readText.clear(); moved.clear(); prefs.clear(); splits.clear(); skip.clear(); pagePlain = null;
     try { const a = autoCut(sheet); Object.assign(S, a.settings); autoSaid = a.said; table = a.table || null; area = a.area || null; S.notext = !!a.notext; } catch (e) { autoSaid = ''; }
     zoom = 1; renderPanel(); find(); applyZoom();
   }
@@ -1250,6 +1277,7 @@
   }
   function onKey(e) {
     if (!el || el.hidden) return; if (lassoKey(e)) { e.preventDefault(); return; }
+    if (e.key === 'Escape' && chosenBoxes.size) { e.preventDefault(); chosenBoxes.clear(); draw(); return; }
     if (e.key === 'Escape' && tool !== 'pick' && !(window.CraftMenu && CraftMenu.isOpen()) && !el.querySelector('.sl-review:not([hidden])')) { e.preventDefault(); tool = 'pick'; renderPanel(); opts.toast && opts.toast('Applied: back to choosing cells.'); return; }
     if ((e.ctrlKey || e.metaKey) && !/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) && sheet) { const k = e.key.toLowerCase(); if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; } if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); return; } } // (Escape never closes the slicer: too easy to lose one's place; the Close button does)
     if (!/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) && !e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'n' || e.key === 'b') && sheet) { const b = el.querySelector(`[data-show=${e.key === 'n' ? 'showNames' : 'showBoxes'}]`); if (b) b.click(); return; }
@@ -1262,7 +1290,7 @@
   // Slice the sheet again on the left brings it back)
   function forget() {
     sheet = null; sheetFile = null; sheetName = ''; work = null; found = null; boxes = []; skip.clear(); area = null; outs = []; zones = []; marks = []; table = null; offRows.clear(); offCols.clear();
-    rowNames = []; colNames = []; captions = []; readText.clear(); moved.clear(); prefs.clear(); splits.clear(); sheetTitle = ''; autoSaid = ''; past = []; future = []; now = ''; poly = null; tool = 'pick'; queueN = 0; queue = [];
+    rowNames = []; colNames = []; captions = []; readText.clear(); moved.clear(); prefs.clear(); splits.clear(); joins = []; chosenBoxes.clear(); sheetTitle = ''; autoSaid = ''; past = []; future = []; now = ''; poly = null; tool = 'pick'; queueN = 0; queue = [];
     if (el) { const c = el.querySelector('.sl-desk canvas'); c.hidden = true; el.querySelector('.sl-empty').hidden = false; const st = el.querySelector('.sl-status'); if (st) st.innerHTML = ''; renderPanel(); }
   }
   function close() { if (el) { el.hidden = true; const r = el.querySelector('.sl-review'); if (r) r.hidden = true; } }
