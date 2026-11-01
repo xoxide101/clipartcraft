@@ -308,3 +308,9 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 .dna small { font-size: 9.5px; color: var(--muted); max-width: 58px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dna.on { border-color: var(--accent); }
 .dna:hover { border-color: var(--line); }
+/* Touch up (js/editor.js) */
+.ed-clean { display: grid; gap: 5px; }
+.ed-crow { display: grid; grid-template-columns: auto 64px 1fr; gap: 6px; align-items: center; }
+.ed-crow .input { padding: 3px 6px; min-width: 0; }
+.ed-crow .hint { font-size: 11px; }
+.editor .ed-canvas { box-shadow: 0 4px 20px rgba(0,0,0,.25); }

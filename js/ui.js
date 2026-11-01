@@ -138,6 +138,7 @@
       <label class="field"><span>Tags <small class="hint">(separated by commas)</small></span><input class="input" data-f="tags" value="${esc(one ? (one.tags || []).join(', ') : '')}" placeholder="${one ? 'farm, red, barn' : 'added to each'}"></label>
       ${one ? `<p class="hint">${one.width} × ${one.height} pixels · ${[one.png ? 'PNG' : '', one.svg ? 'SVG' : '', one.anim ? `moving (${one.frames || '?'} frames)` : ''].filter(Boolean).join(', ')}${one.kind === 'bw' ? ' · black and white' : one.kind === 'grey' ? ' · grey' : ''}${one.source ? ` · from ${esc(one.source)}` : ''}${one.cloud ? ` · named by ${esc(one.cloud)}` : ''}</p>
       ${one.links ? `<div class="links"><span class="hint">On the server:</span>${Object.entries(one.links).filter(([k]) => k !== 'thumb').map(([k, u]) => `<a href="${esc(u)}" target="_blank" rel="noopener" title="${esc(u)}">${k.toUpperCase()}</a><button type="button" class="btn ghost sm" data-copy="${esc(u)}" title="Copy the link">Copy link</button>`).join('')}</div>` : ''}
+      ${one.png ? `<div class="btns"><button class="btn primary" type="button" data-act="touchup" title="Fix it by hand: erase or restore with a box, ellipse or lasso, brushes, a magic wand, and clean-ups for specks, holes and halos">Touch up…</button>${one.pngFirst ? '<span class="hint">touched up</span>' : ''}</div>` : ''}
       <div class="btns">${one.png ? '<button class="btn outline" type="button" data-act="dl-png">PNG</button>' : ''}${one.anim ? '<button class="btn outline" type="button" data-act="dl-anim">Animation</button>' : ''}${one.svg ? '<button class="btn outline" type="button" data-act="dl-svg">SVG</button>' : ''}<button class="btn outline" type="button" data-act="copy">Copy</button></div>` : ''}
       <div class="btns"><button class="btn outline" type="button" data-act="export-sel">Export ${one ? 'it' : 'these'} (ZIP)</button><button class="btn outline danger" type="button" data-act="delete">Delete</button></div></div>`;
   }
@@ -206,6 +207,7 @@
       if (a === 'unserver') { const S = chosen().filter((it) => it.serverId); if (!S.length) return toast('Choose something that is on the server.'); if (!confirm(`Take ${S.length === 1 ? `“${S[0].name}”` : `${S.length} items`} off the server? (They stay in this library.)`)) return; await L.removeFromServer(S); await reload(); toast('Taken off the server.'); return; }
       if (a === 'open-server') { if (!serverUrl) return toast('Connect to a server first.'); window.open(serverUrl + '/', '_blank'); return; }
       const one = chosen()[0]; if (!one) return;
+      if (a === 'touchup') return window.ClipArtEditor && ClipArtEditor.open(one, { toast, done: async () => { await reload(); } });
       if (a === 'dl-png') download(one.png, `${one.name}.png`);
       if (a === 'dl-anim') download(one.anim, `${one.name}.${(one.anim.type.split('/')[1] || 'gif').replace('apng', 'png')}`);
       if (a === 'dl-svg') download(new Blob([one.svg], { type: 'image/svg+xml' }), `${one.name}.svg`);
@@ -267,7 +269,7 @@
     const info = one ? [{ info: it.name, strong: true }, { info: [it.category || 'Not sorted yet', it.style, it.form].filter(Boolean).join(' · ') }, ...(it.collection || it.place ? [{ info: [it.collection && `from “${it.collection}”`, it.place].filter(Boolean).join(' · ') }] : []), ...((it.tags || []).length ? [{ info: `Tags: ${it.tags.slice(0, 8).join(', ')}` }] : [])]
       : [{ info: `${n} chosen`, strong: true }, { info: [...new Set(S.map((x) => x.category || 'Not sorted yet'))].slice(0, 3).join(', ') }];
     CraftMenu.show(e.clientX, e.clientY, [...info, '-',
-      { label: 'Properties…', key: 'Alt+Enter', run: () => openProps() }, { label: 'Rename…', key: 'F2', disabled: !one, run: () => openProps('name') },
+      { label: 'Properties…', key: 'Alt+Enter', run: () => openProps() }, { label: 'Touch up…', disabled: !one || !it.png, run: () => act('touchup') }, { label: 'Rename…', key: 'F2', disabled: !one, run: () => openProps('name') },
       ...(one && sameDna(it).length ? [{ label: 'Same DNA / style', sub: [...[it, ...sameDna(it)].sort((a, b) => colOf(a) - colOf(b)).map((x) => ({ label: `${x.name}${x.style ? ` (${x.style})` : ''}`, checked: x.id === it.id, run: () => { sel = new Set([x.id]); last = x.id; render(); document.querySelector(`#grid [data-id="${x.id}"]`)?.scrollIntoView({ block: 'nearest' }); } })), '-', { label: `Choose all ${sameDna(it).length + 1}`, run: () => { sel = new Set([it.id, ...sameDna(it).map((x) => x.id)]); render(); } }] }] : []),
       { label: 'Category', sub: [...KNOWN().map((c) => ({ label: c, checked: S.every((x) => x.category === c), run: move(c) })), '-', { label: 'Not sorted yet', run: move('') }] },
       '-', { label: one && it.ai ? 'Ask the AI again' : 'Ask the AI', run: () => act('ai-again') }, { label: 'Ask a cloud AI…', run: () => act('cloud-ask') },

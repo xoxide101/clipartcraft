@@ -635,7 +635,7 @@
     if (!t && !b && !l && !r) return img;
     const L = l ? n : 0, T = t ? n : 0, o = new ImageData(W + L + (r ? n : 0), H + T + (b ? n : 0));
     for (let y = 0; y < H; y++) o.data.set(d.subarray(y * W * 4, (y + 1) * W * 4), ((y + T) * o.width + L) * 4);
-    o.at = img.at; return o;
+    o.at = img.at; o.room = { l: L, t: T }; return o;
   }
   let drawRun = 0;
   // how many pictures touch each side (cut as now, before any room is added), for the room box
@@ -798,6 +798,8 @@
         // what the sheet said: kept as the picture's own information (the AI's sorting fills in only what is missing)
         if (mt.style) it.style = mt.style; if (mt.description) it.description = mt.description; if (mt.title) it.collection = mt.title; if (mt.where) it.place = mt.where;
         if (mt.subject) { it.original = mt.subject; it.seen = mt.subject; } if (mt.fromSheet) it.checked = true;
+        // where it sat on the sheet (sheet pixels of its top-left, and its size): the editor can bring parts back from the sheet
+        if (r.img.at) it.cutAt = { x: r.img.at.x + wx - ((r.img.room || {}).l || 0), y: r.img.at.y + wy - ((r.img.room || {}).t || 0), w: r.img.width, h: r.img.height };
         made.push(await L.put(it));
       }
       if (src) await window.CraftWork.add(sheetFile, { used: made.length, pending: '' });
