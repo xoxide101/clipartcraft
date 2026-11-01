@@ -234,7 +234,15 @@
       for (let n = 0; n < 30; n++) { const f = list[list.findIndex((r, i) => kinds[i] === 'pic')], span = [f[0] - gap - size, f[0] - gap - 1]; if (span[0] < lo - size * 0.35) break; add([Math.max(0, span[0]), span[1]]); }
       for (let n = 0; n < 30; n++) { const ps = list.map((r, i) => i).filter((i) => kinds[i] === 'pic'), l = list[ps[ps.length - 1]], span = [l[1] + gap + 1, l[1] + gap + size]; if (span[1] > hi + size * 0.35) break; add(span); }
     };
+    // the names already read (or typed) stay with their own rows and columns: new ones before them push them along
+    const firstPic = (list, kinds) => { const i = kinds.indexOf('pic'); return i < 0 ? 0 : list[i][0]; }, r0 = firstPic(table.rows, table.rowKind), c0 = firstPic(table.cols, table.colKind);
+    const nr = table.rowKind.filter((k) => k === 'pic').length, nc = table.colKind.filter((k) => k === 'pic').length;
     grow(table.rows, table.rowKind, area.y, area.y + area.h); grow(table.cols, table.colKind, area.x, area.x + area.w);
+    const before = (list, kinds, at) => list.filter((r, i) => kinds[i] === 'pic' && r[0] < at).length, ar = before(table.rows, table.rowKind, r0), ac = before(table.cols, table.colKind, c0);
+    const shift = (arr, n) => [...Array(n).fill(''), ...arr], shiftSet = (set, n) => new Set([...set].map((i) => i + n));
+    if (ar) { rowNames = shift(rowNames, ar); offRows = shiftSet(offRows, ar); } if (ac) { colNames = shift(colNames, ac); offCols = shiftSet(offCols, ac); }
+    // new rows or columns: their labels are read too (when reading by itself is on)
+    if ((table.rowKind.filter((k) => k === 'pic').length !== nr || table.colKind.filter((k) => k === 'pic').length !== nc) && S.autoread !== false) setTimeout(() => readLabels(null, true), 0);
   }
   // the table's picture cells in the work's pixels, each with its row and column (counted over picture rows and columns);
   // a cell whose edge is not plain (a photo) is kept whole
