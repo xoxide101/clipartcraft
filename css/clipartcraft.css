@@ -112,3 +112,32 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 .links .hint { grid-column: 1 / -1; }
 .links a { font-weight: 600; color: var(--accent, #c2410c); }
 .links button { justify-self: start; padding: 2px 8px; font-size: 12px; }
+
+/* Import pictures */
+.imp .sl-main { grid-template-columns: 1fr 330px; }
+.imp-left { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto 1fr 196px; background: var(--desk); }
+.imp-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); min-height: 46px; }
+.imp-tools .seg { flex: 0 0 auto; }
+.imp-tools .seg .btn { flex: 0 0 auto; padding: 0 10px; }
+.imp-tools .sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 4px; }
+.imp-tools .btn.outline { height: 30px; padding: 0 10px; }
+.imp-stage { position: relative; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.imp-stage canvas { max-width: 100%; max-height: 100%; cursor: crosshair; box-shadow: 0 4px 20px rgba(0,0,0,.25); touch-action: none; background: repeating-conic-gradient(var(--check-a) 0 25%, var(--check-b) 0 50%) 0 0 / 16px 16px; }
+.imp-strip { display: flex; gap: 8px; overflow-x: auto; overflow-y: hidden; padding: 10px 12px; background: var(--panel); border-top: 1px solid var(--line); }
+.imp-card { position: relative; flex: 0 0 132px; display: grid; grid-template-rows: 108px auto auto; gap: 3px; padding: 6px; border: 2px solid transparent; border-radius: 10px; background: var(--panel-2); color: var(--fg); cursor: pointer; text-align: center; }
+.imp-card[aria-selected="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.imp-card[data-off="true"] .pic { opacity: .35; }
+.imp-card .pic { aspect-ratio: auto; height: 108px; }
+.imp-card .pic img { max-width: 100%; max-height: 100%; }
+.imp-card .nm { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.imp-card .sub { font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.imp-card .bdg { position: absolute; left: 9px; font-style: normal; font-size: 9.5px; font-weight: 700; padding: 1px 5px; border-radius: 4px; background: var(--accent); color: var(--accent-ink); }
+.imp-card .bdg:nth-of-type(1) { top: 9px; } .imp-card .bdg:nth-of-type(2) { top: 27px; } .imp-card .bdg:nth-of-type(3) { top: 45px; } .imp-card .bdg:nth-of-type(4) { top: 63px; }
+.imp-card .inc { position: absolute; top: 8px; right: 8px; width: 17px; height: 17px; accent-color: var(--accent); }
+.hint.warn { color: #c2410c; }
+.btn.wide { width: 100%; }
+@media (max-width: 760px) { .imp .sl-main { grid-template-columns: 1fr; grid-template-rows: 1fr auto; } .imp-left { grid-template-rows: auto minmax(220px, 1fr) 170px; } }
+
+/* the working area (files clip art was imported from) */
+.cats .work-head { margin: 12px 8px 4px; font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.tile .used { position: absolute; top: 9px; left: 9px; font-style: normal; font-size: 9.5px; font-weight: 700; padding: 1px 5px; border-radius: 4px; background: #15803d; color: #fff; }

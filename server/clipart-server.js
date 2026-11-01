@@ -28,7 +28,7 @@ function settings() {
 
 // ------------------------------------------------------------------ the item: what every database keeps
 // Columns are plain text and numbers so SQLite, MySQL and MariaDB hold them the same way.
-const COLS = ['id', 'type', 'name', 'category', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash', 'added', 'changed', 'files'];
+const COLS = ['id', 'type', 'name', 'category', 'style', 'form', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash', 'added', 'changed', 'files'];
 const FILE_KINDS = ['png', 'svg', 'anim', 'orig', 'thumb', 'model']; // the files one item may have (model: a 3D mesh)
 const TYPES = ['clipart', 'model']; // what an item is: clip art, or a 3D model (its png/thumb are pictures of it)
 const MIME = { png: 'image/png', svg: 'image/svg+xml', gif: 'image/gif', webp: 'image/webp', apng: 'image/apng', jpg: 'image/jpeg', jpeg: 'image/jpeg', avif: 'image/avif', bmp: 'image/bmp', ico: 'image/x-icon', tif: 'image/tiff', tiff: 'image/tiff', json: 'application/json', zip: 'application/zip', glb: 'model/gltf-binary', gltf: 'model/gltf+json', obj: 'model/obj', stl: 'model/stl', ply: 'application/ply', '3mf': 'model/3mf' };
@@ -47,7 +47,9 @@ async function uniqueName(db, name, id) {
 }
 
 // ------------------------------------------------------------------ databases (drivers): sqlite, mysql/mariadb, json
-const SCHEMA = (big) => `CREATE TABLE IF NOT EXISTS items (id VARCHAR(40) PRIMARY KEY, type VARCHAR(20), name VARCHAR(200) NOT NULL, category VARCHAR(200), tags ${big}, description ${big},
+// columns added since the first version: an older database gets them when it is opened
+const ADDED = ['type VARCHAR(20)', 'style VARCHAR(40)', 'form VARCHAR(40)'];
+const SCHEMA = (big) => `CREATE TABLE IF NOT EXISTS items (id VARCHAR(40) PRIMARY KEY, type VARCHAR(20), name VARCHAR(200) NOT NULL, category VARCHAR(200), style VARCHAR(40), form VARCHAR(40), tags ${big}, description ${big},
   kind VARCHAR(20), width INTEGER, height INTEGER, frames INTEGER, colours INTEGER, source VARCHAR(500), author VARCHAR(200), licence VARCHAR(200),
   hash VARCHAR(64), added VARCHAR(40), changed VARCHAR(40), files ${big})`;
 
@@ -55,7 +57,7 @@ function sqliteDb(dir) {
   const { DatabaseSync } = require('node:sqlite');
   fs.mkdirSync(path.join(dir, 'files'), { recursive: true });
   const d = new DatabaseSync(path.join(dir, 'clipart.sqlite'));
-  d.exec(SCHEMA('TEXT')); try { d.exec('ALTER TABLE items ADD COLUMN type VARCHAR(20)'); } catch (e) { /* has it */ } d.exec('CREATE INDEX IF NOT EXISTS items_type ON items(type); CREATE INDEX IF NOT EXISTS items_name ON items(name); CREATE INDEX IF NOT EXISTS items_cat ON items(category); CREATE INDEX IF NOT EXISTS items_hash ON items(hash)');
+  d.exec(SCHEMA('TEXT')); for (const c of ADDED) try { d.exec(`ALTER TABLE items ADD COLUMN ${c}`); } catch (e) { /* has it */ } d.exec('CREATE INDEX IF NOT EXISTS items_type ON items(type); CREATE INDEX IF NOT EXISTS items_name ON items(name); CREATE INDEX IF NOT EXISTS items_cat ON items(category); CREATE INDEX IF NOT EXISTS items_hash ON items(hash)');
   const q = (sql, ...a) => d.prepare(sql).all(...a), one = (sql, ...a) => d.prepare(sql).get(...a);
   return {
     kind: 'sqlite', where: dir, filesDir: path.join(dir, 'files'),
@@ -71,7 +73,7 @@ function sqliteDb(dir) {
 }
 // a search: every word must be found in the name, tags, category or description
 function filter(text, category, type) {
-  const w = [], a = []; if (type) { w.push("COALESCE(type, 'clipart') = ?"); a.push(type); } for (const word of String(text).toLowerCase().split(/\s+/).filter(Boolean)) { w.push("LOWER(CONCAT_WS(' ', name, tags, category, description)) LIKE ?"); a.push(`%${word}%`); }
+  const w = [], a = []; if (type) { w.push("COALESCE(type, 'clipart') = ?"); a.push(type); } for (const word of String(text).toLowerCase().split(/\s+/).filter(Boolean)) { w.push("LOWER(CONCAT_WS(' ', name, tags, category, style, form, description)) LIKE ?"); a.push(`%${word}%`); }
   if (category !== null && category !== undefined) { w.push("COALESCE(category, '') = ?"); a.push(category); }
   return [w.length ? 'WHERE ' + w.join(' AND ') : '', a];
 }
@@ -81,7 +83,7 @@ function mysqlDb(url) {
   let mysql; try { mysql = require('mysql2/promise'); } catch (e) { throw new Error('MySQL/MariaDB needs the mysql2 package: run "npm install mysql2" in the server folder.'); }
   const u = new URL(url), files = u.searchParams.get('files') || path.join('libraries', decodeURIComponent(u.pathname.slice(1)) || 'mysql', 'files'); u.search = '';
   const filesDir = path.resolve(HERE, files); fs.mkdirSync(filesDir, { recursive: true });
-  const pool = mysql.createPool({ uri: u.toString(), charset: 'utf8mb4' }), ready = pool.query(SCHEMA('MEDIUMTEXT')).then(() => pool.query('ALTER TABLE items ADD COLUMN type VARCHAR(20)').catch(() => {})).catch((e) => { throw new Error('The MySQL/MariaDB database could not be opened: ' + e.message); });
+  const pool = mysql.createPool({ uri: u.toString(), charset: 'utf8mb4' }), ready = pool.query(SCHEMA('MEDIUMTEXT')).then(() => Promise.all(ADDED.map((c) => pool.query(`ALTER TABLE items ADD COLUMN ${c}`).catch(() => {})))).catch((e) => { throw new Error('The MySQL/MariaDB database could not be opened: ' + e.message); });
   const q = async (sql, a = []) => { await ready; return (await pool.query(sql, a))[0]; };
   return {
     kind: 'mysql', where: `${u.host}${u.pathname}`, filesDir,
@@ -105,7 +107,7 @@ function jsonDb(dir) {
   const save = () => fs.writeFileSync(f, JSON.stringify({ library: lib.library, made: new Date().toISOString(), by: 'Craft clip-art server', items: items.map((it) => ({ ...it, ...it.files, files: undefined })) }, null, 1));
   return {
     kind: 'json', where: dir, filesDir: dir, named: true,
-    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0 } = {}) { const words = String(text).toLowerCase().split(/\s+/).filter(Boolean), m = items.filter((it) => (category === null || category === undefined || (it.category || '') === category) && words.every((w) => [it.name, (it.tags || []).join(' '), it.category, it.description].join(' ').toLowerCase().includes(w))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })); return { total: m.length, items: m.slice(+offset, +offset + +limit) }; },
+    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0 } = {}) { const words = String(text).toLowerCase().split(/\s+/).filter(Boolean), m = items.filter((it) => (category === null || category === undefined || (it.category || '') === category) && words.every((w) => [it.name, (it.tags || []).join(' '), it.category, it.style, it.form, it.description].join(' ').toLowerCase().includes(w))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })); return { total: m.length, items: m.slice(+offset, +offset + +limit) }; },
     async get(id) { return items.find((it) => it.id === id); },
     async byName(name) { return items.find((it) => it.name.toLowerCase() === String(name).toLowerCase()); },
     async namesLike(base) { const b = base.toLowerCase(); return items.filter((it) => it.name.toLowerCase() === b || it.name.toLowerCase().startsWith(b + '_')); },

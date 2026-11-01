@@ -4,7 +4,9 @@
    - Browser store: IndexedDB database 'craft-clipart', version 1, object store 'items' (keyPath 'id') and 'meta'.
      Pages opened from disk (file://) share it in Chrome and Edge, and so do apps hosted on one site.
    - An item: { id, name, category, tags: [], width, height, added (ISO time), source, png: Blob | null,
-     svg: string | null, thumb: 'data:image/png…' (at most 160 px) }. Optional: description, kind ('colour' | 'grey' | 'bw'),
+     svg: string | null, thumb: 'data:image/png…' (at most 160 px) }. Optional: type ('clipart' | 'model'), style (flat icon, cartoon, hand-drawn,
+     line art, watercolour, 3D render, silhouette, photo…), form (object, scene, background, tile, border, map, logo…),
+     description, kind ('colour' | 'grey' | 'bw'),
      author, licence, hash (to spot copies), frames + anim: Blob (an animated GIF/APNG/WebP; png is its first frame),
      serverId + links { png, svg, … } (where the clip-art server keeps it, real http links).
    - The clip-art server (server/clipart-server.js, or clipart-server.php on a web host) keeps libraries in SQLite or
@@ -110,7 +112,7 @@
 
   // ------------------------------------------------------------------ the clip-art server (optional)
   const b64 = (blob) => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result).replace(/^data:[^,]*,/, '')); r.onerror = () => no(r.error); r.readAsDataURL(blob); });
-  const META = ['name', 'category', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash'];
+  const META = ['type', 'name', 'category', 'style', 'form', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash'];
   async function server(url) { if (url !== undefined) { await meta('server', url ? String(url).trim().replace(/\/+$/, '') : ''); } return (await meta('server')) || ''; }
   async function serverKey(k) { if (k !== undefined) await meta('serverKey', k || ''); return (await meta('serverKey')) || ''; }
   async function call(path, opts = {}) { const u = await server(); if (!u) throw new Error('No clip-art server is connected.'); const k = await serverKey(); if (k) opts = { ...opts, headers: { ...(opts.headers || {}), 'x-craft-key': k } }; let r; try { r = await fetch(u + path, opts); } catch (e) { throw new Error(`The clip-art server at ${u} did not answer (is it running?).`); } const j = r.headers.get('content-type')?.includes('json') ? await r.json() : null; if (!r.ok) throw Object.assign(new Error((j && j.error) || `The server said ${r.status}.`), { status: r.status }); return j; }

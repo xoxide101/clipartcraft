@@ -3,9 +3,9 @@
    app reads the same library (js/library.js says how). */
 (function () {
   'use strict';
-  const $ = (id) => document.getElementById(id), L = window.CraftClipart, I = window.CraftIcons;
+  const $ = (id) => document.getElementById(id), L = window.CraftClipart, I = window.CraftIcons, WA = window.CraftWork;
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-  let items = [], cat = '*', query = '', sel = new Set(), last = null, size = 140, serverUrl = '', serverOk = false;
+  let items = [], work = [], cat = '*', query = '', sel = new Set(), last = null, size = 140, serverUrl = '', serverOk = false;
   try { size = +localStorage.getItem('clipartcraft-size') || 140; } catch (e) { /* blocked storage */ }
   const toast = (m) => { const t = $('toast'); t.textContent = m; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => { t.hidden = true; }, 3200); };
   const download = (blob, name) => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); };
@@ -13,36 +13,48 @@
 
   // ------------------------------------------------------------------ what is shown
   const cats = () => { const m = new Map(); items.forEach((it) => { const c = it.category || ''; m.set(c, (m.get(c) || 0) + 1); }); return [...m].sort((a, b) => (a[0] === '' ? 1 : b[0] === '' ? -1 : a[0].localeCompare(b[0]))); };
-  const shown = () => { const q = query.trim().toLowerCase(); return items.filter((it) => (cat === '*' || (it.category || '') === cat) && (!q || it.name.toLowerCase().includes(q) || (it.tags || []).some((t) => t.toLowerCase().includes(q)) || (it.category || '').toLowerCase().includes(q))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })); };
-  async function reload() { items = await L.all(); [...sel].forEach((id) => { if (!items.some((it) => it.id === id)) sel.delete(id); }); render(); }
+  const shown = () => { const q = query.trim().toLowerCase(); const words = q.split(/\s+/).filter(Boolean); if (cat === '#work') return work.filter((w) => words.every((x) => w.name.toLowerCase().includes(x))); return items.filter((it) => (cat === '*' || (it.category || '') === cat) && words.every((x) => [it.name, (it.tags || []).join(' '), it.category, it.style, it.form, it.kind === 'bw' ? 'black and white' : it.kind, it.anim ? 'animated animation' : '', it.description].join(' ').toLowerCase().includes(x))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })); };
+  async function reload() { items = await L.all(); work = WA ? await WA.all() : []; [...sel].forEach((id) => { if (!items.some((it) => it.id === id)) sel.delete(id); }); render(); }
   function render() {
-    const C = cats(); $('cats').innerHTML = [['*', 'All clip art', items.length], ...C.map(([c, n]) => [c, c || 'No category', n])].map(([k, l, n]) => `<button type="button" class="cat" data-cat="${esc(k)}" aria-current="${cat === k}"><span>${esc(l)}</span><b>${n}</b></button>`).join('');
+    const C = cats(); const catBtn = ([k, l, n]) => `<button type="button" class="cat" data-cat="${esc(k)}" aria-current="${cat === k}"><span>${esc(l)}</span><b>${n}</b></button>`;
+    $('cats').innerHTML = [['*', 'All clip art', items.length], ...C.map(([c, n]) => [c, c || 'No category', n])].map(catBtn).join('') + `<div class="work-head">Working area</div>` + catBtn(['#work', 'Files imported from', work.length]);
     const S = shown(), g = $('grid'); g.style.setProperty('--tile', size + 'px');
-    g.innerHTML = S.map((it) => `<button type="button" class="tile" role="option" data-id="${it.id}" aria-selected="${sel.has(it.id)}" title="${esc(it.name)}${it.category ? ' · ' + esc(it.category) : ''}"><span class="pic"><img src="${it.thumb}" alt="" loading="lazy"></span><span class="nm">${esc(it.name)}</span>${it.svg ? '<i class="fmt">SVG</i>' : ''}</button>`).join('');
-    $('start').hidden = items.length > 0; if (!items.length) renderStart();
+    g.innerHTML = cat === '#work' ? S.map((w) => `<button type="button" class="tile" role="option" data-id="${w.id}" aria-selected="${sel.has(w.id)}" title="${esc(w.fileName)}"><span class="pic">${w.thumb ? `<img src="${w.thumb}" alt="" loading="lazy">` : ''}</span><span class="nm">${esc(w.name)}</span>${w.used ? `<i class="used">${w.used} made</i>` : ''}<i class="fmt">${esc((w.fileName.split('.').pop() || '').toUpperCase())}</i></button>`).join('') : S.map((it) => `<button type="button" class="tile" role="option" data-id="${it.id}" aria-selected="${sel.has(it.id)}" title="${esc(it.name)}${it.category ? ' · ' + esc(it.category) : ''}"><span class="pic"><img src="${it.thumb}" alt="" loading="lazy"></span><span class="nm">${esc(it.name)}</span>${it.anim ? '<i class="fmt">▶</i>' : it.svg ? '<i class="fmt">SVG</i>' : ''}</button>`).join('');
+    $('start').hidden = items.length > 0 || cat === '#work'; if (!items.length && cat !== '#work') renderStart();
     renderDetails(); status();
   }
   function renderStart() {
     $('start').innerHTML = `<div class="start-in"><h2>What do you want to do?</h2><div class="tiles">
-      <button type="button" data-act="add"><b>Add pictures</b><small>PNG, JPEG, GIF, WebP or SVG files (a PNG and an SVG with the same name become one item)</small></button>
+      <button type="button" data-act="add"><b>Import pictures</b><small>Any picture files: PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, TIFF, SVG, animations and classic formats. Named for you, cropped, black and white made see-through</small></button>
       <button type="button" data-act="slice"><b>Slice a montage</b><small>A sheet of clip art cut into separate pictures, named and added</small></button>
       <button type="button" data-act="zip"><b>Import a library ZIP</b><small>From ImageCraft’s Split a sheet, or one exported here</small></button>
       <button type="button" data-act="folder-in"><b>Open a library folder</b><small>A folder with library.json and its pictures (backup, or shared from another computer)</small></button></div>
       <p class="hint">The library is kept in this browser and shared with every Craft app opened in it. Nothing is uploaded.</p></div>`;
   }
   function renderDetails() {
+    if (cat === '#work') return renderWork();
     const d = $('details'), S = items.filter((it) => sel.has(it.id));
     if (!S.length) { d.innerHTML = `<div class="props-head">Library</div><div class="sec"><p class="hint"><b>${items.length}</b> item${items.length === 1 ? '' : 's'} in ${cats().length} categor${cats().length === 1 ? 'y' : 'ies'}.</p><p class="hint">Click a picture to see it and name it; Ctrl-click or Shift-click picks several (to give them a category together).</p></div>`; return; }
     const one = S.length === 1 ? S[0] : null, catList = cats().map(([c]) => c).filter(Boolean);
     d.innerHTML = `<div class="props-head">${one ? 'Clip art' : `${S.length} chosen`}</div><div class="sec">
-      ${one ? `<div class="big check-bg"><img src="${one.svg ? L.svgUrl(one.svg) : URL.createObjectURL(one.png)}" alt=""></div>
+      ${one ? `<div class="big check-bg"><img src="${one.anim ? URL.createObjectURL(one.anim) : one.svg ? L.svgUrl(one.svg) : URL.createObjectURL(one.png)}" alt=""></div>
       <label class="field"><span>Name</span><input class="input" data-f="name" value="${esc(one.name)}"></label>` : `<div class="many">${S.slice(0, 12).map((it) => `<img src="${it.thumb}" alt="">`).join('')}</div>`}
       <label class="field"><span>Category</span><input class="input" data-f="category" list="catlist" value="${esc(one ? one.category : (new Set(S.map((x) => x.category)).size === 1 ? S[0].category : ''))}" placeholder="Americana, Buildings, Transport…"><datalist id="catlist">${catList.map((c) => `<option value="${esc(c)}">`).join('')}</datalist></label>
+      ${one ? `<div class="two"><label class="field"><span>Style</span><input class="input" data-f="style" list="stylelist" value="${esc(one.style || '')}"></label><label class="field"><span>Form</span><input class="input" data-f="form" list="formlist" value="${esc(one.form || '')}"></label></div><datalist id="stylelist">${(window.CraftNamer ? CraftNamer.STYLES : []).map((c) => `<option value="${esc(c)}">`).join('')}</datalist><datalist id="formlist">${(window.CraftNamer ? CraftNamer.FORMS : []).map((c) => `<option value="${esc(c)}">`).join('')}</datalist>` : ''}
       <label class="field"><span>Tags <small class="hint">(separated by commas)</small></span><input class="input" data-f="tags" value="${esc(one ? (one.tags || []).join(', ') : '')}" placeholder="${one ? 'farm, red, barn' : 'added to each'}"></label>
-      ${one ? `<p class="hint">${one.width} × ${one.height} pixels · ${[one.png ? 'PNG' : '', one.svg ? 'SVG' : ''].filter(Boolean).join(' and ')}${one.source ? ` · from ${esc(one.source)}` : ''}</p>
+      ${one ? `<p class="hint">${one.width} × ${one.height} pixels · ${[one.png ? 'PNG' : '', one.svg ? 'SVG' : '', one.anim ? `moving (${one.frames || '?'} frames)` : ''].filter(Boolean).join(', ')}${one.kind === 'bw' ? ' · black and white' : one.kind === 'grey' ? ' · grey' : ''}${one.source ? ` · from ${esc(one.source)}` : ''}</p>
       ${one.links ? `<div class="links"><span class="hint">On the server:</span>${Object.entries(one.links).filter(([k]) => k !== 'thumb').map(([k, u]) => `<a href="${esc(u)}" target="_blank" rel="noopener" title="${esc(u)}">${k.toUpperCase()}</a><button type="button" class="btn ghost sm" data-copy="${esc(u)}" title="Copy the link">Copy link</button>`).join('')}</div>` : ''}
-      <div class="btns">${one.png ? '<button class="btn outline" type="button" data-act="dl-png">PNG</button>' : ''}${one.svg ? '<button class="btn outline" type="button" data-act="dl-svg">SVG</button>' : ''}<button class="btn outline" type="button" data-act="copy">Copy</button></div>` : ''}
+      <div class="btns">${one.png ? '<button class="btn outline" type="button" data-act="dl-png">PNG</button>' : ''}${one.anim ? '<button class="btn outline" type="button" data-act="dl-anim">Animation</button>' : ''}${one.svg ? '<button class="btn outline" type="button" data-act="dl-svg">SVG</button>' : ''}<button class="btn outline" type="button" data-act="copy">Copy</button></div>` : ''}
       <div class="btns"><button class="btn outline" type="button" data-act="export-sel">Export ${one ? 'it' : 'these'} (ZIP)</button><button class="btn outline danger" type="button" data-act="delete">Delete</button></div></div>`;
+  }
+  // the working area: the files clip art came from (kept until deleted)
+  function renderWork() {
+    const d = $('details'), S = work.filter((w) => sel.has(w.id)), one = S.length === 1 ? S[0] : null, usedN = work.filter((w) => w.used).length;
+    if (!S.length) { d.innerHTML = `<div class="props-head">Working area</div><div class="sec"><p class="hint">The sheets and files clip art was imported from, kept so they can be sliced or imported again. Delete them when you are done with them; the clip art made from them stays.</p><p class="hint"><b>${work.length}</b> file${work.length === 1 ? '' : 's'} · ${usedN} used.</p>${usedN ? `<button class="btn outline danger" type="button" data-act="work-del-used">Delete the ${usedN} used file${usedN === 1 ? '' : 's'}</button>` : ''}</div>`; return; }
+    d.innerHTML = `<div class="props-head">${one ? 'File' : `${S.length} files`}</div><div class="sec">
+      ${one ? `<div class="big check-bg">${one.thumb ? `<img src="${one.thumb}" alt="">` : ''}</div><p class="hint"><b>${esc(one.fileName)}</b><br>${one.width || '?'} × ${one.height || '?'} pixels · ${Math.round(one.size / 1024)} KB · kept ${new Date(one.added).toLocaleDateString()}<br>${one.used ? `${one.used} picture${one.used === 1 ? '' : 's'} made from it` : 'Nothing made from it yet'}</p>
+      <div class="btns"><button class="btn primary" type="button" data-act="work-import">Import again</button><button class="btn outline" type="button" data-act="work-slice">Slice it</button><button class="btn outline" type="button" data-act="work-dl">Save the file</button></div>` : `<div class="many">${S.slice(0, 12).map((w) => `<img src="${w.thumb}" alt="">`).join('')}</div><div class="btns"><button class="btn primary" type="button" data-act="work-import">Import them again</button></div>`}
+      <div class="btns"><button class="btn outline danger" type="button" data-act="work-del">Delete ${one ? 'it' : 'them'}</button></div></div>`;
   }
   function status() { const S = shown(); $('status').innerHTML = `<span><b>${items.length}</b> in the library</span><span>${cat === '*' && !query ? '' : `<b>${S.length}</b> shown`}</span><span>${sel.size ? `<b>${sel.size}</b> chosen` : ''}</span><span class="grow"></span><span title="${esc(serverUrl)}">${serverUrl ? `Server: <b>${serverOk ? 'connected' : 'not answering'}</b> · ${items.filter((it) => it.serverId).length} on it` : 'No server'}</span><label class="hint">Size <input type="range" id="size" min="80" max="260" value="${size}" aria-label="Thumbnail size"></label>`; $('size').oninput = (e) => { size = +e.target.value; $('grid').style.setProperty('--tile', size + 'px'); try { localStorage.setItem('clipartcraft-size', size); } catch (err) { /* blocked */ } }; }
 
@@ -51,10 +63,24 @@
   async function addFiles(files, how = 'Added') { if (!files.length) return; try { const made = await L.add(files, { category: cat !== '*' ? cat : '' }); await reload(); sel = new Set(made.map((m) => m.id)); render(); toast(`${how}: ${made.length} item${made.length === 1 ? '' : 's'}.`); } catch (e) { fail(e); } }
   const chosen = () => items.filter((it) => sel.has(it.id));
   // the Montage Slicer (js/slicer.js): what it added is shown and chosen
-  const slicer = (file) => window.ClipArtSlicer.open({ file, toast, categories: cats().map(([c]) => c).filter(Boolean), done: async (made, category) => { await reload(); cat = category; sel = new Set(made.map((m) => m.id)); render(); toast(`${made.length} picture${made.length === 1 ? '' : 's'} added to “${category}”.`); } });
+  const slicer = (file) => window.ClipArtSlicer.open({ file, toast, categories: cats().map(([c]) => c).filter(Boolean), done: async (made, category, sheetFile) => {
+    if (sheetFile && WA) { const src = await WA.add(sheetFile, { used: made.length }); for (const it of made) { it.sheet = src.id; await L.put(it); } }
+    await reload(); cat = category; sel = new Set(made.map((m) => m.id)); render(); toast(`${made.length} picture${made.length === 1 ? '' : 's'} added to “${category}”.`); } });
+  // Import pictures (js/importer.js): what it added is shown and chosen
+  const importer = (files) => window.ClipArtImporter.open({ files, toast, server: !!serverUrl && serverOk, categories: cats().map(([c]) => c).filter(Boolean), done: async (made) => { await reload(); cat = '*'; sel = new Set(made.map((m) => m.id)); render(); toast(`${made.length} picture${made.length === 1 ? '' : 's'} added to the library.`); } });
   async function act(a) {
     try {
-      if (a === 'add') return addFiles(await pick('image/*,.svg,.zip'));
+      if (a === 'add') return importer([]);
+      if (a === 'add-plain') return addFiles(await pick('image/*,.svg,.zip'));
+      if (a.startsWith('work-')) {
+        const S = work.filter((w) => sel.has(w.id));
+        if (a === 'work-del-used') { const U = work.filter((w) => w.used); if (!confirm(`Delete ${U.length} used file${U.length === 1 ? '' : 's'} from the working area? (The clip art made from them stays in the library.)`)) return; await WA.remove(U.map((w) => w.id)); sel.clear(); await reload(); toast('Deleted.'); return; }
+        if (!S.length) return toast('Choose a file first.');
+        if (a === 'work-import') return importer(S.map(WA.fileOf));
+        if (a === 'work-slice') return slicer(WA.fileOf(S[0]));
+        if (a === 'work-dl') return download(S[0].file, S[0].fileName);
+        if (a === 'work-del') { if (!confirm(`Delete ${S.length === 1 ? `“${S[0].fileName}”` : `${S.length} files`} from the working area? (The clip art made from ${S.length === 1 ? 'it' : 'them'} stays in the library.)`)) return; await WA.remove(S.map((w) => w.id)); sel.clear(); await reload(); toast('Deleted.'); return; }
+      }
       if (a === 'zip') return addFiles(await pick('.zip', false), 'Imported');
       if (a === 'slice') return slicer();
       if (a === 'export-all') { if (!items.length) return toast('The library is empty.'); download(await L.toZip(shown()), cat === '*' ? 'Clip art library.zip' : `${cat || 'No category'} clip art.zip`); return; }
@@ -63,6 +89,7 @@
       if (a === 'folder-in') { const made = await L.fromFolder(); await reload(); toast(`Added ${made.length} items from the folder.`); return; }
       if (a === 'folder-pick') { const h = await L.pickFolder(); toast(`Library folder: “${h.name}”.`); return; }
       if (a === 'select-all') { sel = new Set(shown().map((it) => it.id)); render(); return; }
+      if (a === 'delete' && cat === '#work') return act('work-del');
       if (a === 'delete') { const S = chosen(); if (!S.length) return toast('Choose something first.'); if (!confirm(`Delete ${S.length === 1 ? `“${S[0].name}”` : `${S.length} items`} from the library? (Export first if you might want ${S.length === 1 ? 'it' : 'them'} back.)`)) return; await L.remove(S.map((x) => x.id)); sel.clear(); await reload(); toast('Deleted.'); return; }
       if (a === 'connect') { const u = prompt('The clip-art server’s address (start it with server/start-server.cmd; on a web host, the folder where clipart-server.php is):', serverUrl || 'http://localhost:8790'); if (u === null) return; await L.server(u); await checkServer(true); return; }
       if (a === 'disconnect') { await L.server(''); await checkServer(); toast('Not using a server now (the pictures stay here).'); return; }
@@ -73,6 +100,7 @@
       if (a === 'open-server') { if (!serverUrl) return toast('Connect to a server first.'); window.open(serverUrl + '/', '_blank'); return; }
       const one = chosen()[0]; if (!one) return;
       if (a === 'dl-png') download(one.png, `${one.name}.png`);
+      if (a === 'dl-anim') download(one.anim, `${one.name}.${(one.anim.type.split('/')[1] || 'gif').replace('apng', 'png')}`);
       if (a === 'dl-svg') download(new Blob([one.svg], { type: 'image/svg+xml' }), `${one.name}.svg`);
       if (a === 'copy') { if (one.png && navigator.clipboard && window.ClipboardItem) { await navigator.clipboard.write([new ClipboardItem({ 'image/png': one.png })]); toast('Copied the picture.'); } else if (one.svg) { await navigator.clipboard.writeText(one.svg); toast('Copied the SVG as text.'); } }
     } catch (e) {
@@ -85,7 +113,7 @@
   // a name, category or tags changed (for one, or the category/tags for several at once)
   $('details').addEventListener('change', async (e) => {
     const f = e.target.dataset.f; if (!f) return; const S = chosen(), v = e.target.value.trim();
-    for (const it of S) { if (f === 'name' && v) it.name = v; if (f === 'category') it.category = v; if (f === 'tags') it.tags = S.length === 1 ? v.split(',').map((t) => t.trim()).filter(Boolean) : [...new Set([...(it.tags || []), ...v.split(',').map((t) => t.trim()).filter(Boolean)])]; await L.put(it); }
+    for (const it of S) { if (f === 'name' && v) it.name = v; if (f === 'category') it.category = v; if (f === 'style' || f === 'form') it[f] = v; if (f === 'tags') it.tags = S.length === 1 ? v.split(',').map((t) => t.trim()).filter(Boolean) : [...new Set([...(it.tags || []), ...v.split(',').map((t) => t.trim()).filter(Boolean)])]; await L.put(it); }
     await reload(); if (f === 'category' && v && cat !== '*' && cat !== v) toast(`Moved to “${v}”.`);
   });
   document.addEventListener('click', (e) => { const c = e.target.closest('[data-copy]'); if (c) { navigator.clipboard.writeText(c.dataset.copy).then(() => toast('Link copied: paste it into any app or web page.')); return; } const b = e.target.closest('[data-act]'); if (b) act(b.dataset.act); });
@@ -102,15 +130,15 @@
     else sel = new Set([id]);
     last = id; render();
   });
-  $('grid').addEventListener('dblclick', (e) => { const t = e.target.closest('.tile'); if (t) { const n = $('details').querySelector('[data-f=name]'); if (n) { n.focus(); n.select(); } } });
+  $('grid').addEventListener('dblclick', (e) => { const t = e.target.closest('.tile'); if (t && cat === '#work') return act('work-import'); if (t) { const n = $('details').querySelector('[data-f=name]'); if (n) { n.focus(); n.select(); } } });
   // drop files anywhere
   let dragN = 0;
   document.addEventListener('dragenter', (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { dragN++; $('drop').hidden = false; } });
   document.addEventListener('dragleave', () => { dragN = Math.max(0, dragN - 1); if (!dragN) $('drop').hidden = true; });
   document.addEventListener('dragover', (e) => e.preventDefault());
-  document.addEventListener('drop', (e) => { e.preventDefault(); dragN = 0; $('drop').hidden = true; addFiles([...e.dataTransfer.files]); });
+  document.addEventListener('drop', (e) => { e.preventDefault(); dragN = 0; $('drop').hidden = true; const f = [...e.dataTransfer.files], z = f.filter((x) => /\.zip$/i.test(x.name)), p = f.filter((x) => !/\.zip$/i.test(x.name)); if (z.length) addFiles(z, 'Imported'); if (p.length) importer(p); });
   document.addEventListener('keydown', (e) => { if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return; if (e.key === 'Delete') act('delete'); if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') { e.preventDefault(); act('select-all'); } });
-  L.onChange(() => reload()); // another Craft app (or another tab) changed the library
+  L.onChange(() => reload()); if (WA) WA.onChange(() => reload()); // another Craft app (or another tab) changed the library
 
   // ------------------------------------------------------------------ title bar and ribbon (this app's own copy)
   const IK = {
@@ -133,7 +161,7 @@
     mount: $('app'), storageKey: 'clipartcraft',
     tabs: [
       { id: 'home', label: 'Home', hue: '#c2410c', groups: [
-        ['Add', [B('Add pictures', IK.add, () => act('add'), { big: true, key: 'Ctrl+O', title: 'PNG, JPEG, GIF, WebP or SVG files, or a library ZIP' }), B('Import a library', IK.zip, () => act('zip'), { big: true, title: 'A library ZIP (from ImageCraft’s Split a sheet, or exported here)' })]],
+        ['Add', [B('Import pictures', IK.add, () => act('add'), { big: true, key: 'Ctrl+O', title: 'Any picture files (PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, TIFF, SVG, animations, classic formats): every page and frame, cropped, named for you, black and white made see-through' }), B('Import a library', IK.zip, () => act('zip'), { big: true, title: 'A library ZIP (from ImageCraft’s Split a sheet, or exported here)' })]],
         ['Slice', [B('Montage Slicer', IK.slice, () => act('slice'), { big: true, title: 'Cut a sheet (montage) of clip art into separate pictures: found by themselves or by a grid, named in order, added to the library' })]],
         ['Library', [B('Export (ZIP)', IK.exportZ, () => act('export-all'), { big: true, title: 'Everything shown (the category you are in, or all) as one ZIP: pictures, SVGs and library.json' }), { col: [B('Save to the folder', IK.up, () => act('folder-out'), { title: 'Write the whole library to its folder (backup, sync, sharing)' }), B('Add from a folder', IK.down, () => act('folder-in'), { title: 'Read a library folder into this library' }), B('Choose the folder…', IK.folder, () => act('folder-pick'), { title: 'Which folder the library is saved to' })] }]],
         ['Edit', [{ col: [B('Choose all', I.selectAll, () => act('select-all'), { key: 'Ctrl+A' }), B('Delete', I.trash, () => act('delete'), { key: 'Delete', disabled: () => !sel.size })] }]],
@@ -146,7 +174,7 @@
     ],
   });
   const tb = window.CraftTitlebar({ appName: 'ClipArtCraft', storageKey: 'clipartcraft', colors: ['#ea580c', '#b23a0a'], mount: $('app'), toast, logo: LOGO, menus: () => [], ribbon,
-    quick: [{ icon: 'open', title: 'Add pictures', key: 'Ctrl+O', run: () => act('add') }, { icon: 'export', title: 'Export (ZIP)', run: () => act('export-all') }],
+    quick: [{ icon: 'open', title: 'Import pictures', key: 'Ctrl+O', run: () => act('add') }, { icon: 'export', title: 'Export (ZIP)', run: () => act('export-all') }],
     getTitle: () => 'Clip-art library', getStatus: () => ({ text: `${items.length} item${items.length === 1 ? '' : 's'}` }), getInfo: () => [], rightEls: [] });
   const app = $('app'); app.prepend(ribbon.el); app.prepend(tb.el);
   const ic = document.createElement('link'); ic.rel = 'icon'; ic.href = 'data:image/svg+xml,' + encodeURIComponent(LOGO.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ')); document.head.append(ic);

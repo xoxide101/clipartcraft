@@ -122,7 +122,7 @@
   const S = { mode: 'find', gap: 0, min: 0.2, pad: 6, see: true, rows: 3, cols: 3, inset: 0, cut: true, names: '', category: '', svg: true };
   try { Object.assign(S, JSON.parse(localStorage.getItem('clipartcraft-slicer') || '{}'), { names: '', category: '' }); } catch (e) { /* blocked storage */ }
   const keep = () => { try { const { names, category, ...rest } = S; localStorage.setItem('clipartcraft-slicer', JSON.stringify(rest)); } catch (e) { /* blocked */ } };
-  let sheet = null, sheetName = '', found = null, boxes = [], skip = new Set(), el = null, timer = 0, opts = {};
+  let sheetFile = null, sheet = null, sheetName = '', found = null, boxes = [], skip = new Set(), el = null, timer = 0, opts = {};
   const nameList = () => String(S.names || '').split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean);
   const safe = (s) => s.replace(/[\\/:*?"<>|]+/g, '-').trim();
 
@@ -208,12 +208,12 @@
     try {
       const made = [];
       for (const c of await cuts((n, nm) => { btn.textContent = `Adding ${n} of ${total}: ${nm}…`; })) made.push(await L.put(await L.makeItem({ name: c.name, category, png: c.png, svg: c.svg, source: 'Montage Slicer: ' + sheetName })));
-      close(); opts.done && opts.done(made, category);
+      close(); opts.done && opts.done(made, category, sheetFile);
     } catch (e) { console.error(e); opts.toast && opts.toast('Slicing failed: ' + (e.message || e)); count(); btn.disabled = false; }
   }
   async function load(file) {
     if (!file) return; try { sheet = await readSheet(file); } catch (e) { opts.toast && opts.toast('That picture could not be read.'); return; }
-    sheetName = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim(); skip.clear(); S.names = ''; S.category = ''; el.querySelector('.sl-empty').hidden = true; renderPanel(); find();
+    sheetFile = file; sheetName = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim(); skip.clear(); S.names = ''; S.category = ''; el.querySelector('.sl-empty').hidden = true; renderPanel(); find();
   }
   function pickSheet() { return new Promise((ok) => { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*,.svg'; i.onchange = () => ok(i.files[0]); i.click(); }); }
   function build() {

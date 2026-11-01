@@ -53,3 +53,9 @@ for a model, a picture of it), `svg`, `anim` (animated GIF/APNG/WebP), `orig` (t
 | `GET /api/categories` | `[{ category, n }]` |
 | `GET /api/export.zip?q=&category=&type=` | library.json + files, named after the items |
 | `POST /api/import?category=` | a ZIP like that (or just pictures) as the body |
+
+## Fields added since 1.0
+
+`type` (`clipart` | `model`), `style` (flat icon, cartoon, hand-drawn, line art, watercolour, oil painting, 3D render,
+silhouette, photo, pixel art, clip art) and `form` (object, scene, background, tile, border, map, logo, lettering,
+ornament, box art, screenshot). Searching looks in them too. An older database gets the columns when it is opened.

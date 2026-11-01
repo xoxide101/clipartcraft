@@ -6,7 +6,7 @@
    clipart-server.php/clipart/Name.png. Changes need the key from clipart-config.php (the apps ask for it once). */
 declare(strict_types=1);
 const VERSION = '1.0';
-const COLS = ['id', 'type', 'name', 'category', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash', 'added', 'changed', 'files'];
+const COLS = ['id', 'type', 'name', 'category', 'style', 'form', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash', 'added', 'changed', 'files'];
 const FILE_KINDS = ['png', 'svg', 'anim', 'orig', 'thumb', 'model']; // model: a 3D mesh
 const TYPES = ['clipart', 'model'];
 const MIME = ['png' => 'image/png', 'svg' => 'image/svg+xml', 'gif' => 'image/gif', 'webp' => 'image/webp', 'apng' => 'image/apng', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'avif' => 'image/avif', 'bmp' => 'image/bmp', 'ico' => 'image/x-icon', 'tif' => 'image/tiff', 'tiff' => 'image/tiff', 'glb' => 'model/gltf-binary', 'gltf' => 'model/gltf+json', 'obj' => 'model/obj', 'stl' => 'model/stl', 'ply' => 'application/ply', '3mf' => 'model/3mf'];
@@ -41,16 +41,17 @@ class Library {
     try { $this->db = new PDO($dsn, $c['user'] ?? null, $c['password'] ?? null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]); }
     catch (Throwable $e) { fail(500, 'The library database could not be opened: ' . $e->getMessage()); }
     $big = $this->mysql ? 'MEDIUMTEXT' : 'TEXT';
-    $this->db->exec("CREATE TABLE IF NOT EXISTS items (id VARCHAR(40) PRIMARY KEY, type VARCHAR(20), name VARCHAR(200) NOT NULL, category VARCHAR(200), tags $big, description $big,
+    $this->db->exec("CREATE TABLE IF NOT EXISTS items (id VARCHAR(40) PRIMARY KEY, type VARCHAR(20), name VARCHAR(200) NOT NULL, category VARCHAR(200), style VARCHAR(40), form VARCHAR(40), tags $big, description $big,
       kind VARCHAR(20), width INTEGER, height INTEGER, frames INTEGER, colours INTEGER, source VARCHAR(500), author VARCHAR(200), licence VARCHAR(200),
       hash VARCHAR(64), added VARCHAR(40), changed VARCHAR(40), files $big)" . ($this->mysql ? ' CHARACTER SET utf8mb4' : ''));
-    try { $this->db->exec('ALTER TABLE items ADD COLUMN type VARCHAR(20)'); } catch (Throwable $e) { /* has it */ }
+    // columns added since the first version: an older database gets them now
+    foreach (['type VARCHAR(20)', 'style VARCHAR(40)', 'form VARCHAR(40)'] as $c) try { $this->db->exec("ALTER TABLE items ADD COLUMN $c"); } catch (Throwable $e) { /* has it */ }
   }
   private function q(string $sql, array $a = []): array { $s = $this->db->prepare($sql); $s->execute($a); return $s->fetchAll(); }
   private function row(?array $r): ?array { if (!$r) return null; $r['tags'] = array_values(array_filter(array_map('trim', explode(',', (string) $r['tags'])), 'strlen')); $r['files'] = json_decode($r['files'] ?: '{}', true) ?: []; foreach (['width', 'height', 'frames', 'colours'] as $k) if ($r[$k] !== null) $r[$k] = (int) $r[$k]; return $r; }
   private function nocase(): string { return $this->mysql ? '' : ' COLLATE NOCASE'; }
   function filter(string $text, ?string $cat, ?string $type = null): array {
-    $w = []; $a = []; if ($type) { $w[] = "COALESCE(type, 'clipart') = ?"; $a[] = $type; } $all = $this->mysql ? "CONCAT_WS(' ', name, tags, category, description)" : "(COALESCE(name,'') || ' ' || COALESCE(tags,'') || ' ' || COALESCE(category,'') || ' ' || COALESCE(description,''))";
+    $w = []; $a = []; if ($type) { $w[] = "COALESCE(type, 'clipart') = ?"; $a[] = $type; } $all = $this->mysql ? "CONCAT_WS(' ', name, tags, category, style, form, description)" : "(COALESCE(name,'') || ' ' || COALESCE(tags,'') || ' ' || COALESCE(category,'') || ' ' || COALESCE(style,'') || ' ' || COALESCE(form,'') || ' ' || COALESCE(description,''))";
     foreach (preg_split('/\s+/', mb_strtolower($text), -1, PREG_SPLIT_NO_EMPTY) as $word) { $w[] = "LOWER($all) LIKE ?"; $a[] = "%$word%"; }
     if ($cat !== null) { $w[] = "COALESCE(category, '') = ?"; $a[] = $cat; }
     return [$w ? 'WHERE ' . implode(' AND ', $w) : '', $a];
