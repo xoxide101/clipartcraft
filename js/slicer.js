@@ -212,7 +212,7 @@
   // rows and columns left out, their names (row labels, column headings), captions read, and boxes moved by hand
   // (keyed by where the box was found). `work` is the main area with ruled-out parts and left-out text painted over as
   // page: everything is found and cut from it; (wx, wy) is where it sits on the sheet.
-  let area = null, outs = [], table = null, offRows = new Set(), offCols = new Set(), rowNames = [], colNames = [], captions = [], readText = new Map(), moved = new Map(), prefs = new Map(), splits = new Map(), sheetTitle = '', tool = 'pick', work = null, wx = 0, wy = 0;
+  let area = null, outs = [], table = null, offRows = new Set(), offCols = new Set(), rowNames = [], colNames = [], captions = [], readText = new Map(), moved = new Map(), prefs = new Map(), splits = new Map(), zones = [], sheetTitle = '', tool = 'pick', work = null, wx = 0, wy = 0;
   const keyOf = (b) => `${Math.round(b.x + wx)},${Math.round(b.y + wy)},${Math.round(b.w)},${Math.round(b.h)}`;
   function prep() {
     const a = area || { x: 0, y: 0, w: sheet.width, h: sheet.height }; wx = a.x; wy = a.y; work = cropOf(sheet, a.x, a.y, a.w, a.h); pagePlain = null;
@@ -290,14 +290,14 @@
       <p class="hint">Click a box on the sheet to leave that picture out (or put it back); drag its edges to make it bigger or smaller.</p></div>`;
   }
   // the main area, ruled-out parts and text: what a drag on the sheet does, and the margins as numbers
-  const TOOLS = { pick: 'Click a box to leave it out; drag a box’s edge to move it (to trim off a name, or take in a bit that was missed).', area: 'Drag a box round the part to cut: everything outside it is left out. Drag its edges to move them.', out: 'Drag a box over anything to leave out (a title, a label, a watermark, a picture). Click one to take it away again.' };
+  const TOOLS = { pick: 'Click a box to leave it out; drag a box’s edge to move it (to trim off a name, or take in a bit that was missed).', area: 'Drag a box round the part to cut: everything outside it is left out. Drag its edges to move them.', out: 'Drag a box over anything to leave out (a title, a label, a watermark, a picture). Click one to take it away again.', grid: 'Drag a box over a row or a part that came out wrong, then say how many pictures across and down: it is cut as that grid. Right-click one of its pictures to change or remove it.' };
   function areaHtml() {
     if (!sheet) return '';
     const a = area || { x: 0, y: 0, w: sheet.width, h: sheet.height }, m = { t: a.y, l: a.x, b: sheet.height - a.y - a.h, r: sheet.width - a.x - a.w };
-    return `<div class="field"><span>On the sheet</span><div class="seg" role="group"><button class="btn" type="button" data-tool="pick" aria-pressed="${tool === 'pick'}">Pick</button><button class="btn" type="button" data-tool="area" aria-pressed="${tool === 'area'}">Main area</button><button class="btn" type="button" data-tool="out" aria-pressed="${tool === 'out'}">Rule out</button></div></div>
+    return `<div class="field"><span>On the sheet</span><div class="seg" role="group"><button class="btn" type="button" data-tool="pick" aria-pressed="${tool === 'pick'}">Pick</button><button class="btn" type="button" data-tool="area" aria-pressed="${tool === 'area'}">Main area</button><button class="btn" type="button" data-tool="out" aria-pressed="${tool === 'out'}">Rule out</button><button class="btn" type="button" data-tool="grid" aria-pressed="${tool === 'grid'}">Grid here</button></div></div>
       <p class="hint">${TOOLS[tool]}</p>
       <div class="field"><span>Main area: margins <small class="hint">(pixels left off each side)</small></span><div class="four">${[['t', 'Top'], ['b', 'Bottom'], ['l', 'Left'], ['r', 'Right']].map(([k, w]) => `<label><small>${w}</small><input class="input" type="number" min="0" step="1" data-m="${k}" value="${Math.round(m[k])}"></label>`).join('')}</div></div>
-      <div class="btns"><button class="btn outline sm" type="button" data-sl="whole" ${area ? '' : 'disabled'}>Whole sheet</button><button class="btn outline sm" type="button" data-sl="clear-outs" ${outs.length ? '' : 'disabled'}>Clear ${outs.length || ''} ruled out</button>${moved.size || prefs.size || splits.size ? `<button class="btn outline sm" type="button" data-sl="unmove">Undo ${moved.size + splits.size + [...prefs.keys()].filter((k) => !moved.has(k)).length} changed box${moved.size + prefs.size + splits.size === 1 ? '' : 'es'}</button>` : ''}</div>
+      <div class="btns"><button class="btn outline sm" type="button" data-sl="whole" ${area ? '' : 'disabled'}>Whole sheet</button><button class="btn outline sm" type="button" data-sl="clear-outs" ${outs.length ? '' : 'disabled'}>Clear ${outs.length || ''} ruled out</button>${zones.length ? `<button class="btn outline sm" type="button" data-sl="unzone">Remove ${zones.length} grid${zones.length === 1 ? '' : 's'} set by hand</button>` : ''}${moved.size || prefs.size || splits.size ? `<button class="btn outline sm" type="button" data-sl="unmove">Undo ${moved.size + splits.size + [...prefs.keys()].filter((k) => !moved.has(k)).length} changed box${moved.size + prefs.size + splits.size === 1 ? '' : 'es'}</button>` : ''}</div>
       ${chk('notext', 'Leave out text: labels and captions (they can become names)')}`;
   }
   // a table's (or grid's) rows and columns: untick to leave one out; row labels name the pictures, column headings
@@ -347,8 +347,20 @@
     // a caption belongs to the picture just above it
     for (const t of captions) if (!t.own) { let best = null, bd = 1e9; for (const b of boxes) { const cx = t.x + t.w / 2; if (cx < b.x - 4 || cx > b.x + b.w + 4) continue; const g = t.y - (b.y + b.h); if (g > -t.h && g < bd) { bd = g; best = b; } } t.own = best; }
     // boxes moved by hand (found where they were found before)
+    // a part of the sheet set by hand as a grid (Grid here): its cells replace whatever was found in it, in the same place in
+    // the order; in a table each cell keeps the row and column it sits in (for its label and heading)
+    for (const [zi, z] of zones.entries()) {
+      const zx = z.x - wx, zy = z.y - wy, inside = (b) => { const cx = b.x + b.w / 2, cy = b.y + b.h / 2; return cx >= zx && cx <= zx + z.w && cy >= zy && cy <= zy + z.h; };
+      const at = boxes.findIndex(inside), cells = [];
+      for (let r = 0; r < z.rows; r++) for (let c = 0; c < z.cols; c++) { const x = Math.round(zx + (z.w * c) / z.cols), y = Math.round(zy + (z.h * r) / z.rows), cw = Math.round(zx + (z.w * (c + 1)) / z.cols) - x, ch = Math.round(zy + (z.h * (r + 1)) / z.rows) - y;
+        const cell = { x: x + 2, y: y + 2, w: cw - 4, h: ch - 4, fixed: true, zone: zi, zr: r, zc: c };
+        if (S.mode === 'table' && table) { const pr = table.rows.map((q, i) => i).filter((i) => table.rowKind[i] === 'pic'), pc = table.cols.map((q, j) => j).filter((j) => table.colKind[j] === 'pic'), sx = x + cw / 2 + wx, sy = y + ch / 2 + wy;
+          const ri = pr.findIndex((i) => sy >= table.rows[i][0] && sy <= table.rows[i][1]), ci = pc.findIndex((j) => sx >= table.cols[j][0] && sx <= table.cols[j][1]); if (ri >= 0) cell.r = ri; if (ci >= 0) cell.c = ci; }
+        cells.push(cell); }
+      const rest = boxes.filter((b) => !inside(b)); boxes = at < 0 ? [...rest, ...cells] : [...rest.slice(0, boxes.slice(0, at).filter((b) => !inside(b)).length), ...cells, ...rest.slice(boxes.slice(0, at).filter((b) => !inside(b)).length)];
+    }
     const fit = (b) => { const m = moved.get(b.key), pf = prefs.get(b.key); if (m) Object.assign(b, { x: m.x - wx, y: m.y - wy, w: m.w, h: m.h, fixed: true }); if (pf) Object.assign(b, pf); return b; };
-    for (const b of boxes) { b.key = keyOf(b); fit(b); }
+    for (const b of boxes) { b.key = b.zone !== undefined ? `zone:${zones[b.zone].x},${zones[b.zone].y}/${b.zr}/${b.zc}` : keyOf(b); fit(b); }
     // boxes split by hand into 2 or 3 (side by side, or one above the other); each part can be moved and set on its own
     boxes = boxes.flatMap((b) => { const sp = splits.get(b.key); if (!sp) return [b]; const out = [];
       for (let i = 0; i < sp.k; i++) { const part = sp.down ? { x: b.x, y: b.y + (b.h * i) / sp.k, w: b.w, h: b.h / sp.k } : { x: b.x + (b.w * i) / sp.k, y: b.y, w: b.w / sp.k, h: b.h };
@@ -410,6 +422,13 @@
     if (X1 < 0) return null; const m = 2; X0 = Math.max(0, X0 - m); Y0 = Math.max(0, Y0 - m); X1 = Math.min(W - 1, X1 + m); Y1 = Math.min(work.height - 1, Y1 + m);
     return { x: X0 + wx, y: Y0 + wy, w: X1 - X0 + 1, h: Y1 - Y0 + 1 };
   }
+  // how many pictures across and down a part of the sheet holds (asked when a Grid here box is drawn or changed)
+  function askGrid(b, z) {
+    const guess = z ? `${z.cols} x ${z.rows}` : (() => { const n = boxes.filter((q) => { const cx = q.x + wx + q.w / 2, cy = q.y + wy + q.h / 2; return cx >= b.x && cx <= b.x + b.w && cy >= b.y && cy <= b.y + b.h; }).length; return b.w > b.h * 2 ? `${Math.max(1, n)} x 1` : `${Math.max(1, n)}`; })();
+    const v = prompt('How many pictures across, and how many rows down? (for example 7, or 7 x 2)', guess); if (v === null) return null;
+    const m = String(v).match(/(\d+)\s*(?:[x×*,\s]\s*(\d+))?/i); if (!m) return null; const cols = Math.max(1, Math.min(60, +m[1])), rows = Math.max(1, Math.min(60, +(m[2] || 1)));
+    return { cols, rows };
+  }
   // a box split by hand (its parts are then moved and set one by one)
   function splitBox(b, k, down) { splits.set(b.key, { k, down }); skip.clear(); renderPanel(); find(); if (opts.toast) opts.toast(`Split into ${k}: drag the edges to fit each one (zoom in with the mouse wheel to be exact).`); }
   // a table's column or row split into equal parts (a line too faint to find): every row (or column) at once
@@ -426,7 +445,7 @@
     const i = boxes.findIndex((b) => { const sb = sheetBox(b); return p.x >= sb.x && p.x <= sb.x + sb.w && p.y >= sb.y && p.y <= sb.y + sb.h; });
     const setPref = (b, o) => { prefs.set(b.key, { ...(prefs.get(b.key) || {}), ...o }); find(); };
     const snap = (b, keepShadow) => () => { const r = snapBox(b, keepShadow); if (!r) return opts.toast && opts.toast('Nothing in that box but page.'); moved.set(b.key, r); if (!keepShadow) prefs.set(b.key, { ...(prefs.get(b.key) || {}), noShadow: true }); renderPanel(); find(); };
-    const tools = [{ label: 'Pick', checked: tool === 'pick', run: () => { tool = 'pick'; renderPanel(); } }, { label: 'Main area', checked: tool === 'area', run: () => { tool = 'area'; renderPanel(); } }, { label: 'Rule out', checked: tool === 'out', run: () => { tool = 'out'; renderPanel(); } }];
+    const tools = [{ label: 'Grid here', checked: tool === 'grid', run: () => { tool = 'grid'; renderPanel(); } }, { label: 'Pick', checked: tool === 'pick', run: () => { tool = 'pick'; renderPanel(); } }, { label: 'Main area', checked: tool === 'area', run: () => { tool = 'area'; renderPanel(); } }, { label: 'Rule out', checked: tool === 'out', run: () => { tool = 'out'; renderPanel(); } }];
     if (i < 0) {
       const o = outs.findIndex((r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h);
       return CraftMenu.show(e.clientX, e.clientY, [...(o >= 0 ? [{ label: 'Take this ruled-out box away', run: () => { outs.splice(o, 1); renderPanel(); find(); } }, '-'] : []), ...tools, '-',
@@ -447,6 +466,8 @@
       '-', { label: 'Split this box', sub: [{ label: 'Into 2, side by side', run: () => splitBox(b, 2, false) }, { label: 'Into 3, side by side', run: () => splitBox(b, 3, false) }, '-', { label: 'Into 2, one above the other', run: () => splitBox(b, 2, true) }, { label: 'Into 3, one above the other', run: () => splitBox(b, 3, true) }] },
       ...(S.mode === 'table' && table && b.col !== undefined ? [{ label: 'Split this column (all rows)', sub: [{ label: 'Into 2', run: () => splitTable(b, 2, false) }, { label: 'Into 3', run: () => splitTable(b, 3, false) }] }, { label: 'Split this row (all columns)', sub: [{ label: 'Into 2', run: () => splitTable(b, 2, true) }, { label: 'Into 3', run: () => splitTable(b, 3, true) }] }] : []),
       '-', ...(isCell ? [{ label: 'Leave out this whole row', run: () => { offRows.add(b.r); skip.clear(); renderPanel(); find(); } }, { label: 'Leave out this whole column', run: () => { offCols.add(b.c); skip.clear(); renderPanel(); find(); } }, '-'] : []),
+      ...(b.zone !== undefined ? [{ label: `Change this grid (${zones[b.zone].cols} × ${zones[b.zone].rows})…`, run: () => { const z = zones[b.zone], n = askGrid(z, z); if (!n) return; Object.assign(z, n); skip.clear(); renderPanel(); find(); } }, { label: 'Remove this grid', run: () => { zones.splice(b.zone, 1); skip.clear(); renderPanel(); find(); } }] : []),
+      { label: 'Grid here: cut this box as a grid…', run: () => { const sb = clampBox(sheetBox(b)), n = askGrid(sb); if (!n) return; zones.push({ ...sb, ...n }); skip.clear(); renderPanel(); find(); } },
       { label: 'Undo my changes to this box', disabled: !moved.has(b.key) && !prefs.has(b.key) && !(b.part !== undefined), run: () => { moved.delete(b.key); prefs.delete(b.key); if (b.part !== undefined) splits.delete(b.key.replace(/\/\d+$/, '')); renderPanel(); find(); } },
       { label: 'Rule out what is in this box', run: () => { const sb = clampBox(sheetBox(b)); outs.push(sb); renderPanel(); find(); } }, '-', { label: 'Tools', sub: tools }]);
   }
@@ -510,13 +531,16 @@
       if (skipped && !live) { x.fillStyle = 'rgba(30,30,40,.55)'; x.fillRect(bx, by, bw, bh); }
       x.strokeStyle = skipped ? '#8a8fa3' : live ? 'rgba(230,57,70,.45)' : '#e63946'; x.setLineDash(skipped || live ? [lw * 3, lw * 2] : []); x.strokeRect(bx, by, bw, bh); x.setLineDash([]);
       if (b.fixed && !skipped) { x.fillStyle = '#e63946'; const hs = lw * 2.5; for (const [hx, hy] of [[bx + bw / 2, by], [bx + bw / 2, by + bh], [bx, by + bh / 2], [bx + bw, by + bh / 2]]) x.fillRect(hx - hs, hy - hs, hs * 2, hs * 2); }
-      const nm = skipped ? '' : names[n] || labelOf(b), label = skipped ? '✕' : `${++n}${nm ? ' ' + nm : ''}`, tw = x.measureText(label).width, ly = by - fs - 6 >= 0 ? by - fs - 6 : by;
+      const nm = skipped ? '' : names[n] || labelOf(b), label = skipped ? '✕' : `${++n}${nm ? ' ' + nm : ''}`, tw = x.measureText(label).width, ly = by; // (inside the box's top: above it, it reads as the row above's)
       x.fillStyle = skipped ? '#8a8fa3' : '#e63946'; x.fillRect(bx, ly, tw + 10, fs + 6); x.fillStyle = '#fff'; x.fillText(label, bx + 5, ly + 3);
     });
     x.setTransform(1, 0, 0, 1, 0, 0);
     // the main area (blue) and the ruled-out parts (grey, crossed); outside the main area darkened on the sheet view
     if (!live) { x.save(); x.beginPath(); x.rect(0, 0, off.width, off.height); x.rect(wx, wy, work.width, work.height); x.clip('evenodd'); x.fillStyle = 'rgba(20,24,36,.55)'; x.fillRect(0, 0, off.width, off.height); x.restore(); }
-    if (area) { x.strokeStyle = '#2563eb'; x.lineWidth = lw; x.setLineDash([lw * 4, lw * 2]); x.strokeRect(wx, wy, work.width, work.height); x.setLineDash([]); }
+    if (area) { x.strokeStyle = '#2563eb'; x.lineWidth = lw; x.setLineDash([lw * 4, lw * 2]); x.strokeRect(wx, wy, work.width, work.height); x.setLineDash([]);
+      // its handles: drag one in any tool to move that edge
+      x.fillStyle = '#2563eb'; const hs = lw * 4; for (const [hx, hy] of areaHandles()) { x.fillRect(hx - hs, hy - hs, hs * 2, hs * 2); x.strokeStyle = '#fff'; x.lineWidth = Math.max(1, lw / 2); x.strokeRect(hx - hs, hy - hs, hs * 2, hs * 2); } }
+    for (const z of zones) { x.strokeStyle = '#f97316'; x.lineWidth = lw; x.setLineDash([lw * 2, lw]); x.strokeRect(z.x, z.y, z.w, z.h); x.setLineDash([]); x.fillStyle = '#f97316'; const t = `${z.cols} × ${z.rows}`; x.fillRect(z.x + z.w - x.measureText(t).width - 10, z.y + z.h - fs - 6, x.measureText(t).width + 10, fs + 6); x.fillStyle = '#fff'; x.fillText(t, z.x + z.w - x.measureText(t).width - 5, z.y + z.h - fs - 3); }
     for (const o of outs) { x.fillStyle = 'rgba(70,75,90,.55)'; x.fillRect(o.x, o.y, o.w, o.h); x.strokeStyle = '#fff'; x.lineWidth = lw; x.strokeRect(o.x, o.y, o.w, o.h); x.beginPath(); x.moveTo(o.x, o.y); x.lineTo(o.x + o.w, o.y + o.h); x.moveTo(o.x + o.w, o.y); x.lineTo(o.x, o.y + o.h); x.stroke(); }
     // a table's rows and columns left out: their label and heading cells crossed
     if (S.mode === 'table' && table) { const pr = table.rows.map((r, i) => i).filter((i) => table.rowKind[i] === 'pic'), pc = table.cols.map((c, j) => j).filter((j) => table.colKind[j] === 'pic');
@@ -637,7 +661,7 @@
     if (window.CraftWork) window.CraftWork.add(file, { used: 0, pending: 'slice' }).catch(() => {});
     pagePlain = null; sheetFile = file; sheetName = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim(); skip.clear(); S.names = ''; S.category = ''; el.querySelector('.sl-empty').hidden = true;
     original = sheet; zoom = 1;
-    area = null; outs = []; table = null; offRows.clear(); offCols.clear(); rowNames = []; colNames = []; captions = []; readText.clear(); moved.clear(); prefs.clear(); splits.clear(); sheetTitle = ''; tool = 'pick';
+    area = null; outs = []; table = null; offRows.clear(); offCols.clear(); rowNames = []; colNames = []; captions = []; readText.clear(); moved.clear(); prefs.clear(); splits.clear(); zones = []; sheetTitle = ''; tool = 'pick';
     try { const a = autoCut(sheet); Object.assign(S, a.settings); autoSaid = a.said; table = a.table || null; area = a.area || null; S.notext = !!a.notext; } catch (e) { console.warn('Working out the cut failed', e); autoSaid = ''; S.notext = false; }
     renderPanel(); find(); applyZoom(); const d = desk(); d.scrollLeft = d.scrollTop = 0;
     if (S.autoread !== false && ((S.mode === 'table' && table) || captions.some((t) => t.own))) readLabels(null, true);
@@ -654,7 +678,8 @@
     // lines; nor when cells that touch repeat far more often than the lines found)
     const loose = autoCutLoose(img), lg = loose.settings.mode === 'grid', touching = lg && /touch/.test(loose.said);
     const t = lg && !touching ? null : tableOf(img), pics = t ? t.rowKind.filter((k) => k === 'pic').length * t.colKind.filter((k) => k === 'pic').length : 0;
-    if (t && pics >= 4 && !(touching && pics > loose.settings.rows * loose.settings.cols)) { const a = tableArea(t), parts = [t.rowKind.includes('head') && 'headings', t.colKind.includes('label') && 'row labels', t.rowKind.includes('caption') && 'captions'].filter(Boolean);
+    const framed = t && t.rowKind.includes('head') && t.colKind.includes('label') && pics * 2 >= (lg ? loose.settings.rows * loose.settings.cols : 0); // (cells that touch: only a table with both, and about as many cells) // headings and row labels: surely a table
+    if (t && pics >= 4 && (framed || !touching)) { const a = tableArea(t), parts = [t.rowKind.includes('head') && 'headings', t.colKind.includes('label') && 'row labels', t.rowKind.includes('caption') && 'captions'].filter(Boolean);
       return { settings: { mode: 'table', pad: 6, cut: true, see: true }, table: t, area: a, notext: true, said: `Found by itself: a table of ${t.rowKind.filter((k) => k === 'pic').length} × ${t.colKind.filter((k) => k === 'pic').length} pictures between ruled lines${parts.length ? `; its ${parts.join(' and ')} are left out (Read them with the AI to name the pictures)` : ''}.` }; }
     const r = loose, words = sheetText(img).length;
     if (words >= 3) { r.notext = true; r.said += ` ${words} captions or labels found: left out (they can become names).`; }
@@ -712,10 +737,11 @@
   // the ruled lines of a table, one way: lines that are smooth along themselves and differ from the line two away,
   // over most of the sheet (a picture's edge never runs right across). across: the upright lines
   // how much line i looks like a ruled line: the share of it that is smooth along itself and differs from the line two away
-  function lineScore(L, W, H, across, i, diff = 8) {
-    const len = across ? W : H, other = across ? H : W, at = across ? (a, j) => L[j * W + a] : (a, j) => L[a * W + j]; let n = 0;
-    for (let j = 0; j < other - 1; j++) { const v = at(i, j); if (Math.abs(at(i, j + 1) - v) >= 6) continue; if ((i >= 2 && Math.abs(v - at(i - 2, j)) > diff) || (i < len - 2 && Math.abs(v - at(i + 2, j)) > diff)) n++; }
-    return n / other;
+  // (from j0 to j1 along the line only, when given)
+  function lineScore(L, W, H, across, i, diff = 8, j0 = 0, j1 = 0) {
+    const len = across ? W : H, other = across ? H : W, at = across ? (a, j) => L[j * W + a] : (a, j) => L[a * W + j], end = j1 || other - 1; let n = 0;
+    for (let j = j0; j < end; j++) { const v = at(i, j); if (Math.abs(at(i, j + 1) - v) >= 6) continue; if ((i >= 2 && Math.abs(v - at(i - 2, j)) > diff) || (i < len - 2 && Math.abs(v - at(i + 2, j)) > diff)) n++; }
+    return n / Math.max(1, end - j0);
   }
   function ruleLines(L, W, H, across) {
     const len = across ? W : H, runs = [];
@@ -769,13 +795,20 @@
   // different colour from the cells (a heading column); the last one only when it is narrow.
   function tableOf(img) {
     const w = onWhite(img), W = img.width, H = img.height, L = lumOf(w);
-    const rows = evenSplit(fainter(cellsOf(ruleLines(L, W, H, false), H), L, W, H, false, w)), cols = evenSplit(fainter(cellsOf(ruleLines(L, W, H, true), W), L, W, H, true, w));
+    const hr = ruleLines(L, W, H, false);
+    const rows = evenSplit(fainter(cellsOf(hr, H), L, W, H, false, w)), cols = evenSplit(fainter(cellsOf(ruleLines(L, W, H, true), W), L, W, H, true, w));
     if (rows.length < 2 || cols.length < 2) return null;
     const mh = median(rows.map(([a, b]) => b - a)), mw = median(cols.map(([a, b]) => b - a)), short = rows.map(([a, b]) => b - a < mh * 0.7);
     const rowKind = rows.map(() => 'pic'), colKind = cols.map(() => 'pic');
     let t = 0; while (t < rows.length && short[t]) rowKind[t++] = 'head';
     let b = rows.length - 1; while (b > t && short[b]) rowKind[b--] = 'foot';
-    for (let i = t; i <= b; i++) if (short[i]) { const r = ringOf(w, cols[0][0], rows[i][0], cols[cols.length - 1][1], rows[i][1], 1e6); rowKind[i] = r.sd > 6 ? 'caption' : 'gap'; }
+    // a short strip between rows: words (thin ink on the page) are captions; solid parts of the pictures (a row of little
+    // windows' title bars that looked like a line) belong to the row below, so it is joined back onto it
+    for (let i = t; i <= b; i++) if (short[i]) { const r = ringOf(w, cols[0][0], rows[i][0], cols[cols.length - 1][1], rows[i][1], 1e6); rowKind[i] = r.sd > 6 ? (r.even < 0.6 && i < b && rows[i][1] - rows[i][0] < mh * 0.4 ? 'join' : 'caption') : 'gap'; }
+    for (let i = rows.length - 2; i >= 0; i--) if (rowKind[i] === 'join') { rows.splice(i, 2, [rows[i][0], rows[i + 1][1]]); rowKind.splice(i, 2, 'pic'); short.splice(i, 2, false); }
+    // a row or column with nothing in it (the see-through or plain page under a table) is not pictures
+    const empty = (x0, y0, x1, y1) => { const r = ringOf(w, x0, y0, x1, y1, 1e6); return r.sd < 3; };
+    rows.forEach(([a, b2], i) => { if (rowKind[i] === 'pic' && empty(cols[0][0], a, cols[cols.length - 1][1], b2)) rowKind[i] = i > rows.length / 2 ? 'foot' : 'gap'; });
     const picRows = rows.map((r, i) => i).filter((i) => rowKind[i] === 'pic'); if (!picRows.length) return null;
     const ringAt = (i, j) => ringOf(w, cols[j][0] + 2, rows[i][0] + 2, cols[j][1] - 2, rows[i][1] - 2).rgb;
     const inner = cols.length > 2 ? cols.slice(1, -1).map((c, j) => j + 1) : cols.map((c, j) => j), content = [0, 1, 2].map((k) => median(picRows.flatMap((i) => inner.map((j) => ringAt(i, j)[k]))));
@@ -828,6 +861,20 @@
     for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const i = (y * W + x) * 4; if (rgb) { d[i] = rgb[0]; d[i + 1] = rgb[1]; d[i + 2] = rgb[2]; d[i + 3] = 255; } else d[i + 3] = 0; }
   }
   // the words in the row labels, headings and captions, read by the describing AI
+  // The reader sometimes gets one letter wrong (Fants for Fonts). A word of four letters or more that is not one ClipArtCraft
+  // knows, but is one letter away from one it does (the AI's picture words, the styles, and their plurals), is corrected.
+  let vocab = null;
+  function fixSpelling(text) {
+    if (!vocab) { vocab = new Set(); const add = (w) => String(w).toLowerCase().split(/[^a-z]+/).forEach((x) => { if (x.length >= 3) { vocab.add(x); vocab.add(x + 's'); vocab.add(x.replace(/y$/, 'ies')); } });
+      const N = window.CraftNamer; if (N) { (N.WORDS || []).forEach(add); (N.STYLES || []).forEach(add); (N.FORMS || []).forEach(add); (N.CATEGORIES || []).forEach(add); }
+      'original restored modern illustrated sticker dimensional puffy glazed resin collectible realistic illustration contemporary realism pixel clip art classic set icons symbols everyday hardware devices system fonts program network places internet drive optical recycle bin cloud'.split(' ').forEach(add); }
+    // only letters the reader mixes up because they look alike (Fants for Fonts, not Pants); when unsure, it is left alone
+    const ALIKE = ['ao', 'ec', 'ce', 'il', 'li', 'mn', 'nm', 'uv', 'vu', 'rn', 'hn', 'nh', 'oe', 'eo', 'ae', 'ea', 'yv', 'tf', 'ft', 'oa', 'ij', 'ji', 'gq', 'qg', 'bh', 'hb', 'cl'];
+    const looksAlike = (a, b) => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return ALIKE.includes(a[i] + b[i]); return false; };
+    const one = (a, b) => { if (Math.abs(a.length - b.length) > 1) return false; let i = 0, j = 0, d = 0; while (i < a.length && j < b.length) { if (a[i] === b[j]) { i++; j++; continue; } if (++d > 1) return false; if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; } } return d + (a.length - i) + (b.length - j) <= 1; };
+    return String(text).replace(/[A-Za-z]{4,}/g, (w) => { const lw = w.toLowerCase(); if (vocab.has(lw)) return w; const near = [...vocab].filter((v) => v.length >= 4 && v.length === lw.length && one(lw, v) && looksAlike(lw, v)), hit = near.length === 1 ? near[0] : ''; if (!hit) return w;
+      return w === w.toUpperCase() ? hit.toUpperCase() : w[0] === w[0].toUpperCase() ? hit[0].toUpperCase() + hit.slice(1) : hit; });
+  }
   // the reader squeezes what it reads into a square: a long strip (a title, a heading) is put on a square of its own page
   // first, so its letters keep their shape
   function squareOf(img) { const n = Math.max(img.width, img.height), c = document.createElement('canvas'); c.width = c.height = n; const x = c.getContext('2d'), bg = cornerBg(img); x.fillStyle = `rgb(${bg.join(',')})`; x.fillRect(0, 0, n, n); x.drawImage(canvasOf(img), 0, Math.round((n - img.height) / 2)); return c; }
@@ -841,7 +888,7 @@
     // the reader runs lines together ("OriginalPixel Clip Art", "Submarine(Sub)"): a space goes back where a small letter
     // meets a capital, and before a bracket
     const spaced = (t) => String(t || '').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/(\S)\(/g, '$1 (').replace(/\)(\S)/g, ') $1').replace(/\s+/g, ' ').trim();
-    const tidy = (t) => spaced(t).replace(/^\s*\d+\s*[.):]?\s*/, '').trim(), jobs = [];
+    const tidy = (t) => fixSpelling(spaced(t).replace(/^\s*\d+\s*[.):]?\s*/, '').trim()), jobs = [];
     if (S.mode === 'table' && table) {
       const pr = table.rows.map((r, i) => i).filter((i) => table.rowKind[i] === 'pic'), pc = table.cols.map((c, j) => j).filter((j) => table.colKind[j] === 'pic'), lc = table.colKind.indexOf('label');
       let hr = -1; for (let i = 0; i < table.rows.length && table.rowKind[i] !== 'pic'; i++) if (table.rowKind[i] === 'head') hr = i;
@@ -868,6 +915,9 @@
   // dragging on the sheet: the main area, ruled-out boxes and the found boxes' edges (in the sheet's pixels)
   let drag = null;
   const ptOf = (e) => { const c = el.querySelector('canvas'), r = c.getBoundingClientRect(), k = sheet.width / r.width; return { x: (e.clientX - r.left) * k, y: (e.clientY - r.top) * k, k, r }; };
+  // the main area's four handles (the middles of its edges), and which edge a point is on
+  const areaHandles = () => (area ? [[area.x + area.w / 2, area.y], [area.x + area.w / 2, area.y + area.h], [area.x, area.y + area.h / 2], [area.x + area.w, area.y + area.h / 2]] : []);
+  const onHandle = (p, t) => { const k = areaHandles().findIndex(([hx, hy]) => Math.abs(p.x - hx) <= t * 1.6 && Math.abs(p.y - hy) <= t * 1.6); return k < 0 ? null : [{ t: 1 }, { b: 1 }, { l: 1 }, { r: 1 }][k]; };
   // which edges of a box a point is on (within t)
   function edgesAt(b, p, t) {
     const inY = p.y >= b.y - t && p.y <= b.y + b.h + t, inX = p.x >= b.x - t && p.x <= b.x + b.w + t, e = {};
@@ -882,21 +932,22 @@
     return { x: Math.min(d.p0.x, p.x), y: Math.min(d.p0.y, p.y), w: Math.abs(p.x - d.p0.x), h: Math.abs(p.y - d.p0.y) };
   }
   const clampBox = (b) => { const x = Math.max(0, Math.round(b.x)), y = Math.max(0, Math.round(b.y)); return { x, y, w: Math.max(1, Math.min(sheet.width - x, Math.round(b.w + b.x - x))), h: Math.max(1, Math.min(sheet.height - y, Math.round(b.h + b.y - y))) }; };
-  function showDrag(b, r, k) { let d = el.querySelector('.sl-drag'); if (!b) { if (d) d.remove(); return; } if (!d) { d = document.createElement('div'); d.className = 'sl-drag'; el.append(d); } d.dataset.tool = tool; Object.assign(d.style, { left: `${r.left + b.x / k}px`, top: `${r.top + b.y / k}px`, width: `${b.w / k}px`, height: `${b.h / k}px` }); }
+  function showDrag(b, r, k, as) { let d = el.querySelector('.sl-drag'); if (!b) { if (d) d.remove(); return; } if (!d) { d = document.createElement('div'); d.className = 'sl-drag'; el.append(d); } d.dataset.tool = as || tool; Object.assign(d.style, { left: `${r.left + b.x / k}px`, top: `${r.top + b.y / k}px`, width: `${b.w / k}px`, height: `${b.h / k}px` }); }
   function onDown(e) {
     if (!sheet || e.button !== 0) return; const p = ptOf(e), t = 8 * p.k; let target = null, edges = null, from = null;
     if (tool === 'area' && area) { edges = edgesAt(area, p, t); if (edges) from = { ...area }; }
+    let areaDrag = false; if (!edges && area) { edges = onHandle(p, t); if (edges) { from = { ...area }; areaDrag = true; } }
     if (tool === 'pick') for (let i = boxes.length - 1; i >= 0 && !edges; i--) { if (skip.has(i)) continue; const sb = sheetBox(boxes[i]); edges = edgesAt(sb, p, t); if (edges) { from = sb; target = boxes[i]; } }
-    drag = { p0: p, edges, from, target, moved: false }; e.target.setPointerCapture(e.pointerId); e.preventDefault();
+    drag = { p0: p, edges, from, target, moved: false, areaDrag }; e.target.setPointerCapture(e.pointerId); e.preventDefault();
   }
   function onMove(e) {
     if (!sheet) return; const p = ptOf(e), c = e.target;
     hover = { x: Math.max(0, Math.min(sheet.width - 1, Math.floor(p.x))), y: Math.max(0, Math.min(sheet.height - 1, Math.floor(p.y))) }; status();
     if (!drag) { // the cursor says what a press would do
-      const t = 8 * p.k; let ed = null; if (tool === 'area' && area) ed = edgesAt(area, p, t); if (tool === 'pick') for (let i = 0; i < boxes.length && !ed; i++) if (!skip.has(i)) ed = edgesAt(sheetBox(boxes[i]), p, t);
+      const t = 8 * p.k; let ed = onHandle(p, t); if (!ed && tool === 'area' && area) ed = edgesAt(area, p, t); if (tool === 'pick') for (let i = 0; i < boxes.length && !ed; i++) if (!skip.has(i)) ed = edgesAt(sheetBox(boxes[i]), p, t);
       c.style.cursor = ed ? (ed.l || ed.r ? (ed.t || ed.b ? ((ed.l && ed.t) || (ed.r && ed.b) ? 'nwse-resize' : 'nesw-resize') : 'ew-resize') : 'ns-resize') : tool === 'pick' ? 'pointer' : 'crosshair'; return; }
     if (!drag.moved && Math.hypot(p.x - drag.p0.x, p.y - drag.p0.y) < 4 * p.k) return;
-    if (tool === 'pick' && !drag.edges) return; drag.moved = true; showDrag(dragBox(drag, p), p.r, p.k);
+    if (tool === 'pick' && !drag.edges) return; drag.moved = true; showDrag(dragBox(drag, p), p.r, p.k, drag.areaDrag ? 'area' : tool);
   }
   function onUp(e) {
     if (!drag) return; const d = drag, p = ptOf(e); drag = null; showDrag(null);
@@ -913,8 +964,9 @@
       return;
     }
     const b = clampBox(dragBox(d, p)); if (b.w < 6 || b.h < 6) return;
-    if (tool === 'area') { area = b.x === 0 && b.y === 0 && b.w === sheet.width && b.h === sheet.height ? null : b; skip.clear(); }
+    if (d.areaDrag || tool === 'area') { area = b.x === 0 && b.y === 0 && b.w === sheet.width && b.h === sheet.height ? null : b; skip.clear(); }
     else if (tool === 'out') outs.push(b);
+    else if (tool === 'grid') { const n = askGrid(b); if (!n) return; zones.push({ ...b, ...n }); skip.clear(); }
     else if (d.target) moved.set(d.target.key, b); // a box moved by hand: cut from just that box from now on
     renderPanel(); find();
   }
@@ -954,7 +1006,7 @@
       x.translate(c.width / 2, c.height / 2); if (kind === 'flipx') x.scale(-1, 1); else if (kind === 'flipy') x.scale(1, -1); else x.rotate(a); x.imageSmoothingQuality = 'high'; x.drawImage(src, -W / 2, -H / 2);
       sheet = x.getImageData(0, 0, c.width, c.height);
     }
-    svgSheet = null; area = null; outs = []; table = null; offRows.clear(); offCols.clear(); rowNames = []; colNames = []; captions = []; readText.clear(); moved.clear(); prefs.clear(); splits.clear(); skip.clear(); pagePlain = null;
+    svgSheet = null; area = null; outs = []; zones = []; table = null; offRows.clear(); offCols.clear(); rowNames = []; colNames = []; captions = []; readText.clear(); moved.clear(); prefs.clear(); splits.clear(); skip.clear(); pagePlain = null;
     try { const a = autoCut(sheet); Object.assign(S, a.settings); autoSaid = a.said; table = a.table || null; area = a.area || null; S.notext = !!a.notext; } catch (e) { autoSaid = ''; }
     zoom = 1; renderPanel(); find(); applyZoom();
   }
@@ -1007,6 +1059,7 @@
       const tl = e.target.closest('[data-tool]'); if (tl) { tool = tl.dataset.tool; renderPanel(); return; }
       if (a && a.dataset.sl === 'whole') { area = null; skip.clear(); renderPanel(); find(); return; }
       if (a && a.dataset.sl === 'clear-outs') { outs = []; renderPanel(); find(); return; }
+      if (a && a.dataset.sl === 'unzone') { zones = []; skip.clear(); renderPanel(); find(); return; }
       if (a && a.dataset.sl === 'unmove') { moved.clear(); prefs.clear(); splits.clear(); renderPanel(); find(); return; }
       if (a && a.dataset.sl === 'read') return readLabels(a);
       const rc = e.target.closest('input[data-row], input[data-col]'); if (rc) { const set = rc.dataset.row !== undefined ? offRows : offCols, i = +(rc.dataset.row ?? rc.dataset.col); if (rc.checked) set.delete(i); else set.add(i); skip.clear(); find(); return; }
@@ -1034,5 +1087,5 @@
     opts = o; if (!el) { build(); document.addEventListener('keydown', onKey); } el.hidden = false; renderPanel(); el.querySelector('.sl-empty').hidden = !!sheet; if (o.files && o.files.length) loadMany(o.files); else if (o.file) loadMany([o.file]); else if (sheet) find();
   }
   function close() { if (el) { el.hidden = true; const r = el.querySelector('.sl-review'); if (r) r.hidden = true; } }
-  window.ClipArtSlicer = { pngText, styleFor, _cut: (i) => baseCut(boxes[i]), _boxes: () => boxes.map(sheetBox), _table: () => table, open, close, autoCut, combine, splitJoined, edgeRoom, splitSheet, sheetItem, findItem, boxClear, gridCells, gridItem, svgCut, readSheet, tableOf, state: () => ({ mode: S.mode, boxes: boxes.length, skipped: skip.size, area, outs: outs.length, notext: S.notext, captions: captions.length, owned: captions.filter((t) => t.own).length, said: autoSaid, rows: rowCount(), cols: colCount(), moved: moved.size, whole: boxes.filter((b) => b.whole).map((b) => b.r + ':' + b.c).join(' ') }) };
+  window.ClipArtSlicer = { fixSpelling, pngText, styleFor, _cut: (i) => baseCut(boxes[i]), _boxes: () => boxes.map(sheetBox), _table: () => table, open, close, autoCut, combine, splitJoined, edgeRoom, splitSheet, sheetItem, findItem, boxClear, gridCells, gridItem, svgCut, readSheet, tableOf, state: () => ({ mode: S.mode, boxes: boxes.length, skipped: skip.size, area, outs: outs.length, notext: S.notext, captions: captions.length, owned: captions.filter((t) => t.own).length, said: autoSaid, rows: rowCount(), cols: colCount(), moved: moved.size, whole: boxes.filter((b) => b.whole).map((b) => b.r + ':' + b.c).join(' ') }) };
 })();

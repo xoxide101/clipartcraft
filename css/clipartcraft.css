@@ -275,3 +275,5 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 .ctx-info.strong { padding-top: 6px; font-size: 13px; font-weight: 600; color: var(--fg); }
 .sl-queue { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 10px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent-soft); font-size: 12.5px; }
 .sl-queue span { flex: 1; min-width: 150px; overflow-wrap: anywhere; }
+.sl-drag[data-tool=grid] { border-color: #f97316; background: rgba(249,115,22,.1); }
+.sl-side .seg .btn { padding-left: 6px; padding-right: 6px; }
