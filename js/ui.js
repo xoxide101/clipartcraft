@@ -29,12 +29,12 @@
   const needsSort = (it) => !KNOWN().includes(it.category || '') || placeholderName(it.name);
   // learning from a correction: the picture's look and the user's answer are remembered (and a new name word is added
   // to that category's words), so pictures like it are named and sorted that way from now on
-  async function teach(it) {
+  async function teach(it, quiet) {
     if (!it.vec || !window.CraftNamer) return; const subject = subjectOf(it), all = (await L.lessons()).filter((l) => l.id !== it.id);
     all.push({ id: it.id, vec: it.vec, name: subject, category: it.category || '', style: it.style || '', form: it.form || '', at: new Date().toISOString() });
     await L.lessons(all.slice(-2000));
     if (it.category && CraftNamer.learnWord(subject, it.category)) await L.lists(CraftNamer.lists());
-    toast(`The AI will remember: pictures like this are “${subject}”${it.category ? ` in ${it.category}` : ''}.`);
+    if (!quiet) toast(`The AI will remember: pictures like this are “${subject}”${it.category ? ` in ${it.category}` : ''}.`);
   }
   // describing each picture (Florence-2): better names, a little slower; on unless turned off
   const describeOn = () => { try { return localStorage.getItem('clipartcraft-describe') !== '0'; } catch (e) { return true; } };
@@ -120,9 +120,9 @@
         <label class="field"><span>Matched word <small class="hint">(nearest on the lists)</small></span><input class="input" data-f="matched" value="${esc(one.matched || '')}"></label>
         <label class="field"><span>Description</span><textarea class="input" data-f="description" rows="2">${esc(one.description || '')}</textarea></label></details>` : ''}
       ${one ? aiChips(one) : ''}
-      <div class="btns"><button class="btn outline sm" type="button" data-act="ai-again" title="The AI looks at ${one ? 'this picture' : 'these pictures'} again: new guesses to choose from">Ask the AI${one && one.ai ? ' again' : ''}</button><button class="btn ghost sm" type="button" data-act="edit-lists" title="Add, rename or remove categories (and the words the AI knows for each), styles and forms">Edit the lists…</button></div>
+      <div class="btns"><button class="btn outline sm" type="button" data-act="ai-again" title="The AI looks at ${one ? 'this picture' : 'these pictures'} again: new guesses to choose from">Ask the AI${one && one.ai ? ' again' : ''}</button><button class="btn outline sm" type="button" data-act="cloud-ask" title="A cloud AI (Claude, Gemini, GPT or OpenRouter, with your own key) looks at ${one ? 'it' : 'them'}: for pictures the AI here gets wrong. Costs a little per picture">Ask a cloud AI</button><button class="btn ghost sm" type="button" data-act="edit-lists" title="Add, rename or remove categories (and the words the AI knows for each), styles and forms">Edit the lists…</button></div>
       <label class="field"><span>Tags <small class="hint">(separated by commas)</small></span><input class="input" data-f="tags" value="${esc(one ? (one.tags || []).join(', ') : '')}" placeholder="${one ? 'farm, red, barn' : 'added to each'}"></label>
-      ${one ? `<p class="hint">${one.width} × ${one.height} pixels · ${[one.png ? 'PNG' : '', one.svg ? 'SVG' : '', one.anim ? `moving (${one.frames || '?'} frames)` : ''].filter(Boolean).join(', ')}${one.kind === 'bw' ? ' · black and white' : one.kind === 'grey' ? ' · grey' : ''}${one.source ? ` · from ${esc(one.source)}` : ''}</p>
+      ${one ? `<p class="hint">${one.width} × ${one.height} pixels · ${[one.png ? 'PNG' : '', one.svg ? 'SVG' : '', one.anim ? `moving (${one.frames || '?'} frames)` : ''].filter(Boolean).join(', ')}${one.kind === 'bw' ? ' · black and white' : one.kind === 'grey' ? ' · grey' : ''}${one.source ? ` · from ${esc(one.source)}` : ''}${one.cloud ? ` · named by ${esc(one.cloud)}` : ''}</p>
       ${one.links ? `<div class="links"><span class="hint">On the server:</span>${Object.entries(one.links).filter(([k]) => k !== 'thumb').map(([k, u]) => `<a href="${esc(u)}" target="_blank" rel="noopener" title="${esc(u)}">${k.toUpperCase()}</a><button type="button" class="btn ghost sm" data-copy="${esc(u)}" title="Copy the link">Copy link</button>`).join('')}</div>` : ''}
       <div class="btns">${one.png ? '<button class="btn outline" type="button" data-act="dl-png">PNG</button>' : ''}${one.anim ? '<button class="btn outline" type="button" data-act="dl-anim">Animation</button>' : ''}${one.svg ? '<button class="btn outline" type="button" data-act="dl-svg">SVG</button>' : ''}<button class="btn outline" type="button" data-act="copy">Copy</button></div>` : ''}
       <div class="btns"><button class="btn outline" type="button" data-act="export-sel">Export ${one ? 'it' : 'these'} (ZIP)</button><button class="btn outline danger" type="button" data-act="delete">Delete</button></div></div>`;
@@ -151,6 +151,8 @@
     try {
       if (a === 'ai-again') { const S = chosen(); if (!S.length) return; if (!(await aiOk())) return; await sortWithAI(S, { again: true }); await reload(); return; }
       if (a === 'edit-lists') return editLists();
+      if (a === 'cloud-settings') return cloudSettings();
+      if (a === 'cloud-ask') { const S = chosen(); if (!S.length) return toast('Choose the pictures to ask about first.'); if (!window.CraftCloud.ready()) return cloudSettings(() => act('cloud-ask')); if (S.length > 1 && !confirm(`Send ${S.length} pictures to ${CraftCloud.NAMES[CraftCloud.provider()]}? Each one costs a little on your account.`)) return; await askCloud(S); await reload(); return; }
       if (a === 'sort-ai') { const S = sel.size ? chosen() : items.filter(needsSort); if (!S.length) return toast('Everything is sorted already.'); if (!(await aiOk())) return; await sortWithAI(S); await reload(); return; }
       if (a === 'start') { startOpen = true; render(); return; }
       if (a === 'start-close') { startOpen = false; render(); return; }
@@ -260,7 +262,7 @@
       { id: 'home', label: 'Home', hue: '#c2410c', groups: [
         ['Start', [B('Start', I.wand, () => act('start'), { big: true, title: 'The start page: what do you want to do? (import, slice a sheet, open a library…)' })]],
         ['Add', [B('Import pictures', IK.add, () => act('add'), { big: true, key: 'Ctrl+O', title: 'Any picture files (PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, TIFF, SVG, animations, classic formats): every page and frame, cropped, named for you, black and white made see-through' }), B('Import a library', IK.zip, () => act('zip'), { big: true, title: 'A library ZIP (from ImageCraft’s Split a sheet, or exported here)' })]],
-        ['Sort', [B('Sort with AI', I.wand, () => act('sort-ai'), { big: true, title: 'The AI looks at each picture (the chosen ones, or every one not yet in a category) and gives it a category, style, form and tags, and a name where it only has a number' })]],
+        ['Sort', [B('Sort with AI', I.wand, () => act('sort-ai'), { big: true, title: 'The AI looks at each picture (the chosen ones, or every one not yet in a category) and gives it a category, style, form and tags, and a name where it only has a number' }), { col: [B('Ask a cloud AI', I.globe, () => act('cloud-ask'), { title: 'A cloud AI (Claude, Gemini, GPT or OpenRouter, with your own key) names and sorts the chosen pictures: for the ones the AI here gets wrong. Costs a little per picture', disabled: () => !sel.size }), B('Cloud AI settings…', I.gear, () => act('cloud-settings'), { title: 'Your own key for Claude, Gemini, GPT or OpenRouter, and which model to use' })] }]],
         ['Slice', [B('Montage Slicer', IK.slice, () => act('slice'), { big: true, title: 'Cut a sheet (montage) of clip art into separate pictures: found by themselves or by a grid, named in order, added to the library' })]],
         ['Library', [B('Export (ZIP)', IK.exportZ, () => act('export-all'), { big: true, title: 'Everything shown (the category you are in, or all) as one ZIP: pictures, SVGs and library.json' }), { col: [B('Save to the folder', IK.up, () => act('folder-out'), { title: 'Write the whole library to its folder (backup, sync, sharing)' }), B('Add from a folder', IK.down, () => act('folder-in'), { title: 'Read a library folder into this library' }), B('Choose the folder…', IK.folder, () => act('folder-pick'), { title: 'Which folder the library is saved to' })] }]],
         ['Edit', [{ col: [B('Choose all', I.selectAll, () => act('select-all'), { key: 'Ctrl+A' }), B('Delete', I.trash, () => act('delete'), { key: 'Delete', disabled: () => !sel.size })] }]],
@@ -324,6 +326,53 @@
         N.configure({ ...l, removed: N.startingLists().categories.flatMap((c) => c.words).filter((w) => !l.categories.some((c) => c.words.map((x) => x.toLowerCase()).includes(w.toLowerCase()))) }); await L.lists(N.lists()); box.remove(); render(); toast(`Lists saved: ${l.categories.length} categories, ${l.styles.length} styles, ${l.forms.length} forms. Every Craft app sees them.`); }
     });
     document.body.append(box); paint();
+  }
+  // ------------------------------------------------------------------ a cloud AI for the hard ones (js/cloud.js)
+  // Its answer is taken as a correction: the name (numbered if taken), category, style and form, and the AI here
+  // learns from it, so pictures that look like it are named that way from now on.
+  async function askCloud(list) {
+    const C = window.CraftCloud, N = window.CraftNamer, lists = { categories: KNOWN(), styles: N ? N.STYLES : [], forms: N ? N.FORMS : [] };
+    return L.guard(async () => {
+      const taken = new Set(items.map((it) => it.name.toLowerCase())); let n = 0, done = 0;
+      for (const it of list) {
+        busy(`Asking ${C.NAMES[C.provider()]}: ${++n} of ${list.length}, ${it.name}…`);
+        let src; try { src = it.png ? await createImageBitmap(it.png) : await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = L.svgUrl(it.svg); }); } catch (e) { continue; }
+        const c = document.createElement('canvas'); c.width = src.width || 512; c.height = src.height || 512; c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+        let a; try { a = await C.look(c, lists); } catch (e) { busy(); if (!done) throw e; toast(`${done} done, then: ${e.message}`); return done; }
+        if (!it.original) it.original = it.name;
+        if (a.name) { taken.delete(it.name.toLowerCase()); let nm = a.name; for (let k = 2; taken.has(nm.toLowerCase()); k++) nm = `${a.name}_${String(k).padStart(3, '0')}`; it.name = nm; taken.add(nm.toLowerCase()); it.seen = a.name; }
+        if (a.category) it.category = a.category; if (a.style) it.style = a.style; if (a.form) it.form = a.form;
+        it.tags = [...new Set([...(it.tags || []), ...a.tags, ...(a.text ? [a.text.toLowerCase()] : [])])]; if (a.description) it.description = a.description;
+        it.cloud = a.model; it.checked = true; await L.put(it); if (it.vec) await teach(it, true); done++;
+      }
+      const one = list.length === 1 ? list[0] : null;
+      busy(); toast(one ? `${C.NAMES[C.provider()]} says: “${one.name}”${one.category ? ` in ${one.category}` : ''}.${one.vec ? ' The AI here will remember it.' : ''}` : `${done} picture${done === 1 ? '' : 's'} named and sorted by ${C.NAMES[C.provider()]}.`);
+      return done;
+    });
+  }
+  function cloudSettings(then) {
+    const C = window.CraftCloud, s = C.settings(), fromIC = C.imageCraftKeys();
+    const box = document.createElement('div'); box.className = 'lists-dlg'; box.setAttribute('role', 'dialog'); box.setAttribute('aria-label', 'Cloud AI settings');
+    box.innerHTML = `<div class="lists-in cloud-in"><div class="lists-head"><b>Cloud AI</b><span class="grow"></span><button class="btn outline" type="button" data-c="close">Close</button></div>
+      <p class="hint">For pictures the AI in this browser gets wrong. A cloud AI looks much more closely (it reads signs and knows a stagecoach from a wagon), but it needs the internet and costs a little per picture on your own account. Your key stays in this browser and goes only to that company.</p>
+      ${C.PROVIDERS.map((p) => `<label class="field"><span><input type="radio" name="cloud-p" value="${p}" ${C.provider() === p || (!C.provider() && p === 'anthropic') ? 'checked' : ''}> ${C.NAMES[p]}</span><input class="input" type="password" autocomplete="off" spellcheck="false" data-key="${p}" value="${esc(s.keys[p] || '')}" placeholder="${C.has(p) ? '' : 'Paste your key here'}"></label>`).join('')}
+      ${Object.keys(fromIC).length ? `<button class="btn ghost sm" type="button" data-c="ic">Use the keys ImageCraft has (${Object.keys(fromIC).map((p) => C.NAMES[p].split(' ')[0]).join(', ')})</button>` : ''}
+      <label class="field"><span>Model <small class="hint">(a quick, cheap one is picked if you leave it)</small></span><div class="cloud-model"><select class="input" data-model><option value="">Pick for me</option>${s.model ? `<option value="${esc(s.model)}" selected>${esc(s.model)}</option>` : ''}</select><button class="btn outline sm" type="button" data-c="models">List the models</button></div></label>
+      <div class="lists-foot"><span class="grow"></span><button class="btn primary" type="button" data-c="save">Save</button></div></div>`;
+    const read = () => { const keys = {}; box.querySelectorAll('[data-key]').forEach((i) => { keys[i.dataset.key] = i.value.trim(); }); const p = (box.querySelector('[name=cloud-p]:checked') || {}).value || ''; return { keys, provider: p, model: box.querySelector('[data-model]').value }; };
+    box.addEventListener('change', (e) => { if (e.target.name === 'cloud-p') box.querySelector('[data-model]').innerHTML = '<option value="">Pick for me</option>'; });
+    box.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-c]'); if (!b) return;
+      if (b.dataset.c === 'close') { box.remove(); return; }
+      if (b.dataset.c === 'ic') { Object.entries(fromIC).forEach(([p, k]) => { box.querySelector(`[data-key="${p}"]`).value = k; }); toast('Keys copied from ImageCraft: Save to keep them.'); return; }
+      if (b.dataset.c === 'models') {
+        const v = read(); C.set({ keys: v.keys, provider: v.provider }); if (!C.has(v.provider)) return toast('Paste a key for that one first.'); b.disabled = true; b.textContent = 'Asking…';
+        try { const list = await C.models(v.provider); box.querySelector('[data-model]').innerHTML = '<option value="">Pick for me</option>' + list.map((m) => `<option value="${esc(m.id)}" ${m.id === v.model ? 'selected' : ''}>${esc(m.name)}</option>`).join(''); toast(`${list.length} models that can look at pictures.`); } catch (err) { fail(err); }
+        b.disabled = false; b.textContent = 'List the models'; return;
+      }
+      if (b.dataset.c === 'save') { const v = read(); if (v.provider && !v.keys[v.provider]) v.provider = C.PROVIDERS.find((p) => v.keys[p]) || ''; C.set(v); box.remove(); render(); if (!C.ready()) return toast('No key saved: the cloud AI stays off.'); toast(`Cloud AI: ${C.NAMES[C.provider()]}.`); if (then) then(); }
+    });
+    document.body.append(box); (box.querySelector('[data-key]:placeholder-shown') || box.querySelector('[data-key]')).focus();
   }
   loadLists().then(reload).then(() => checkServer()).then(offerResume).catch(fail);
   window.ClipArtCraft = { reload, items: () => items };

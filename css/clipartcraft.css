@@ -222,3 +222,8 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 .statusbar > span:empty { display: none; }
 /* Sort with AI fits the left panel */
 .sort-ai { display: block; width: calc(100% - 16px); text-align: center; white-space: normal; height: auto; min-height: 30px; padding: 5px 8px; }
+/* Cloud AI settings */
+.cloud-in { width: min(560px, 100%); }
+.cloud-in .field > span { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.cloud-model { display: flex; gap: 8px; }
+.cloud-model select { flex: 1; min-width: 0; }
