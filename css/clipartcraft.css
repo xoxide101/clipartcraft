@@ -158,3 +158,18 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 /* a send cut short by a refresh: finish it */
 .resume { position: sticky; top: 0; z-index: 4; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 10px 10px 0; padding: 10px 12px; border: 1px solid #f59e0b; border-radius: 10px; background: var(--panel); }
 .resume span { flex: 1; min-width: 200px; }
+
+/* the slicer's room at the edges: a box whose sides are clicked through yellow (auto), blue (always) and grey (none) */
+.room-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.room-ctl { display: grid; gap: 6px; }
+.room-ctl .field { width: 90px; }
+.room-row .hint { flex: 1 1 100%; }
+.room-box { width: 72px; height: 72px; flex: none; }
+.room-pic { fill: var(--panel-2); stroke: var(--line); }
+.room-side { stroke-width: 6; stroke-linecap: round; cursor: pointer; }
+.room-side.auto { stroke: #eab308; }
+.room-side.on { stroke: #3b82f6; }
+.room-side.off { stroke: #6b7280; opacity: .35; }
+.room-side:hover { opacity: 1; filter: brightness(1.2); }
+.room-key { display: inline-block; width: 12px; height: 4px; border-radius: 2px; vertical-align: middle; margin: 0 2px 0 6px; }
+.room-key.auto { background: #eab308; } .room-key.on { background: #3b82f6; } .room-key.off { background: #6b7280; opacity: .5; }

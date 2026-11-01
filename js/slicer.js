@@ -137,7 +137,7 @@
   }
 
   // ------------------------------------------------------------------ the slicer window
-  const S = { mode: 'find', gap: 0, min: 0.2, pad: 6, see: true, rows: 3, cols: 3, inset: 0, cut: true, tol: 16, view: 'result', names: '', category: '', svg: true };
+  const S = { mode: 'find', gap: 0, min: 0.2, pad: 6, see: true, rows: 3, cols: 3, inset: 0, cut: true, tol: 16, edges: { t: 'auto', b: 'auto', l: 'auto', r: 'auto' }, roomPx: 2, view: 'result', names: '', category: '', svg: true };
   try { Object.assign(S, JSON.parse(localStorage.getItem('clipartcraft-slicer') || '{}'), { names: '', category: '' }); } catch (e) { /* blocked storage */ }
   const keep = () => { try { const { names, category, ...rest } = S; localStorage.setItem('clipartcraft-slicer', JSON.stringify(rest)); } catch (e) { /* blocked */ } };
   let sheetFile = null, sheet = null, sheetName = '', found = null, boxes = [], skip = new Set(), el = null, timer = 0, opts = {};
@@ -166,6 +166,7 @@
     return `<div class="props-head">Montage Slicer</div><div class="sec">
       ${sheet ? '' : '<p class="hint">Choose a sheet of clip art (a montage) to slice.</p>'}
       <button class="btn outline" type="button" data-sl="open">${sheet ? 'Another sheet…' : 'Choose a sheet…'}</button>
+      ${autoSaid ? `<p class="hint auto-said">${esc(autoSaid)} <small>Change anything below.</small></p>` : ''}
       <div class="field"><span>Show</span><div class="seg" role="group"><button class="btn" type="button" data-view="result" aria-pressed="${S.view === 'result'}">The result (live)</button><button class="btn" type="button" data-view="boxes" aria-pressed="${S.view === 'boxes'}">The boxes</button></div></div>
       <div class="field"><span>How to cut</span><div class="seg" role="group"><button class="btn" type="button" data-mode="find" aria-pressed="${S.mode === 'find'}">Find the pictures</button><button class="btn" type="button" data-mode="grid" aria-pressed="${S.mode === 'grid'}">Grid</button></div></div>
       ${S.mode === 'find' ? `<p class="hint">For pictures with space round them on a plain or old-paper background.</p>
@@ -178,6 +179,7 @@
         ${S.cut ? field('Room round each (pixels)', num('pad', 0, 80)) : ''}`}
       ${chk('cut', S.mode === 'find' ? 'Cut each picture out (off: its whole box)' : 'Cut each picture out of its cell (off: the whole cell)')}
       ${chk('see', 'See-through background')}
+      ${roomHtml()}
       ${S.see && !S.cut ? field('How close to the background counts as background <small class="hint">(lower keeps light parts, like a white tile)</small>', num('tol', 1, 120)) : ''}
       <p class="hint">${S.cut ? (S.see ? 'Each picture cut out, the background see-through.' : 'Each picture cut out, the background colour kept.') : (S.see ? 'Each picture is its whole box (a tile keeps its own shape and colour); only the page round it is see-through.' : 'Each picture is its whole box, exactly as on the sheet.')}</p>
       <div class="field"><span>Names, in order <small class="hint">(one per line or with commas)</small></span><textarea class="input" rows="4" data-k="names" placeholder="Barn, Bible, Buffalo…">${esc(S.names)}</textarea></div>
@@ -186,6 +188,21 @@
       <p class="hint" id="sl-count"></p>
       <button class="btn primary wide" type="button" data-sl="add" ${sheet ? '' : 'disabled'}>Add to the library</button>
       <p class="hint">Click a box on the sheet to leave that picture out (or put it back).</p></div>`;
+  }
+  // room at the edges: a box whose four sides are clicked through yellow (auto: where a picture touches), blue (always)
+  // and grey (none); the counts say how many pictures touch each side now
+  let touchCount = { t: 0, b: 0, l: 0, r: 0 };
+  const SIDE = { t: 'top', b: 'bottom', l: 'left', r: 'right' };
+  function roomHtml() {
+    const e = { t: 'auto', b: 'auto', l: 'auto', r: 'auto', ...(S.edges || {}) }, word = { auto: 'auto', on: 'always', off: 'none' };
+    const say = ['t', 'b', 'l', 'r'].map((k) => `${SIDE[k]}: ${word[e[k]]}${e[k] === 'auto' ? ` (${touchCount[k]} touch${touchCount[k] === 1 ? 'es' : ''})` : ''}`).join(' · ');
+    return `<div class="field"><span>Room at the edges <small class="hint">(see-through space round each picture: click a side)</small></span>
+      <div class="room-row"><svg class="room-box" viewBox="0 0 64 64" role="group" aria-label="Room at the edges: click a side">
+        <rect x="16" y="16" width="32" height="32" rx="3" class="room-pic"/>
+        ${[['t', 'M10 8H54'], ['b', 'M10 56H54'], ['l', 'M8 10V54'], ['r', 'M56 10V54']].map(([k, d]) => `<path d="${d}" class="room-side ${e[k]}" data-side="${k}"><title>${SIDE[k]}: ${word[e[k]]} (click to change)</title></path>`).join('')}</svg>
+        <div class="room-ctl"><div class="btns"><button class="btn outline" type="button" data-edges="auto">All auto</button><button class="btn outline" type="button" data-edges="off">Clear all</button></div>
+        <label class="field"><span>Pixels</span>${num('roomPx', 0, 200)}</label></div>
+        <p class="hint"><span class="room-key auto"></span> auto (only where a picture touches) <span class="room-key on"></span> always <span class="room-key off"></span> none<br>${say}${S.see ? '' : '<br>See-through is off, so auto sides get no room.'}</p></div></div>`;
   }
   function renderPanel() { el.querySelector('.sl-side').innerHTML = panel(); count(); }
   function count() { const c = el.querySelector('#sl-count'); if (!c) return; const n = boxes.length - skip.size; c.innerHTML = sheet ? `<b>${n}</b> picture${n === 1 ? '' : 's'} to add${skip.size ? ` (${skip.size} left out)` : ''}.` : ''; const a = el.querySelector('[data-sl=add]'); if (a) { a.disabled = !n; a.textContent = n ? `Add ${n} to the library` : 'Add to the library'; } }
@@ -196,11 +213,39 @@
     skip = new Set([...skip].filter((i) => i < boxes.length)); draw(); count();
   }
   // one picture as it will be added (the same cutting as Add uses)
-  const cutOne = (b) => { const o = { cut: S.cut, see: S.see, pad: +S.pad, tol: +S.tol || 16 }; return S.mode === 'find' ? findItem(sheet, found, b.item, o) : gridItem(sheet, b, o); };
+  const cutOne = (b) => { const o = { cut: S.cut, see: S.see, pad: +S.pad, tol: +S.tol || 16 }, img = S.mode === 'find' ? findItem(sheet, found, b.item, o) : gridItem(sheet, b, o);
+    return edgeRoom(img, Math.max(0, +S.roomPx || 0), edgesNow()); };
+  // the sides as they apply now: auto only means something when the background is see-through (a whole box touches all round)
+  const edgesNow = () => { const e = { t: 'auto', b: 'auto', l: 'auto', r: 'auto', ...(S.edges || {}) }; if (!S.see) for (const k in e) if (e[k] === 'auto') e[k] = 'off'; return e; };
+  // which sides of a picture it touches (something there, not see-through, on its outermost line)
+  function touches(img) {
+    const W = img.width, H = img.height, d = img.data, on = (x, y) => d[(y * W + x) * 4 + 3] > 16, o = { t: false, b: false, l: false, r: false };
+    for (let x = 0; x < W && !(o.t && o.b); x++) { if (on(x, 0)) o.t = true; if (on(x, H - 1)) o.b = true; }
+    for (let y = 0; y < H && !(o.l && o.r); y++) { if (on(0, y)) o.l = true; if (on(W - 1, y)) o.r = true; }
+    return o;
+  }
+  // a see-through strip added round the picture (its box stays where it was on the sheet), side by side:
+  // 'on' always, 'auto' where the picture touches that side, 'off' never
+  function edgeRoom(img, n = 2, edges = { t: 'auto', b: 'auto', l: 'auto', r: 'auto' }) {
+    if (!n) return img;
+    const W = img.width, H = img.height, d = img.data, at = touches(img), want = (k) => edges[k] === 'on' || (edges[k] === 'auto' && at[k]);
+    const t = want('t'), b = want('b'), l = want('l'), r = want('r');
+    if (!t && !b && !l && !r) return img;
+    const L = l ? n : 0, T = t ? n : 0, o = new ImageData(W + L + (r ? n : 0), H + T + (b ? n : 0));
+    for (let y = 0; y < H; y++) o.data.set(d.subarray(y * W * 4, (y + 1) * W * 4), ((y + T) * o.width + L) * 4);
+    o.at = img.at; return o;
+  }
   let drawRun = 0;
+  // how many pictures touch each side (cut as now, before any room is added), for the room box
+  function countTouches() {
+    const o = { cut: S.cut, see: S.see, pad: +S.pad, tol: +S.tol || 16 }, n = { t: 0, b: 0, l: 0, r: 0 };
+    boxes.forEach((b, i) => { if (skip.has(i)) return; const at = touches(S.mode === 'find' ? findItem(sheet, found, b.item, o) : gridItem(sheet, b, o)); for (const k in n) if (at[k]) n[k]++; });
+    touchCount = n; const r = el.querySelector('.room-row'); if (r) { const f = r.closest('.field'); f.outerHTML = roomHtml(); }
+  }
   async function draw() {
     const c = el.querySelector('canvas'); if (!sheet) { c.hidden = true; return; } c.hidden = false;
     const run = ++drawRun, live = S.view === 'result';
+    setTimeout(() => { if (run === drawRun) countTouches(); }, 0);
     // the result is worked out off-screen and shown when ready, so the sheet never flickers while settings change
     const off = document.createElement('canvas'); off.width = sheet.width; off.height = sheet.height;
     const x = off.getContext('2d'), names = nameList(), big = Math.max(sheet.width, sheet.height), lw = Math.max(2, Math.round(big / 400)), fs = Math.max(12, Math.round(big / 60)), pad = S.mode === 'find' || S.cut ? +S.pad : 0;
@@ -246,7 +291,6 @@
     const share = clear / (W * H);
     if (share > 0.9) out.push('Almost nothing is left: lower “how close”, or turn off See-through.');
     if (S.see && share < 0.005) out.push('Nothing is see-through: the background was not found.');
-    if (S.see && S.cut) { let edge = 0; const at = (x, y) => d[(y * W + x) * 4 + 3] > 128; for (let x = 0; x < W; x++) { if (at(x, 0)) edge++; if (at(x, H - 1)) edge++; } for (let y = 0; y < H; y++) { if (at(0, y)) edge++; if (at(W - 1, y)) edge++; } if (edge > (W + H) * 0.25) out.push('It touches the edge of its box: part of it may be cut off (more room round it, or another grid?).'); }
     // cut out: compared with only the page round its box made see-through (strictly), did it lose parts of the picture?
     // (a white tile on white paper, light parts at the edge)
     if (S.see && S.cut && img.at) {
@@ -306,7 +350,60 @@
   }
   async function load(file) {
     if (!file) return; try { sheet = await readSheet(file); } catch (e) { opts.toast && opts.toast('That picture could not be read.'); return; }
-    sheetFile = file; sheetName = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim(); skip.clear(); S.names = ''; S.category = ''; el.querySelector('.sl-empty').hidden = true; renderPanel(); find();
+    sheetFile = file; sheetName = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim(); skip.clear(); S.names = ''; S.category = ''; el.querySelector('.sl-empty').hidden = true;
+    try { const a = autoCut(sheet); Object.assign(S, a.settings); autoSaid = a.said; } catch (e) { console.warn('Working out the cut failed', e); autoSaid = ''; }
+    renderPanel(); find();
+  }
+  // How to cut a sheet, worked out from the sheet itself:
+  //  - a grid: straight lines of plain page (gutters) running right across it, between rows and between columns
+  //  - tiles or loose pictures: whether each cell is mostly filled (an app tile: keep it whole, only the page
+  //    see-through) or a picture with space round it (cut it out)
+  //  - anything else (sizes and places that do not line up): Find the pictures, which follows each one wherever it is
+  let autoSaid = '';
+  function autoCut(img) {
+    const W = img.width, H = img.height, d = img.data, bg = cornerBg(img), box = contentBox(img, 40);
+    const plain = (x, y) => { const i = (y * W + x) * 4; return d[i + 3] < 16 || Math.abs(d[i] - bg[0]) + Math.abs(d[i + 1] - bg[1]) + Math.abs(d[i + 2] - bg[2]) <= 30; };
+    // runs of plain lines inside the content: the gutters
+    const gutters = (len, across, isPlain) => { const runs = []; let start = -1; for (let i = 0; i < len; i++) { let p = 0, n = 0; for (let j = 0; j < across.n; j += Math.max(1, (across.n / 300) | 0)) { n++; if (isPlain(i, across.from + j)) p++; } const g = p / n >= 0.985; if (g && start < 0) start = i; if (!g && start >= 0) { runs.push([start, i - 1]); start = -1; } } return runs; };
+    const colRuns = gutters(box.w, { from: box.y, n: box.h }, (i, y) => plain(box.x + i, y)).filter(([a, b]) => a > 0 && b < box.w - 1);
+    const rowRuns = gutters(box.h, { from: box.x, n: box.w }, (i, x) => plain(x, box.y + i)).filter(([a, b]) => a > 0 && b < box.h - 1);
+    const cols = colRuns.length + 1, rows = rowRuns.length + 1;
+    // the cells between the gutters should be about the same size (a grid), and there should be more than one
+    const sizes = (runs, len) => { const cuts = [0, ...runs.flatMap(([a, b]) => [a, b + 1]), len], out = []; for (let i = 0; i < cuts.length; i += 2) out.push(cuts[i + 1] - cuts[i]); return out; };
+    const even = (a) => a.length > 1 && Math.min(...a) >= Math.max(...a) * 0.8;
+    const cw = sizes(colRuns, box.w), ch = sizes(rowRuns, box.h);
+    const isGrid = rows * cols >= 2 && (cols === 1 || even(cw)) && (rows === 1 || even(ch));
+    if (isGrid) {
+      // how full the cells are: the share of each cell that is not plain page
+      const cells = gridCells(img, { rows, cols }); let f = 0; for (const c of cells) { let n = 0, k = 0; for (let y = c.y; y < c.y + c.h; y += 3) for (let x = c.x; x < c.x + c.w; x += 3) { k++; if (!plain(x, y)) n++; } f += n / Math.max(1, k); }
+      if (f / cells.length > 0.55) return { settings: { mode: 'grid', rows, cols, inset: 0, cut: false, see: true, tol: 16 }, said: `Found by itself: a ${rows} × ${cols} grid of tiles, each kept whole with the page round it see-through.` };
+      return { settings: { mode: 'grid', rows, cols, inset: 0, cut: true, see: true }, said: `Found by itself: a ${rows} × ${cols} grid, each picture cut out of its cell.` };
+    }
+    // no gutters. Finding each picture works for most sheets; but where pictures touch, it joins neighbours together
+    // (some found far bigger than the rest). Then: edges that repeat at an even spacing across the sheet, both ways,
+    // are cells that touch
+    const items = splitSheet(img, { min: 0.002 }).items, areas = items.map((b) => b.w * b.h).sort((a, b) => a - b), median = areas[areas.length >> 1] || 0;
+    const joined = items.length >= 2 && areas[areas.length - 1] > median * 2.5;
+    if (joined) {
+      const pc = period(img, box, true), pr = period(img, box, false);
+      if (pc >= 2 && pr >= 2 && pc <= 16 && pr <= 16 && pr * pc >= items.length && pr * pc <= items.length * 3) return { settings: { mode: 'grid', rows: pr, cols: pc, inset: 0, cut: true, see: true }, said: `Found by itself: a ${pr} × ${pc} grid of cells that touch, each picture cut out of its cell.` };
+    }
+    return { settings: { mode: 'find', gap: 0, cut: true, see: true }, said: 'Found by itself: pictures in no set grid, so each one is found where it is and cut out.' };
+  }
+  // how many equal cells a sheet's edges repeat in, along one direction (0: no clear repeat). The edge strength of each
+  // line across the content is compared with itself shifted: cells that touch make it repeat at the cell size.
+  function period(img, box, across) {
+    const W = img.width, d = img.data, len = across ? box.w : box.h, other = across ? box.h : box.w, prof = new Float32Array(len), lum = (x, y) => { const i = (y * W + x) * 4; return 0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2]; };
+    const step = Math.max(1, (other / 400) | 0);
+    for (let i = 0; i < len - 1; i++) { let s = 0; for (let j = 0; j < other; j += step) s += across ? Math.abs(lum(box.x + i + 1, box.y + j) - lum(box.x + i, box.y + j)) : Math.abs(lum(box.x + j, box.y + i + 1) - lum(box.x + j, box.y + i)); prof[i] = s; }
+    let mean = 0; for (const v of prof) mean += v / len; for (let i = 0; i < len; i++) prof[i] -= mean;
+    const ac = (k) => { let s = 0; for (let i = 0; i + k < len; i++) s += prof[i] * prof[i + k]; return s / (len - k); }, a0 = ac(0) || 1;
+    let best = 0, bestK = 0; const lo = Math.max(8, (len / 40) | 0), hi = (len / 2) | 0;
+    for (let k = lo; k <= hi; k++) { const v = ac(k); if (v > best) { best = v; bestK = k; } }
+    if (!bestK || best / a0 < 0.25) return 0;
+    // the shortest spacing that repeats nearly as strongly is the cell (twice the cell repeats too)
+    for (let m = 6; m >= 2; m--) { const k = Math.round(bestK / m); if (k >= lo && ac(k) > best * 0.8) { bestK = k; break; } }
+    const n = Math.round(len / bestK); return n >= 2 && Math.abs(len / n - bestK) < bestK * 0.12 ? n : 0;
   }
   function pickSheet() { return new Promise((ok) => { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*,.svg'; i.onchange = () => ok(i.files[0]); i.click(); }); }
   function build() {
@@ -322,13 +419,15 @@
       if (a && a.dataset.sl === 'close') return close();
       if (a && a.dataset.sl === 'open') return load(await pickSheet());
       if (a && a.dataset.sl === 'add') return addAll();
-      if (m) { S.mode = m.dataset.mode; keep(); skip.clear(); renderPanel(); find(); return; }
+      if (m) { S.mode = m.dataset.mode; autoSaid = ''; keep(); skip.clear(); renderPanel(); find(); return; }
+      const sd = e.target.closest('[data-side]'); if (sd) { const k = sd.dataset.side, ed = { t: 'auto', b: 'auto', l: 'auto', r: 'auto', ...(S.edges || {}) }; ed[k] = { auto: 'on', on: 'off', off: 'auto' }[ed[k]]; S.edges = ed; keep(); renderPanel(); draw(); return; }
+      const ae = e.target.closest('[data-edges]'); if (ae) { const v = ae.dataset.edges; S.edges = { t: v, b: v, l: v, r: v }; keep(); renderPanel(); draw(); return; }
       const v = e.target.closest('[data-view]'); if (v) { S.view = v.dataset.view; keep(); renderPanel(); draw(); return; }
       if (e.target.tagName === 'CANVAS') { const r = e.target.getBoundingClientRect(), k = sheet.width / r.width, px = (e.clientX - r.left) * k, py = (e.clientY - r.top) * k, p = S.mode === 'find' ? +S.pad : 0;
         const i = boxes.findIndex((b) => px >= b.x - p && px <= b.x + b.w + p && py >= b.y - p && py <= b.y + b.h + p); if (i >= 0) { if (skip.has(i)) skip.delete(i); else skip.add(i); draw(); count(); } }
     });
     el.addEventListener('input', (e) => { if (e.target.matches('[data-name]')) { review[+e.target.closest('[data-i]').dataset.i].name = e.target.value; return; } const k = e.target.dataset.k; if (!k) return; S[k] = e.target.type === 'checkbox' ? e.target.checked : e.target.type === 'number' ? +e.target.value : e.target.value; keep();
-      if (k === 'names') draw(); else if (k === 'cut' || k === 'see') { renderPanel(); later(0); } else if (k === 'tol') { clearTimeout(timer); timer = setTimeout(draw, 150); } else if (k !== 'category' && k !== 'svg') later(); });
+      if (k === 'names') draw(); else if (k === 'cut' || k === 'see') { renderPanel(); later(0); } else if (k === 'tol' || k === 'roomPx') { clearTimeout(timer); timer = setTimeout(draw, 150); } else if (k !== 'category' && k !== 'svg') later(); });
     el.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); });
     el.addEventListener('drop', (e) => { e.preventDefault(); e.stopPropagation(); const f = [...e.dataTransfer.files].find((x) => /^image\//.test(x.type)); if (f) load(f); });
     el.addEventListener('dragenter', (e) => e.stopPropagation()); el.addEventListener('dragleave', (e) => e.stopPropagation());
@@ -339,5 +438,5 @@
     opts = o; if (!el) { build(); document.addEventListener('keydown', onKey); } el.hidden = false; renderPanel(); el.querySelector('.sl-empty').hidden = !!sheet; if (o.file) load(o.file); else if (sheet) find();
   }
   function close() { if (el) { el.hidden = true; const r = el.querySelector('.sl-review'); if (r) r.hidden = true; } }
-  window.ClipArtSlicer = { open, close, splitSheet, sheetItem, findItem, boxClear, gridCells, gridItem, svgCut, readSheet, state: () => ({ mode: S.mode, boxes: boxes.length, skipped: skip.size }) };
+  window.ClipArtSlicer = { open, close, autoCut, edgeRoom, splitSheet, sheetItem, findItem, boxClear, gridCells, gridItem, svgCut, readSheet, state: () => ({ mode: S.mode, boxes: boxes.length, skipped: skip.size }) };
 })();
