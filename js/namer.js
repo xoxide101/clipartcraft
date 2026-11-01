@@ -40,12 +40,26 @@
   const STYLES = [['flat icon', 'a simple flat vector icon'], ['cartoon', 'a cartoon or comic drawing'], ['hand-drawn', 'a hand-drawn pencil or ink sketch'], ['line art', 'black line art with no colour'], ['watercolour', 'a watercolour painting'], ['oil painting', 'an oil painting'], ['3D render', 'a 3D rendered object'], ['silhouette', 'a solid black silhouette'], ['photo', 'a photograph'], ['pixel art', 'pixel art'], ['clip art', 'colourful clip art']];
   const FORMS = [['object', 'a single object on a plain background'], ['scene', 'a scene or landscape'], ['background', 'a background or wallpaper'], ['tile', 'a seamless repeating tile texture'], ['border', 'a decorative border, frame or banner'], ['map', 'a map'], ['logo', 'a logo or emblem'], ['lettering', 'words or lettering'], ['ornament', 'a symmetric ornament'], ['box art', 'the front of a game or product box'], ['screenshot', 'a screenshot of a computer or video game screen']];
   const ERAS = [['vintage', 'an old vintage illustration'], ['modern', 'a modern illustration']];
-  const EXTRA = [...STYLES, ...FORMS, ...ERAS];
+  // the starting lists (as the user's lists begin); configure() replaces them with the user's own
+  const START = { categories: Object.entries(GROUPS).map(([name, list]) => ({ name, words: list.split(/\s+/).map((w) => w.replace(/_/g, ' ')) })), styles: STYLES.map((x) => x[0]), forms: FORMS.map((x) => x[0]) };
+  const PROMPT = Object.fromEntries([...STYLES, ...FORMS]);
+  let cats = START.categories, styles = STYLES, forms = FORMS, EXTRA = [];
   const WORDS = [], CAT = [];
-  for (const [g, list] of Object.entries(GROUPS)) for (const w of list.split(/\s+/)) { const word = w.replace(/_/g, ' '); if (!WORDS.includes(word)) { WORDS.push(word); CAT.push(g); } }
+  function build() {
+    WORDS.length = 0; CAT.length = 0;
+    for (const c of cats) for (const w of c.words) { const word = String(w).trim(); if (word && !WORDS.includes(word)) { WORDS.push(word); CAT.push(c.name); } }
+    EXTRA = [...styles, ...forms, ...ERAS]; wordsP = null;
+  }
+  // the user's lists: { categories: [{ name, words: [] }], styles: [names], forms: [names] } (missing parts keep the starting ones)
+  function configure(l = {}) {
+    if (Array.isArray(l.categories) && l.categories.length) cats = l.categories.filter((c) => c && c.name).map((c) => ({ name: String(c.name), words: (c.words || []).map(String) }));
+    if (Array.isArray(l.styles) && l.styles.length) styles = l.styles.map((n) => [n, PROMPT[n] || `${/^[aeiou]/i.test(n) ? 'an' : 'a'} ${n} picture`]);
+    if (Array.isArray(l.forms) && l.forms.length) forms = l.forms.map((n) => [n, PROMPT[n] || `${/^[aeiou]/i.test(n) ? 'an' : 'a'} ${n}`]);
+    build();
+  }
 
   // ------------------------------------------------------------------ the model, loaded once
-  let libP = null, visP = null, wordsP = null;
+  let libP = null, visP = null, wordsP = null; build();
   const lib = () => (libP = libP || new Promise((ok, no) => {
     if (window.CraftTF) return ok(window.CraftTF);
     const s = document.createElement('script'); s.src = 'lib/craft-ai-libs.js';
@@ -61,15 +75,16 @@
     })().catch((e) => { visP = null; throw e; }));
   }
   // the words as directions: worked out once (about half a minute), then kept in the browser's cache
-  const WKEY = 'https://craft.local/clipartcraft-words-v3-' + WORDS.length + '-' + EXTRA.length;
+  const hash = (t) => { let h = 2166136261; for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); };
+  const WKEY = () => 'https://craft.local/clipartcraft-words-v4-' + hash(WORDS.join('|') + '#' + EXTRA.map(([, t]) => t).join('|'));
   async function words(progress) {
     return (wordsP = wordsP || (async () => {
       const all = [...WORDS.map((w) => `an illustration of a ${w}`), ...EXTRA.map(([, t]) => t)];
-      try { const c = await caches.open('clipartcraft-ai'), hit = await c.match(WKEY); if (hit) return split(new Float32Array(await hit.arrayBuffer()), all.length); } catch (e) { /* no cache */ }
+      try { const c = await caches.open('clipartcraft-ai'), hit = await c.match(WKEY()); if (hit) return split(new Float32Array(await hit.arrayBuffer()), all.length); } catch (e) { /* no cache */ }
       const T = await lib(), tok = await T.AutoTokenizer.from_pretrained(MODEL), model = await T.CLIPTextModelWithProjection.from_pretrained(MODEL, { device: 'wasm', dtype: 'q8' });
       const out = []; for (let i = 0; i < all.length; i += 48) { const part = all.slice(i, i + 48), { text_embeds: e } = await model(tok(part, { padding: true, truncation: true })), d = e.dims[1]; for (let k = 0; k < part.length; k++) out.push(norm(e.data.slice(k * d, (k + 1) * d))); if (progress) progress(Math.min(i + 48, all.length), all.length, 'words'); }
       const flat = new Float32Array(out.length * out[0].length); out.forEach((v, i) => flat.set(v, i * v.length));
-      try { const c = await caches.open('clipartcraft-ai'); await c.put(WKEY, new Response(flat.buffer)); } catch (e) { /* not kept */ }
+      try { const c = await caches.open('clipartcraft-ai'); await c.put(WKEY(), new Response(flat.buffer)); } catch (e) { /* not kept */ }
       return split(flat, all.length);
     })().catch((e) => { wordsP = null; throw e; }));
   }
@@ -91,7 +106,7 @@
     const dot = (v) => { let s = 0; for (let k = 0; k < v.length; k++) s += v[k] * q[k]; return s; };
     const sc = W.words.map(dot), order = sc.map((_, i) => i).sort((a, b) => sc[b] - sc[a]), top = order.slice(0, 5).map((i) => ({ word: WORDS[i], category: CAT[i], score: +sc[i].toFixed(3) }));
     const ex = W.extra.map(dot), pick = (list, off) => { let b = 0; for (let i = 1; i < list.length; i++) if (ex[off + i] > ex[off + b]) b = i; return list[b][0]; };
-    const style = pick(STYLES, 0), form = pick(FORMS, STYLES.length), eo = STYLES.length + FORMS.length, era = ex[eo] > ex[eo + 1] + 0.015 ? 'vintage' : ex[eo + 1] > ex[eo] + 0.015 ? 'modern' : '';
+    const style = pick(styles, 0), form = pick(forms, styles.length), eo = styles.length + forms.length, era = ex[eo] > ex[eo + 1] + 0.015 ? 'vintage' : ex[eo + 1] > ex[eo] + 0.015 ? 'modern' : '';
     const best = top[0], near = top.filter((t) => t.score > best.score - 0.02).map((t) => t.word);
     const colours = colourWords(src instanceof ImageData ? src : c.getContext('2d').getImageData(0, 0, 224, 224));
     return { name: cap(best.word), category: best.category, style, form, era, tags: [...new Set([...near, ...colours, ...(era === 'vintage' ? ['vintage'] : [])])], words: top, colours };
@@ -117,5 +132,8 @@
     return [...n].filter(([, k]) => k / Math.max(1, total) > 0.12).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([w]) => w);
   }
 
-  window.CraftNamer = { ready, downloaded, name, fromFile, colourWords, WORDS, CATEGORIES: Object.keys(GROUPS), STYLES: STYLES.map((x) => x[0]), FORMS: FORMS.map((x) => x[0]), MB };
+  window.CraftNamer = { ready, downloaded, name, fromFile, colourWords, configure, MB,
+    get WORDS() { return WORDS; }, get CATEGORIES() { return cats.map((c) => c.name); }, get STYLES() { return styles.map((x) => x[0]); }, get FORMS() { return forms.map((x) => x[0]); },
+    lists: () => ({ categories: cats.map((c) => ({ name: c.name, words: c.words.slice() })), styles: styles.map((x) => x[0]), forms: forms.map((x) => x[0]) }),
+    startingLists: () => JSON.parse(JSON.stringify(START)) };
 })();

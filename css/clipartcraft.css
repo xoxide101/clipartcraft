@@ -180,3 +180,34 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 .resume li { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .resume li span { flex: 1; min-width: 200px; }
 .btn.sm { height: 26px; padding: 0 10px; font-size: 12.5px; }
+
+/* the category menu: other categories folded away, and Sort with AI */
+.cat-other summary { cursor: pointer; padding: 6px 10px; font-size: 13px; color: var(--muted); display: flex; justify-content: space-between; }
+.cat-other summary b { font-weight: 500; }
+.sort-ai { margin: 8px 8px 0; height: 30px; }
+.cat.empty { opacity: .45; }
+
+/* the category tree */
+.tree-row { display: flex; align-items: center; }
+.tree-row .cat { flex: 1; min-width: 0; }
+.tree-row .cat span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw { flex: none; width: 20px; height: 26px; border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 11px; padding: 0; }
+.tw:hover { color: var(--fg); }
+.tree-kids { margin-left: 16px; border-left: 1px solid var(--line); padding-left: 2px; }
+.tree-kids .cat { font-size: 12.5px; padding-top: 4px; padding-bottom: 4px; }
+
+/* the AI's guesses, and the lists window */
+.ai-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ai-chip { display: grid; text-align: left; gap: 1px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--fg); cursor: pointer; font: inherit; font-size: 12.5px; }
+.ai-chip small { color: var(--muted); font-size: 10.5px; }
+.ai-chip:hover { border-color: var(--accent); }
+.ai-chip.on { border-color: var(--accent); background: var(--accent-soft); }
+.btn.ghost { background: none; border: 1px solid transparent; color: var(--accent); }
+.lists-dlg { position: fixed; inset: 0; z-index: 2500; display: grid; place-items: center; padding: 20px; background: rgba(0,0,0,.45); }
+.lists-in { width: min(820px, 100%); max-height: calc(100vh - 40px); display: flex; flex-direction: column; gap: 10px; background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.lists-head, .lists-foot { display: flex; gap: 10px; align-items: center; }
+.lists-head .grow, .lists-foot .grow { flex: 1; }
+.lists-rows { overflow: auto; display: grid; gap: 6px; min-height: 0; flex: 1; }
+.lists-row { display: grid; grid-template-columns: 200px 1fr auto; gap: 6px; align-items: start; }
+.lists-row textarea { height: auto; min-height: 30px; padding: 6px 8px; font-size: 12px; }
+.lists-one { height: auto; padding: 8px; }

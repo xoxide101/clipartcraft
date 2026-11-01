@@ -158,5 +158,7 @@
   }
   async function removeFromServer(items) { for (const it of items) if (it.serverId) { try { await call('/api/items/' + it.serverId, { method: 'DELETE' }); } catch (e) { if (!/No such item/.test(e.message)) throw e; } delete it.serverId; delete it.links; await tx('items', 'readwrite', (st) => req(st.put(it))); } changed(); }
 
-  window.CraftClipart = { DB, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip };
+  // the category, style and form lists (editable; shared by every Craft app through the store)
+  async function lists(value) { return meta('lists', value); }
+  window.CraftClipart = { DB, lists, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip };
 })();

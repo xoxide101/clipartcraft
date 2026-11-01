@@ -60,6 +60,62 @@
     for (const b of boxes) { const r = rows.find((row) => b.y < row.mid); if (r) { r.items.push(b); } else rows.push({ mid: b.y + b.h * 0.6, items: [b] }); }
     return { items: rows.flatMap((r) => r.items.sort((a, b) => a.x - b.x)), lab, bg, clear, m };
   }
+  // Two pictures close together can be found as one (a medal beside a sign, a boat under a soldier's boots). A picture
+  // more than twice the usual size is looked at again joining only what truly touches: if it falls apart into two or more
+  // big parts, those are pictures of their own (each small bit goes with the big part nearest to it).
+  function splitJoined(sheet, W, H) {
+    const items = sheet.items; if (items.length < 3) return sheet;
+    const areas = items.map((b) => b.w * b.h).sort((a, b) => a - b), median = areas[areas.length >> 1] || 1;
+    let next = 0; for (let p = 0; p < sheet.lab.length; p++) if (sheet.lab[p] > next) next = sheet.lab[p];
+    const out = [];
+    for (const b of items) {
+      if (b.w * b.h < median * 2) { out.push(b); continue; } // (twice the usual size: one picture made of two parts stays whole)
+      // the item's own picture pixels, joined only where they touch (8 ways)
+      const w = b.w, h = b.h, comp = new Int32Array(w * h), st = new Int32Array(w * h), parts = []; let k = 0;
+      const own = (x, y) => { const p = (b.y + y) * W + b.x + x; return sheet.lab[p] === b.id && sheet.m[p]; };
+      for (let s0 = 0; s0 < w * h; s0++) {
+        if (comp[s0] || !own(s0 % w, (s0 / w) | 0)) continue; k++; let top = 0, x0 = w, y0 = h, x1 = -1, y1 = -1, n = 0; st[top++] = s0; comp[s0] = k;
+        while (top) { const q = st[--top], x = q % w, y = (q / w) | 0; n++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+          for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue; const r = ny * w + nx; if (!comp[r] && own(nx, ny)) { comp[r] = k; st[top++] = r; } } }
+        parts.push({ k, x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1, n });
+      }
+      const total = parts.reduce((a, c) => a + c.n, 0), bigs = parts.filter((c) => c.n >= total * 0.08 && c.w * c.h >= median * 0.25);
+      if (bigs.length < 2) { out.push(b); continue; }
+      // every part goes with the nearest big one (a big one is its own)
+      const gap = (a, c) => Math.max(0, a.x - (c.x + c.w), c.x - (a.x + a.w)) + Math.max(0, a.y - (c.y + c.h), c.y - (a.y + a.h));
+      const owner = new Map(); for (const c of parts) owner.set(c.k, bigs.includes(c) ? c : bigs.slice().sort((p1, p2) => gap(c, p1) - gap(c, p2))[0]);
+      const ids = new Map(bigs.map((c, i) => [c, i === 0 ? b.id : ++next])), box = new Map(bigs.map((c) => [c, { x0: W, y0: H, x1: -1, y1: -1, area: 0 }]));
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const c = comp[y * w + x]; if (!c) continue; const big = owner.get(c), bb = box.get(big), gx = b.x + x, gy = b.y + y; sheet.lab[gy * W + gx] = ids.get(big); bb.area++; if (gx < bb.x0) bb.x0 = gx; if (gx > bb.x1) bb.x1 = gx; if (gy < bb.y0) bb.y0 = gy; if (gy > bb.y1) bb.y1 = gy; }
+      // the grown ring round the picture (the see-through edge): each pixel to the nearest big part's label
+      const pad = 10; for (let y = Math.max(0, b.y - pad); y < Math.min(H, b.y + b.h + pad); y++) for (let x = Math.max(0, b.x - pad); x < Math.min(W, b.x + b.w + pad); x++) {
+        const p = y * W + x; if (sheet.lab[p] !== b.id || sheet.m[p]) continue; let best = null, bd = 1e9; for (const [c, bb] of box) { const d = Math.max(0, bb.x0 - x, x - bb.x1) + Math.max(0, bb.y0 - y, y - bb.y1); if (d < bd) { bd = d; best = c; } } sheet.lab[p] = ids.get(best); }
+      for (const [c, bb] of box) if (bb.x1 >= 0) out.push({ id: ids.get(c), x: bb.x0, y: bb.y0, w: bb.x1 - bb.x0 + 1, h: bb.y1 - bb.y0 + 1, area: bb.area });
+    }
+    const rows = []; out.sort((a, b) => a.y - b.y);
+    for (const b of out) { const r = rows.find((row) => b.y < row.mid); if (r) r.items.push(b); else rows.push({ mid: b.y + b.h * 0.6, items: [b] }); }
+    sheet.items = rows.flatMap((r) => r.items.sort((a, b) => a.x - b.x)); return sheet;
+  }
+  // Pieces of one picture can come apart (a sign's posts, smoke, a rifle). Each small piece joins the big picture it
+  // touches or sits close to (within a little of the sheet's size); a tiny speck with nothing near is left out.
+  function combine(sheet, W, H) {
+    const items = sheet.items; if (items.length < 2) return sheet;
+    const areas = items.map((b) => b.w * b.h).sort((a, b) => a - b), big = areas[Math.floor(areas.length * 0.75)] || 1;
+    const reach = Math.max(4, Math.round(Math.hypot(W, H) * 0.012)), small = (b) => b.w * b.h < big * 0.12;
+    const near = (a, b) => a.x - reach <= b.x + b.w && b.x - reach <= a.x + a.w && a.y - reach <= b.y + b.h && b.y - reach <= a.y + a.h;
+    const gap = (a, b) => Math.max(0, a.x - (b.x + b.w), b.x - (a.x + a.w)) + Math.max(0, a.y - (b.y + b.h), b.y - (a.y + a.h));
+    let keep = items.filter((b) => !small(b)); const out = new Set();
+    for (const b of items.filter(small)) {
+      const host = keep.filter((k) => near(b, k)).sort((x, y) => gap(b, x) - gap(b, y))[0];
+      if (host) { // the piece becomes part of its host: same label, and the host's box grows round it
+        for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) { const p = y * W + x; if (sheet.lab[p] === b.id) sheet.lab[p] = host.id; }
+        const x0 = Math.min(host.x, b.x), y0 = Math.min(host.y, b.y), x1 = Math.max(host.x + host.w, b.x + b.w), y1 = Math.max(host.y + host.h, b.y + b.h); Object.assign(host, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+      } else if (b.w * b.h < big * 0.02) out.add(b); else keep.push(b);
+    }
+    // in reading order again
+    keep = keep.filter((b) => !out.has(b)).sort((a, b) => a.y - b.y); const rows = [];
+    for (const b of keep) { const r = rows.find((row) => b.y < row.mid); if (r) r.items.push(b); else rows.push({ mid: b.y + b.h * 0.6, items: [b] }); }
+    sheet.items = rows.flatMap((r) => r.items.sort((a, b) => a.x - b.x)); return sheet;
+  }
   // one item cut out: its box with room round it; only the background reachable from outside is taken away (white walls,
   // smoke and highlights inside stay), then clean edges
   function sheetItem(img, sheet, item, { pad = 6, see = true } = {}) {
@@ -137,7 +193,7 @@
   }
 
   // ------------------------------------------------------------------ the slicer window
-  const S = { mode: 'find', gap: 0, min: 0.2, pad: 6, see: true, rows: 3, cols: 3, inset: 0, cut: true, tol: 16, edges: { t: 'auto', b: 'auto', l: 'auto', r: 'auto' }, roomPx: 2, view: 'result', names: '', category: '', svg: true };
+  const S = { combine: true, mode: 'find', gap: 0, min: 0.2, pad: 6, see: true, rows: 3, cols: 3, inset: 0, cut: true, tol: 16, edges: { t: 'auto', b: 'auto', l: 'auto', r: 'auto' }, roomPx: 2, view: 'result', names: '', category: '', svg: true };
   try { Object.assign(S, JSON.parse(localStorage.getItem('clipartcraft-slicer') || '{}'), { names: '', category: '' }); } catch (e) { /* blocked storage */ }
   const keep = () => { try { const { names, category, ...rest } = S; localStorage.setItem('clipartcraft-slicer', JSON.stringify(rest)); } catch (e) { /* blocked */ } };
   let sheetFile = null, sheet = null, sheetName = '', found = null, boxes = [], skip = new Set(), el = null, timer = 0, opts = {};
@@ -172,7 +228,8 @@
       ${S.mode === 'find' ? `<p class="hint">For pictures with space round them on a plain or old-paper background.</p>
         ${field('Join parts closer than (pixels; 0 = automatic)', num('gap', 0, 200))}
         ${field('Smallest picture (% of the sheet)', num('min', 0, 10, 0.05))}
-        ${field('Room round each (pixels)', num('pad', 0, 80))}`
+        ${field('Room round each (pixels)', num('pad', 0, 80))}
+        ${chk('combine', 'Join small pieces to the picture they sit by (smoke, posts, loose bits)')}`
       : `<p class="hint">For montages whose pictures sit in equal cells, even touching.</p>
         <div class="two">${field('Rows', num('rows', 1, 30))}${field('Columns', num('cols', 1, 30))}</div>
         ${field('Trim off each cell’s edge (pixels: borders, gutters)', num('inset', 0, 200))}
@@ -183,7 +240,7 @@
       ${S.see && !S.cut ? field('How close to the background counts as background <small class="hint">(lower keeps light parts, like a white tile)</small>', num('tol', 1, 120)) : ''}
       <p class="hint">${S.cut ? (S.see ? 'Each picture cut out, the background see-through.' : 'Each picture cut out, the background colour kept.') : (S.see ? 'Each picture is its whole box (a tile keeps its own shape and colour); only the page round it is see-through.' : 'Each picture is its whole box, exactly as on the sheet.')}</p>
       <div class="field"><span>Names, in order <small class="hint">(one per line or with commas)</small></span><textarea class="input" rows="4" data-k="names" placeholder="Barn, Bible, Buffalo…">${esc(S.names)}</textarea></div>
-      ${field('Category', `<input class="input" data-k="category" list="sl-cats" value="${esc(S.category)}" placeholder="${esc(sheetName || 'Americana, Buildings…')}"><datalist id="sl-cats">${cats}</datalist>`)}
+      ${field('Category', `<input class="input" data-k="category" list="sl-cats" value="${esc(S.category)}" placeholder="Empty: sorted by the AI"><datalist id="sl-cats">${cats}</datalist>`)}
       <p class="hint">Each picture is added as PNG and SVG: ${svgSheet ? 'this sheet is an SVG, so each is cut out of the drawing itself' : 'the SVG is traced from the picture'}.</p>
       <p class="hint" id="sl-count"></p>
       <button class="btn primary wide" type="button" data-sl="add" ${sheet ? '' : 'disabled'}>Add to the library</button>
@@ -208,7 +265,7 @@
   function count() { const c = el.querySelector('#sl-count'); if (!c) return; const n = boxes.length - skip.size; c.innerHTML = sheet ? `<b>${n}</b> picture${n === 1 ? '' : 's'} to add${skip.size ? ` (${skip.size} left out)` : ''}.` : ''; const a = el.querySelector('[data-sl=add]'); if (a) { a.disabled = !n; a.textContent = n ? `Add ${n} to the library` : 'Add to the library'; } }
   function find() {
     if (!sheet) return;
-    if (S.mode === 'find') { found = splitSheet(sheet, { gap: +S.gap, min: S.min / 100 }); boxes = found.items.map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h, item: b })); }
+    if (S.mode === 'find') { found = splitSheet(sheet, { gap: +S.gap, min: Math.max(0.0005, S.min / 100) }); splitJoined(found, sheet.width, sheet.height); if (S.combine !== false) combine(found, sheet.width, sheet.height); boxes = found.items.map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h, item: b })); }
     else { found = null; boxes = gridCells(sheet, { rows: Math.max(1, +S.rows | 0), cols: Math.max(1, +S.cols | 0), inset: +S.inset }); }
     skip = new Set([...skip].filter((i) => i < boxes.length)); draw(); count();
   }
@@ -275,7 +332,8 @@
   }
   const later = (ms = 200) => { clearTimeout(timer); timer = setTimeout(find, ms); };
   async function cuts(onStep) {
-    const names = nameList(), base = !sheetName ? 'Clip art' : /^\d+$/.test(sheetName) ? `Sheet ${sheetName}` : sheetName, seen = {}, out = []; let n = 0;
+    const meaningless = (n) => !n || /^[0-9a-f]{6,}(?:[\s-]+[0-9a-f]{3,})+/i.test(n) || /^[\d\s_-]{5,}$/.test(n) || (n.replace(/[^0-9a-f]/gi, '').length > n.length * 0.8 && n.length > 12);
+    const names = nameList(), base = meaningless(sheetName) ? 'Clip art' : /^\d+$/.test(sheetName) ? `Sheet ${sheetName}` : sheetName, seen = {}, out = []; let n = 0;
     for (let i = 0; i < boxes.length; i++) {
       if (skip.has(i)) continue; const b = boxes[i]; n++;
       let nm = safe(names[n - 1] || `${base} – ${n}`) || `${base} – ${n}`; seen[nm] = (seen[nm] || 0) + 1; if (seen[nm] > 1) nm += ` ${seen[nm]}`;
@@ -283,6 +341,15 @@
       out.push({ name: nm, img: cutOne(b), keep: true });
     }
     return out;
+  }
+  // is the sheet's page a clean, even colour? (the spread of brightness round its edge)
+  let pagePlain = null;
+  function plainPage() {
+    if (pagePlain !== null) return pagePlain;
+    const W = sheet.width, H = sheet.height, d = sheet.data, b = Math.max(2, Math.round(Math.min(W, H) * 0.02)), v = [];
+    for (let y = 0; y < H; y += 3) for (let x = 0; x < W; x += 3) { if (x >= b && y >= b && x < W - b && y < H - b) continue; const i = (y * W + x) * 4; v.push(0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2]); }
+    const m = v.reduce((a, c) => a + c, 0) / v.length, sd = Math.sqrt(v.reduce((a, c) => a + (c - m) * (c - m), 0) / v.length);
+    return (pagePlain = sd < 4);
   }
   // what might be wrong with a picture, in plain words (shown in the review before anything is added)
   function doubts(img) {
@@ -293,7 +360,8 @@
     if (S.see && share < 0.005) out.push('Nothing is see-through: the background was not found.');
     // cut out: compared with only the page round its box made see-through (strictly), did it lose parts of the picture?
     // (a white tile on white paper, light parts at the edge)
-    if (S.see && S.cut && img.at) {
+    // (only on a clean, even page: on old or textured paper the paper itself is light, so this cannot tell)
+    if (S.see && S.cut && img.at && plainPage()) {
       const strict = boxClear(cropOf(sheet, img.at.x, img.at.y, img.at.w, img.at.h), 8), sd = strict.data; let lost = 0;
       // only light parts count (a white tile on white paper); a dark or speckled background can differ a little anyway
       for (let i = 3; i < d.length && i < sd.length; i += 4) if (sd[i] > 128 && d[i] < 16 && 0.3 * sd[i - 3] + 0.59 * sd[i - 2] + 0.11 * sd[i - 1] > 200) lost++;
@@ -333,7 +401,7 @@
         ${r.doubts.map((d) => `<span class="hint warn">⚠ ${esc(d)}</span>`).join('')}</div>`).join('')}</div>`;
   }
   async function addReviewed(btn) {
-    const keep = review.filter((r) => r.keep), category = String(S.category || '').trim() || sheetName; if (!keep.length) return;
+    const keep = review.filter((r) => r.keep), category = String(S.category || '').trim(); if (!keep.length) return;
     btn.disabled = true;
     try { await L.guard(async () => {
       // the sheet first (to the working area), so if the page is closed half way it can simply be sliced again
@@ -354,7 +422,7 @@
   async function load(file) {
     if (!file) return; try { sheet = await readSheet(file); } catch (e) { opts.toast && opts.toast('That picture could not be read.'); return; }
     if (window.CraftWork) window.CraftWork.add(file, { used: 0, pending: 'slice' }).catch(() => {});
-    sheetFile = file; sheetName = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim(); skip.clear(); S.names = ''; S.category = ''; el.querySelector('.sl-empty').hidden = true;
+    pagePlain = null; sheetFile = file; sheetName = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim(); skip.clear(); S.names = ''; S.category = ''; el.querySelector('.sl-empty').hidden = true;
     try { const a = autoCut(sheet); Object.assign(S, a.settings); autoSaid = a.said; } catch (e) { console.warn('Working out the cut failed', e); autoSaid = ''; }
     renderPanel(); find();
   }
@@ -380,19 +448,19 @@
     if (isGrid) {
       // how full the cells are: the share of each cell that is not plain page
       const cells = gridCells(img, { rows, cols }); let f = 0; for (const c of cells) { let n = 0, k = 0; for (let y = c.y; y < c.y + c.h; y += 3) for (let x = c.x; x < c.x + c.w; x += 3) { k++; if (!plain(x, y)) n++; } f += n / Math.max(1, k); }
-      if (f / cells.length > 0.55) return { settings: { mode: 'grid', rows, cols, inset: 0, cut: false, see: true, tol: 16 }, said: `Found by itself: a ${rows} × ${cols} grid of tiles, each kept whole with the page round it see-through.` };
-      return { settings: { mode: 'grid', rows, cols, inset: 0, cut: true, see: true }, said: `Found by itself: a ${rows} × ${cols} grid, each picture cut out of its cell.` };
+      if (f / cells.length > 0.55) return { settings: { mode: 'grid', rows, cols, inset: 0, pad: 6, cut: false, see: true, tol: 16 }, said: `Found by itself: a ${rows} × ${cols} grid of tiles, each kept whole with the page round it see-through.` };
+      return { settings: { mode: 'grid', rows, cols, inset: 0, pad: 6, cut: true, see: true }, said: `Found by itself: a ${rows} × ${cols} grid, each picture cut out of its cell.` };
     }
     // no gutters. Finding each picture works for most sheets; but where pictures touch, it joins neighbours together
     // (some found far bigger than the rest). Then: edges that repeat at an even spacing across the sheet, both ways,
     // are cells that touch
-    const items = splitSheet(img, { min: 0.002 }).items, areas = items.map((b) => b.w * b.h).sort((a, b) => a - b), median = areas[areas.length >> 1] || 0;
+    const sh0 = combine(splitJoined(splitSheet(img, { min: 0.002 }), img.width, img.height), img.width, img.height), items = sh0.items, areas = items.map((b) => b.w * b.h).sort((a, b) => a - b), median = areas[areas.length >> 1] || 0;
     const joined = items.length >= 2 && areas[areas.length - 1] > median * 2.5;
     if (joined) {
       const pc = period(img, box, true), pr = period(img, box, false);
-      if (pc >= 2 && pr >= 2 && pc <= 16 && pr <= 16 && pr * pc >= items.length && pr * pc <= items.length * 3) return { settings: { mode: 'grid', rows: pr, cols: pc, inset: 0, cut: true, see: true }, said: `Found by itself: a ${pr} × ${pc} grid of cells that touch, each picture cut out of its cell.` };
+      if (pc >= 2 && pr >= 2 && pc <= 16 && pr <= 16 && pr * pc >= items.length && pr * pc <= items.length * 3) return { settings: { mode: 'grid', rows: pr, cols: pc, inset: 0, pad: 6, cut: true, see: true }, said: `Found by itself: a ${pr} × ${pc} grid of cells that touch, each picture cut out of its cell.` };
     }
-    return { settings: { mode: 'find', gap: 0, cut: true, see: true }, said: 'Found by itself: pictures in no set grid, so each one is found where it is and cut out.' };
+    return { settings: { mode: 'find', gap: 0, min: 0.2, pad: 6, combine: true, cut: true, see: true }, said: 'Found by itself: pictures in no set grid, so each one is found where it is and cut out.' };
   }
   // how many equal cells a sheet's edges repeat in, along one direction (0: no clear repeat). The edge strength of each
   // line across the content is compared with itself shifted: cells that touch make it repeat at the cell size.
@@ -442,5 +510,5 @@
     opts = o; if (!el) { build(); document.addEventListener('keydown', onKey); } el.hidden = false; renderPanel(); el.querySelector('.sl-empty').hidden = !!sheet; if (o.file) load(o.file); else if (sheet) find();
   }
   function close() { if (el) { el.hidden = true; const r = el.querySelector('.sl-review'); if (r) r.hidden = true; } }
-  window.ClipArtSlicer = { open, close, autoCut, edgeRoom, splitSheet, sheetItem, findItem, boxClear, gridCells, gridItem, svgCut, readSheet, state: () => ({ mode: S.mode, boxes: boxes.length, skipped: skip.size }) };
+  window.ClipArtSlicer = { open, close, autoCut, combine, splitJoined, edgeRoom, splitSheet, sheetItem, findItem, boxClear, gridCells, gridItem, svgCut, readSheet, state: () => ({ mode: S.mode, boxes: boxes.length, skipped: skip.size }) };
 })();

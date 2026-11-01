@@ -13,11 +13,55 @@
 
   // ------------------------------------------------------------------ what is shown
   const cats = () => { const m = new Map(); items.forEach((it) => { const c = it.category || ''; m.set(c, (m.get(c) || 0) + 1); }); return [...m].sort((a, b) => (a[0] === '' ? 1 : b[0] === '' ? -1 : a[0].localeCompare(b[0]))); };
-  const shown = () => { const q = query.trim().toLowerCase(); const words = q.split(/\s+/).filter(Boolean); if (cat === '#work') return work.filter((w) => words.every((x) => w.name.toLowerCase().includes(x))); return items.filter((it) => (cat === '*' || (it.category || '') === cat) && words.every((x) => [it.name, (it.tags || []).join(' '), it.category, it.style, it.form, it.kind === 'bw' ? 'black and white' : it.kind, it.anim ? 'animated animation' : '', it.description].join(' ').toLowerCase().includes(x))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })); };
+  const shown = () => { const q = query.trim().toLowerCase(); const words = q.split(/\s+/).filter(Boolean); if (cat === '#work') return work.filter((w) => words.every((x) => w.name.toLowerCase().includes(x))); return items.filter((it) => (cat === '*' || (cat === '#unsorted' ? !KNOWN().includes(it.category || '') : cat.startsWith('#src:') ? srcOf(it) === cat.slice(5) : cat.startsWith('#sub:') ? (() => { const [c, sj] = cat.slice(5).split('|'); return it.category === c && subjectOf(it) === sj; })() : cat.startsWith('#srcat:') ? (() => { const [k, c] = cat.slice(7).split('|'); return srcOf(it) === k && (c === 'Not sorted yet' ? !KNOWN().includes(it.category || '') : it.category === c); })() : (it.category || '') === cat)) && words.every((x) => [it.name, (it.tags || []).join(' '), it.category, it.style, it.form, it.kind === 'bw' ? 'black and white' : it.kind, it.anim ? 'animated animation' : '', it.description].join(' ').toLowerCase().includes(x))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })); };
+  // the agreed categories (the AI's), and which pictures still need sorting: no category from them, or a name that
+  // only says where it came from (Sheet 6 – 3, IMG_2041, clip art 12)
+  const KNOWN = () => (window.CraftNamer ? CraftNamer.CATEGORIES : []);
+  const subjectOf = (it) => String(it.name || '').replace(/_\d{3,}$/, '').replace(/\s*[–-]\s*\d+$/, '').replace(/\s+\d+$/, '').trim() || 'Untitled';
+  // the tree: which branches are open (kept in this browser)
+  let openTree = new Set(); try { openTree = new Set(JSON.parse(localStorage.getItem('clipartcraft-tree') || '[]')); } catch (e) { /* blocked */ }
+  const keepTree = () => { try { localStorage.setItem('clipartcraft-tree', JSON.stringify([...openTree])); } catch (e) { /* blocked */ } };
+  const groupBy = (list, key) => { const m = new Map(); list.forEach((it) => { const k = key(it); m.set(k, (m.get(k) || 0) + 1); }); return [...m].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], undefined, { numeric: true })); };
+  const srcOf = (it) => String(it.source || '').replace(/^Montage Slicer:\s*/i, '').replace(/^ImageCraft:\s*/i, '').replace(/\.[a-z0-9]{2,5}$/i, '').trim() || 'Added by hand';
+  // the sheets and files pictures came from, most first: [key, label, count]
+  const sources = () => { const m = new Map(); items.forEach((it) => { const k = srcOf(it); m.set(k, (m.get(k) || 0) + 1); }); return [...m].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([k, n]) => [k, k, n]); };
+  const placeholderName = (n) => /^(sheet\b.*[–-]\s*\d+|clip ?art(\s*[–-]?\s*\d+)?|img[ _-]?\d+|dsc\S*\d+|untitled|picture\s*\d*|item\s*\d*)$/i.test(String(n).trim()) || /^(sheet\b.*[–-]\s*\d+|clip ?art(\s*[–-]?\s*\d+)?|untitled|picture\s*\d*|item\s*\d*)$/i.test(String(n).replace(/_\d{3,}$/, '').trim());
+  const needsSort = (it) => !KNOWN().includes(it.category || '') || placeholderName(it.name);
+  async function sortWithAI(list, { quiet = false, again = false } = {}) {
+    const N = window.CraftNamer; if (!N || !list.length) return 0;
+    return L.guard(async () => {
+      await N.ready((got, total, what) => busy(what === 'words' ? `Learning the words… ${got} of ${total}` : `Getting the AI (once, about ${N.MB} MB)… ${Math.round(got / 1048576)} of ${Math.round(total / 1048576)} MB`));
+      const taken = new Set(items.map((it) => it.name.toLowerCase())); let n = 0;
+      for (const it of list) {
+        busy(`Sorting ${++n} of ${list.length}: ${it.name}…`);
+        let src; try { src = it.png ? await createImageBitmap(it.png) : await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = L.svgUrl(it.svg); }); } catch (e) { continue; }
+        const c = document.createElement('canvas'); c.width = src.width || 224; c.height = src.height || 224; c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+        const ai = await N.name(c); it.ai = ai.words;
+        if (!KNOWN().includes(it.category || '') || again) it.category = it.checked && !again ? it.category : ai.category;
+        it.style = it.style || ai.style; it.form = it.form || ai.form; it.tags = [...new Set([...(it.tags || []), ...ai.tags])];
+        if (placeholderName(it.name) || (again && !it.checked)) { taken.delete(it.name.toLowerCase()); let nm = ai.name; for (let k = 2; taken.has(nm.toLowerCase()); k++) nm = `${ai.name}_${String(k).padStart(3, '0')}`; it.name = nm; taken.add(nm.toLowerCase()); }
+        await L.put(it);
+      }
+      busy(); if (!quiet) toast(`Sorted ${list.length} picture${list.length === 1 ? '' : 's'}: each has a category, style, form and tags.`);
+      return list.length;
+    });
+  }
+  // after new pictures come in: sorted at once if the AI is already here, otherwise the button in the menu offers it
+  async function sortNew(made) {
+    const todo = made.filter(needsSort); if (!todo.length || !window.CraftNamer) return;
+    if (await CraftNamer.downloaded()) { await sortWithAI(todo, { quiet: true }); await reload(); toast(`${todo.length} new picture${todo.length === 1 ? '' : 's'} sorted into categories by the AI.`); }
+  }
   async function reload() { items = await L.all(); work = WA ? await WA.all() : []; [...sel].forEach((id) => { if (!items.some((it) => it.id === id)) sel.delete(id); }); render(); }
   function render() {
     const C = cats(); const catBtn = ([k, l, n]) => `<button type="button" class="cat" data-cat="${esc(k)}" aria-current="${cat === k}"><span>${esc(l)}</span><b>${n}</b></button>`;
-    $('cats').innerHTML = [['*', 'All clip art', items.length], ...C.map(([c, n]) => [c, c || 'No category', n])].map(catBtn).join('') + `<div class="work-head">Working area</div>` + catBtn(['#work', 'Files imported from', work.length]);
+    const branch = (key, label, n, kids, dim) => { const open = openTree.has(key) && kids.length; return `<div class="tree-row">${kids.length ? `<button type="button" class="tw" data-tree="${esc(key)}" aria-expanded="${!!open}" aria-label="${open ? 'Close' : 'Open'} ${esc(label)}">${open ? '▾' : '▸'}</button>` : '<span class="tw"></span>'}${catBtn([key, label, n]).replace('class="cat"', `class="cat${dim ? ' empty' : ''}"`)}</div>${open ? `<div class="tree-kids">${kids.map(([k, l, c]) => `<div class="tree-row"><span class="tw"></span>${catBtn([k, l, c])}</div>`).join('')}</div>` : ''}`; };
+    const count = new Map(C), unsorted = items.filter((it) => !KNOWN().includes(it.category || '')).length, toSort = items.filter(needsSort).length, srcs = sources();
+    $('cats').innerHTML = catBtn(['*', 'All clip art', items.length])
+      + `<div class="work-head">Categories</div>` + KNOWN().map((c) => branch(c, c, count.get(c) || 0, count.get(c) ? groupBy(items.filter((it) => it.category === c), subjectOf).map(([sj, n]) => ['#sub:' + c + '|' + sj, sj, n]) : [], !count.get(c))).join('')
+      + (unsorted ? catBtn(['#unsorted', 'Not sorted yet', unsorted]) : '')
+      + (toSort ? `<button type="button" class="btn outline sort-ai" data-act="sort-ai" title="The AI looks at each picture and gives it a category, style, form and tags (and a name, where it only has a number)">Sort ${toSort} with AI</button>` : '')
+      + (srcs.length ? `<div class="work-head">From sheets and files</div>` + srcs.map(([k, l, n]) => branch('#src:' + k, l, n, groupBy(items.filter((it) => srcOf(it) === k), (it) => (KNOWN().includes(it.category || '') ? it.category : 'Not sorted yet')).map(([c, m]) => ['#srcat:' + k + '|' + c, c, m]))).join('') : '')
+      + `<div class="work-head">Working area</div>` + catBtn(['#work', 'Files imported from', work.length]);
     const S = shown(), g = $('grid'); g.style.setProperty('--tile', size + 'px');
     g.innerHTML = cat === '#work' ? S.map((w) => `<button type="button" class="tile" role="option" data-id="${w.id}" aria-selected="${sel.has(w.id)}" title="${esc(w.fileName)}"><span class="pic">${w.thumb ? `<img src="${w.thumb}" alt="" loading="lazy">` : ''}</span><span class="nm">${esc(w.name)}</span>${w.used ? `<i class="used">${w.used} made</i>` : ''}<i class="fmt">${esc((w.fileName.split('.').pop() || '').toUpperCase())}</i></button>`).join('') : S.map((it) => `<button type="button" class="tile" role="option" data-id="${it.id}" aria-selected="${sel.has(it.id)}" title="${esc(it.name)}${it.category ? ' · ' + esc(it.category) : ''}"><span class="pic"><img src="${it.thumb}" alt="" loading="lazy"></span><span class="nm">${esc(it.name)}</span>${it.anim ? '<i class="fmt">▶</i>' : it.svg ? '<i class="fmt">SVG</i>' : ''}</button>`).join('');
     const showIt = startOpen || (!items.length && cat !== '#work'); $('start').hidden = !showIt; if (showIt) renderStart();
@@ -31,16 +75,28 @@
       <button type="button" data-act="folder-in"><b>Open a library folder</b><small>A folder with library.json and its pictures (backup, or shared from another computer)</small></button></div>
       <p class="hint">The library is kept in this browser and shared with every Craft app opened in it. Nothing is uploaded.</p></div>`;
   }
+  // a drop-down from one of the lists; a value not on the list is still shown (marked), and several chosen can be "unchanged"
+  function pickField(f, label, list, value, many) {
+    const v = value || '', opts = [...(many ? [['', '(leave as they are)']] : [['', f === 'category' ? 'Not sorted yet' : '—']]), ...list.map((x) => [x, x]), ...(v && !list.includes(v) ? [[v, `${v} (not on the list)`]] : [])];
+    return `<label class="field"><span>${label}</span><select class="input" data-f="${f}">${opts.map(([k, l]) => `<option value="${esc(k)}" ${k === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`;
+  }
+  // what the AI thought (its best guesses, each with its category): click one to use it
+  function aiChips(it) {
+    if (!it.ai || !it.ai.length) return '';
+    return `<div class="field"><span>The AI’s guesses <small class="hint">(click one to use its name and category)</small></span><div class="ai-chips">${it.ai.map((w, i) => `<button type="button" class="ai-chip${subjectOf(it).toLowerCase() === w.word.toLowerCase() ? ' on' : ''}" data-ai="${i}" title="${esc(w.category)} · ${Math.round(w.score * 100)}"><b>${esc(w.word.charAt(0).toUpperCase() + w.word.slice(1))}</b><small>${esc(w.category)}</small></button>`).join('')}</div></div>`;
+  }
   function renderDetails() {
     if (cat === '#work') return renderWork();
     const d = $('details'), S = items.filter((it) => sel.has(it.id));
-    if (!S.length) { d.innerHTML = `<div class="props-head">Library</div><div class="sec"><p class="hint"><b>${items.length}</b> item${items.length === 1 ? '' : 's'} in ${cats().length} categor${cats().length === 1 ? 'y' : 'ies'}.</p><p class="hint">Click a picture to see it and name it; Ctrl-click or Shift-click picks several (to give them a category together).</p></div>`; return; }
-    const one = S.length === 1 ? S[0] : null, catList = cats().map(([c]) => c).filter(Boolean);
+    if (!S.length) { d.innerHTML = `<div class="props-head">Library</div><div class="sec"><p class="hint"><b>${items.length}</b> item${items.length === 1 ? '' : 's'} in ${cats().length} categor${cats().length === 1 ? 'y' : 'ies'}.</p><p class="hint">Click a picture to see it and name it; Ctrl-click or Shift-click picks several (to give them a category together).</p><button class="btn ghost sm" type="button" data-act="edit-lists">Edit the lists…</button></div>`; return; }
+    const one = S.length === 1 ? S[0] : null, catList = [...new Set([...KNOWN(), ...cats().map(([c]) => c).filter(Boolean)])];
     d.innerHTML = `<div class="props-head">${one ? 'Clip art' : `${S.length} chosen`}</div><div class="sec">
       ${one ? `<div class="big check-bg"><img src="${one.anim ? URL.createObjectURL(one.anim) : one.svg ? L.svgUrl(one.svg) : URL.createObjectURL(one.png)}" alt=""></div>
       <label class="field"><span>Name</span><input class="input" data-f="name" value="${esc(one.name)}"></label>` : `<div class="many">${S.slice(0, 12).map((it) => `<img src="${it.thumb}" alt="">`).join('')}</div>`}
-      <label class="field"><span>Category</span><input class="input" data-f="category" list="catlist" value="${esc(one ? one.category : (new Set(S.map((x) => x.category)).size === 1 ? S[0].category : ''))}" placeholder="Americana, Buildings, Transport…"><datalist id="catlist">${catList.map((c) => `<option value="${esc(c)}">`).join('')}</datalist></label>
-      ${one ? `<div class="two"><label class="field"><span>Style</span><input class="input" data-f="style" list="stylelist" value="${esc(one.style || '')}"></label><label class="field"><span>Form</span><input class="input" data-f="form" list="formlist" value="${esc(one.form || '')}"></label></div><datalist id="stylelist">${(window.CraftNamer ? CraftNamer.STYLES : []).map((c) => `<option value="${esc(c)}">`).join('')}</datalist><datalist id="formlist">${(window.CraftNamer ? CraftNamer.FORMS : []).map((c) => `<option value="${esc(c)}">`).join('')}</datalist>` : ''}
+      ${pickField('category', 'Category', KNOWN(), one ? one.category : (new Set(S.map((x) => x.category)).size === 1 ? S[0].category : ''), !one)}
+      <div class="two">${pickField('style', 'Style', window.CraftNamer ? CraftNamer.STYLES : [], one ? one.style : (new Set(S.map((x) => x.style || '')).size === 1 ? S[0].style : ''), !one)}${pickField('form', 'Form', window.CraftNamer ? CraftNamer.FORMS : [], one ? one.form : (new Set(S.map((x) => x.form || '')).size === 1 ? S[0].form : ''), !one)}</div>
+      ${one ? aiChips(one) : ''}
+      <div class="btns"><button class="btn outline sm" type="button" data-act="ai-again" title="The AI looks at ${one ? 'this picture' : 'these pictures'} again: new guesses to choose from">Ask the AI${one && one.ai ? ' again' : ''}</button><button class="btn ghost sm" type="button" data-act="edit-lists" title="Add, rename or remove categories (and the words the AI knows for each), styles and forms">Edit the lists…</button></div>
       <label class="field"><span>Tags <small class="hint">(separated by commas)</small></span><input class="input" data-f="tags" value="${esc(one ? (one.tags || []).join(', ') : '')}" placeholder="${one ? 'farm, red, barn' : 'added to each'}"></label>
       ${one ? `<p class="hint">${one.width} × ${one.height} pixels · ${[one.png ? 'PNG' : '', one.svg ? 'SVG' : '', one.anim ? `moving (${one.frames || '?'} frames)` : ''].filter(Boolean).join(', ')}${one.kind === 'bw' ? ' · black and white' : one.kind === 'grey' ? ' · grey' : ''}${one.source ? ` · from ${esc(one.source)}` : ''}</p>
       ${one.links ? `<div class="links"><span class="hint">On the server:</span>${Object.entries(one.links).filter(([k]) => k !== 'thumb').map(([k, u]) => `<a href="${esc(u)}" target="_blank" rel="noopener" title="${esc(u)}">${k.toUpperCase()}</a><button type="button" class="btn ghost sm" data-copy="${esc(u)}" title="Copy the link">Copy link</button>`).join('')}</div>` : ''}
@@ -63,12 +119,15 @@
   async function addFiles(files, how = 'Added') { if (!files.length) return; try { const made = await L.add(files, { category: cat !== '*' ? cat : '' }); await reload(); sel = new Set(made.map((m) => m.id)); render(); toast(`${how}: ${made.length} item${made.length === 1 ? '' : 's'}.`); } catch (e) { fail(e); } }
   const chosen = () => items.filter((it) => sel.has(it.id));
   // the Montage Slicer (js/slicer.js): what it added is shown and chosen
-  const slicer = (file) => window.ClipArtSlicer.open({ file, toast, categories: cats().map(([c]) => c).filter(Boolean), done: async (made, category, sheetFile) => {
-    await reload(); offerResume(); cat = category; sel = new Set(made.map((m) => m.id)); render(); toast(`${made.length} picture${made.length === 1 ? '' : 's'} added to “${category}”.`); } });
+  const slicer = (file) => window.ClipArtSlicer.open({ file, toast, categories: KNOWN(), done: async (made, category, sheetFile) => {
+    await reload(); offerResume(); cat = category || '*'; sel = new Set(made.map((m) => m.id)); render(); toast(`${made.length} picture${made.length === 1 ? '' : 's'} added${category ? ` to “${category}”` : ''}.`); sortNew(made); } });
   // Import pictures (js/importer.js): what it added is shown and chosen
-  const importer = (files) => window.ClipArtImporter.open({ files, toast, server: !!serverUrl && serverOk, categories: cats().map(([c]) => c).filter(Boolean), done: async (made) => { await reload(); offerResume(); cat = '*'; sel = new Set(made.map((m) => m.id)); render(); toast(`${made.length} picture${made.length === 1 ? '' : 's'} added to the library.`); } });
+  const importer = (files) => window.ClipArtImporter.open({ files, toast, server: !!serverUrl && serverOk, categories: KNOWN(), done: async (made) => { setTimeout(() => sortNew(made), 0); await reload(); offerResume(); cat = '*'; sel = new Set(made.map((m) => m.id)); render(); toast(`${made.length} picture${made.length === 1 ? '' : 's'} added to the library.`); } });
   async function act(a) {
     try {
+      if (a === 'ai-again') { const S = chosen(); if (!S.length) return; if (!(await CraftNamer.downloaded()) && !confirm(`The AI looks at each picture in this browser (nothing is uploaded). The first time it downloads about ${CraftNamer.MB} MB, then works offline. Go ahead?`)) return; await sortWithAI(S, { again: true }); await reload(); return; }
+      if (a === 'edit-lists') return editLists();
+      if (a === 'sort-ai') { const S = sel.size ? chosen() : items.filter(needsSort); if (!S.length) return toast('Everything is sorted already.'); if (!(await CraftNamer.downloaded()) && !confirm(`The AI looks at each picture in this browser (nothing is uploaded). The first time it downloads about ${CraftNamer.MB} MB, then works offline. Go ahead?`)) return; await sortWithAI(S); await reload(); return; }
       if (a === 'start') { startOpen = true; render(); return; }
       if (a === 'start-close') { startOpen = false; render(); return; }
       if (a === 'add') return importer([]);
@@ -118,16 +177,22 @@
   }
   // a name, category or tags changed (for one, or the category/tags for several at once)
   $('details').addEventListener('change', async (e) => {
-    const f = e.target.dataset.f; if (!f) return; const S = chosen(), v = e.target.value.trim();
-    for (const it of S) { if (f === 'name' && v) it.name = v; if (f === 'category') it.category = v; if (f === 'style' || f === 'form') it[f] = v; if (f === 'tags') it.tags = S.length === 1 ? v.split(',').map((t) => t.trim()).filter(Boolean) : [...new Set([...(it.tags || []), ...v.split(',').map((t) => t.trim()).filter(Boolean)])]; await L.put(it); }
+    const f = e.target.dataset.f; if (!f) return; const S = chosen(), v = e.target.value.trim(); if (e.target.tagName === 'SELECT' && S.length > 1 && !v) return;
+    for (const it of S) { if (f === 'name' && v) it.name = v; if (f === 'category') it.category = v; if (f === 'style' || f === 'form') it[f] = v; it.checked = true; if (f === 'tags') it.tags = S.length === 1 ? v.split(',').map((t) => t.trim()).filter(Boolean) : [...new Set([...(it.tags || []), ...v.split(',').map((t) => t.trim()).filter(Boolean)])]; await L.put(it); }
     await reload(); if (f === 'category' && v && cat !== '*' && cat !== v) toast(`Moved to “${v}”.`);
+  });
+  // one of the AI's guesses chosen: its name (numbered if taken) and its category
+  $('details').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-ai]'); if (!b) return; const it = chosen()[0]; if (!it || !it.ai) return; const w = it.ai[+b.dataset.ai];
+    const base = w.word.charAt(0).toUpperCase() + w.word.slice(1), taken = new Set(items.filter((x) => x.id !== it.id).map((x) => x.name.toLowerCase())); let nm = base; for (let k = 2; taken.has(nm.toLowerCase()); k++) nm = `${base}_${String(k).padStart(3, '0')}`;
+    it.name = nm; it.category = w.category; it.checked = true; await L.put(it); await reload(); toast(`Now “${nm}” in ${w.category}.`);
   });
   document.addEventListener('click', (e) => { if (startOpen && e.target.closest('.start .tiles [data-act]')) { startOpen = false; $('start').hidden = true; } const c = e.target.closest('[data-copy]'); if (c) { navigator.clipboard.writeText(c.dataset.copy).then(() => toast('Link copied: paste it into any app or web page.')); return; } const b = e.target.closest('[data-act]'); if (b) act(b.dataset.act); });
   // the clip-art server (optional): is it there?
   const busy = (m) => { const t = $('toast'); if (m) { t.textContent = m; t.hidden = false; clearTimeout(toast.t); } else t.hidden = true; };
   async function checkServer(say) { serverUrl = await L.server(); serverOk = false; if (serverUrl) { try { const i = await L.serverInfo(); serverOk = true; if (say) toast(`Connected to the clip-art server (${i.libraries.map((l) => `${l.name}: ${l.database}`).join(', ')}).${i.writable ? '' : ' It can only be read from here.'}`); } catch (e) { if (say) toast(e.message); } } status(); }
   async function need() { if (!serverUrl) { await act('connect'); if (!serverUrl) throw new Error('Connect to a server first.'); } if (!serverOk) await checkServer(); if (!serverOk) throw new Error(`The clip-art server at ${serverUrl} did not answer (is it running?).`); }
-  $('cats').onclick = (e) => { const b = e.target.closest('[data-cat]'); if (!b) return; cat = b.dataset.cat; sel.clear(); render(); };
+  $('cats').onclick = (e) => { const t = e.target.closest('[data-tree]'); if (t) { const k = t.dataset.tree; if (openTree.has(k)) openTree.delete(k); else openTree.add(k); keepTree(); render(); return; } const b = e.target.closest('[data-cat]'); if (!b) return; cat = b.dataset.cat; sel.clear(); render(); };
   $('search').oninput = (e) => { query = e.target.value; render(); };
   $('grid').addEventListener('click', (e) => {
     const t = e.target.closest('.tile'); if (!t) { if (e.target === $('grid')) { sel.clear(); render(); } return; } const id = t.dataset.id, S = shown();
@@ -169,6 +234,7 @@
       { id: 'home', label: 'Home', hue: '#c2410c', groups: [
         ['Start', [B('Start', I.wand, () => act('start'), { big: true, title: 'The start page: what do you want to do? (import, slice a sheet, open a library…)' })]],
         ['Add', [B('Import pictures', IK.add, () => act('add'), { big: true, key: 'Ctrl+O', title: 'Any picture files (PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, TIFF, SVG, animations, classic formats): every page and frame, cropped, named for you, black and white made see-through' }), B('Import a library', IK.zip, () => act('zip'), { big: true, title: 'A library ZIP (from ImageCraft’s Split a sheet, or exported here)' })]],
+        ['Sort', [B('Sort with AI', I.wand, () => act('sort-ai'), { big: true, title: 'The AI looks at each picture (the chosen ones, or every one not yet in a category) and gives it a category, style, form and tags, and a name where it only has a number' })]],
         ['Slice', [B('Montage Slicer', IK.slice, () => act('slice'), { big: true, title: 'Cut a sheet (montage) of clip art into separate pictures: found by themselves or by a grid, named in order, added to the library' })]],
         ['Library', [B('Export (ZIP)', IK.exportZ, () => act('export-all'), { big: true, title: 'Everything shown (the category you are in, or all) as one ZIP: pictures, SVGs and library.json' }), { col: [B('Save to the folder', IK.up, () => act('folder-out'), { title: 'Write the whole library to its folder (backup, sync, sharing)' }), B('Add from a folder', IK.down, () => act('folder-in'), { title: 'Read a library folder into this library' }), B('Choose the folder…', IK.folder, () => act('folder-pick'), { title: 'Which folder the library is saved to' })] }]],
         ['Edit', [{ col: [B('Choose all', I.selectAll, () => act('select-all'), { key: 'Ctrl+A' }), B('Delete', I.trash, () => act('delete'), { key: 'Delete', disabled: () => !sel.size })] }]],
@@ -202,6 +268,33 @@
   }
   // cancel a file: off the list (and out of the working area if nothing was ever made from it)
   async function dropUndone(w) { if (!w) return; if (!w.used) await WA.remove(w.id); else { w.pending = ''; await WA.put(w); } }
-  reload().then(() => checkServer()).then(offerResume).catch(fail);
+  // the user's own lists (categories with their words, styles, forms), kept in the shared store
+  async function loadLists() { try { const l = await L.lists(); if (l && window.CraftNamer) CraftNamer.configure(l); } catch (e) { /* the starting lists */ } }
+  function editLists() {
+    const N = window.CraftNamer; if (!N) return; let l = N.lists(), tab = 'categories';
+    const box = document.createElement('div'); box.className = 'lists-dlg'; box.setAttribute('role', 'dialog'); box.setAttribute('aria-label', 'Edit the lists');
+    const paint = () => {
+      box.innerHTML = `<div class="lists-in"><div class="lists-head"><b>The lists</b><div class="seg" role="group">${[['categories', 'Categories'], ['styles', 'Styles'], ['forms', 'Forms']].map(([k, t]) => `<button class="btn" type="button" data-tab="${k}" aria-pressed="${tab === k}">${t}</button>`).join('')}</div><span class="grow"></span><button class="btn outline" type="button" data-l="close">Close</button></div>
+        ${tab === 'categories' ? `<p class="hint">Each category, and the words the AI knows for it (it picks the nearest word, and that word’s category). Add your own words: they are learnt the next time the AI is used (about half a minute).</p>
+          <div class="lists-rows">${l.categories.map((c, i) => `<div class="lists-row" data-i="${i}"><input class="input" data-k="name" value="${esc(c.name)}" aria-label="Category name"><textarea class="input" data-k="words" rows="2" aria-label="Words for ${esc(c.name)}">${esc(c.words.join(', '))}</textarea><button class="btn ghost sm" type="button" data-l="del" title="Remove this category (its pictures become Not sorted yet)">✕</button></div>`).join('')}</div>
+          <button class="btn outline" type="button" data-l="add">Add a category</button>`
+        : `<p class="hint">One per line.</p><textarea class="input lists-one" data-k="${tab}" rows="14">${esc(l[tab].join('\n'))}</textarea>`}
+        <div class="lists-foot"><button class="btn ghost" type="button" data-l="reset">Back to the starting lists</button><span class="grow"></span><button class="btn primary" type="button" data-l="save">Save the lists</button></div></div>`;
+    };
+    const read = () => { box.querySelectorAll('.lists-row').forEach((r) => { const c = l.categories[+r.dataset.i]; c.name = r.querySelector('[data-k=name]').value.trim(); c.words = r.querySelector('[data-k=words]').value.split(/[,\n]+/).map((w) => w.trim()).filter(Boolean); }); const one = box.querySelector('.lists-one'); if (one) l[one.dataset.k] = one.value.split('\n').map((w) => w.trim()).filter(Boolean); };
+    box.addEventListener('click', async (e) => {
+      const t = e.target.closest('[data-tab]'), b = e.target.closest('[data-l]');
+      if (t) { read(); tab = t.dataset.tab; paint(); return; }
+      if (!b) return; read();
+      if (b.dataset.l === 'close') { box.remove(); return; }
+      if (b.dataset.l === 'add') { l.categories.push({ name: 'New category', words: [] }); paint(); const rows = box.querySelectorAll('.lists-row'); const n = rows[rows.length - 1].querySelector('[data-k=name]'); n.focus(); n.select(); return; }
+      if (b.dataset.l === 'del') { l.categories.splice(+b.closest('.lists-row').dataset.i, 1); paint(); return; }
+      if (b.dataset.l === 'reset') { if (!confirm('Go back to the starting lists? (Your own categories and words are removed from the lists; pictures keep their category.)')) return; l = N.startingLists(); paint(); return; }
+      if (b.dataset.l === 'save') { l.categories = l.categories.filter((c) => c.name); const seen = new Set(); l.categories = l.categories.filter((c) => !seen.has(c.name.toLowerCase()) && seen.add(c.name.toLowerCase()));
+        N.configure(l); await L.lists(N.lists()); box.remove(); render(); toast(`Lists saved: ${l.categories.length} categories, ${l.styles.length} styles, ${l.forms.length} forms. Every Craft app sees them.`); }
+    });
+    document.body.append(box); paint();
+  }
+  loadLists().then(reload).then(() => checkServer()).then(offerResume).catch(fail);
   window.ClipArtCraft = { reload, items: () => items };
 })();
