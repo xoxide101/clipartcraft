@@ -112,11 +112,11 @@
       return { model, processor: await T.AutoProcessor.from_pretrained(DESCRIBER), tokenizer: await T.AutoTokenizer.from_pretrained(DESCRIBER), gpu };
     })().catch((e) => { descP = null; throw e; }));
   }
-  async function describe(src, { progress, detail = false } = {}) {
+  async function describe(src, { progress, detail = false, task: asked = '' } = {}) {
     const { model, processor, tokenizer } = await describer(progress), T = await lib();
     const c = document.createElement('canvas'), k = Math.min(1, 768 / Math.max(src.width, src.height)); c.width = Math.max(1, Math.round(src.width * k)); c.height = Math.max(1, Math.round(src.height * k));
     const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); x.drawImage(src instanceof ImageData ? canvasOf(src) : src, 0, 0, c.width, c.height);
-    const img = T.RawImage.fromCanvas(c), task = detail ? '<DETAILED_CAPTION>' : '<CAPTION>';
+    const img = T.RawImage.fromCanvas(c), task = asked || (detail ? '<DETAILED_CAPTION>' : '<CAPTION>');
     const ids = await model.generate({ ...tokenizer(processor.construct_prompts(task)), ...(await processor(img)), max_new_tokens: 60 });
     const text = tokenizer.batch_decode(ids, { skip_special_tokens: false })[0];
     return String(processor.post_process_generation(text, task, img.size)[task] || '').trim();
@@ -136,6 +136,8 @@
     return words.join(' ').trim();
   }
   async function describeReady(progress) { await describer(progress); return true; }
+  // the words written on a picture (labels and captions on a sheet), read by the same model (<OCR>)
+  async function read(src, { progress } = {}) { return String(await describe(src, { progress, task: '<OCR>' })).replace(/<\/?s>|<pad>/g, '').replace(/\s+/g, ' ').trim(); }
   async function describerDownloaded() { try { const c = await caches.open('transformers-cache'); return !!(await c.keys()).find((r) => r.url.includes('Florence-2')); } catch (e) { return false; } }
 
   async function ready(progress) { await vision(progress); await words(progress); return true; }
@@ -165,7 +167,9 @@
       try {
         const caption = await describe(src, { progress }), subject = subjectOf(caption);
         out.description = caption;
-        if (subject) {
+        // only colours or a kind of picture ("black", "a black and white icon") say nothing about what it is: the matched word stays
+        const vague = /^(?:(?:black|white|grey|gray|red|blue|green|yellow|orange|purple|pink|brown|gold|silver|dark|light|and|colou?rful|silhouette|icon|logo|symbol|shape|object|image|picture|drawing|graphic|design|cartoon|sticker|button)\s*)+$/i;
+        if (subject && !vague.test(subject)) {
           // the subject's category: the word on the lists nearest to it in meaning (and how near)
           const sv = await embedText('an illustration of a ' + subject), ws = W.words.map((v) => { let t = 0; for (let k2 = 0; k2 < v.length; k2++) t += v[k2] * sv[k2]; return t; });
           let bi = 0; for (let i = 1; i < ws.length; i++) if (ws[i] > ws[bi]) bi = i;
@@ -212,7 +216,7 @@
     return [...n].filter(([, k]) => k / Math.max(1, total) > 0.12).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([w]) => w);
   }
 
-  window.CraftNamer = { ready, downloaded, name, describe, describeReady, describerDownloaded, subjectOf, fromFile, colourWords, configure, learnWord, MB, DESCRIBER_MB: 250,
+  window.CraftNamer = { ready, downloaded, name, describe, read, describeReady, describerDownloaded, subjectOf, fromFile, colourWords, configure, learnWord, MB, DESCRIBER_MB: 250,
     get WORDS() { return WORDS; }, get CATEGORIES() { return cats.map((c) => c.name); }, get STYLES() { return styles.map((x) => x[0]); }, get FORMS() { return forms.map((x) => x[0]); },
     lists: () => { const all = new Set(cats.flatMap((c) => c.words.map((w) => w.toLowerCase()))); return { categories: cats.map((c) => ({ name: c.name, words: c.words.slice() })), styles: styles.map((x) => x[0]), forms: forms.map((x) => x[0]), removed: START.categories.flatMap((c) => c.words).filter((w) => !all.has(w.toLowerCase())) }; },
     startingLists: () => JSON.parse(JSON.stringify(START)) };

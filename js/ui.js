@@ -85,7 +85,7 @@
     const S = shown(), g = $('grid'); g.style.setProperty('--tile', size + 'px');
     g.innerHTML = cat === '#work' ? S.map((w) => `<button type="button" class="tile" role="option" data-id="${w.id}" aria-selected="${sel.has(w.id)}" title="${esc(w.fileName)}"><span class="pic">${w.thumb ? `<img src="${w.thumb}" alt="" loading="lazy">` : ''}</span><span class="nm">${esc(w.name)}</span>${w.used ? `<i class="used">${w.used} made</i>` : ''}<i class="fmt">${esc((w.fileName.split('.').pop() || '').toUpperCase())}</i></button>`).join('') : S.map((it) => `<button type="button" class="tile" role="option" data-id="${it.id}" aria-selected="${sel.has(it.id)}" title="${esc(it.name)}${it.category ? ' · ' + esc(it.category) : ''}"><span class="pic"><img src="${it.thumb}" alt="" loading="lazy"></span><span class="nm">${esc(it.name)}</span>${it.anim ? '<i class="fmt">▶</i>' : it.svg ? '<i class="fmt">SVG</i>' : ''}</button>`).join('');
     const showIt = startOpen || (!items.length && cat !== '#work'); $('start').hidden = !showIt; if (showIt) renderStart();
-    renderDetails(); status();
+    renderDetails(); syncProps(); status(); lightUp(g); lightUp($('details')); if (propsBox && !propsBox.hidden) lightUp(propsBox);
   }
   function renderStart() {
     $('start').innerHTML = `<div class="start-in"><h2>What do you want to do?</h2>${items.length ? `<p class="hint">${items.length} picture${items.length === 1 ? '' : 's'} in the library. <button class="btn outline" type="button" data-act="start-close">Back to the library</button></p>` : ''}<div class="tiles">
@@ -136,15 +136,15 @@
       <div class="btns"><button class="btn primary" type="button" data-act="work-import">Import again</button><button class="btn outline" type="button" data-act="work-slice">Slice it</button><button class="btn outline" type="button" data-act="work-dl">Save the file</button></div>` : `<div class="many">${S.slice(0, 12).map((w) => `<img src="${w.thumb}" alt="">`).join('')}</div><div class="btns"><button class="btn primary" type="button" data-act="work-import">Import them again</button></div>`}
       <div class="btns"><button class="btn outline danger" type="button" data-act="work-del">Delete ${one ? 'it' : 'them'}</button></div></div>`;
   }
-  function status() { const S = shown(); $('status').innerHTML = `<span><b>${items.length}</b> in the library</span><span>${cat === '*' && !query ? '' : `<b>${S.length}</b> shown`}</span><span>${sel.size ? `<b>${sel.size}</b> chosen` : ''}</span><span class="grow"></span><span title="${esc(serverUrl)}">${serverUrl ? `Server: <b>${serverOk ? 'connected' : 'not answering'}</b> · ${items.filter((it) => it.serverId).length} on it` : 'No server'}</span><label class="hint">Size <input type="range" id="size" min="80" max="260" value="${size}" aria-label="Thumbnail size"></label>`; $('size').oninput = (e) => { size = +e.target.value; $('grid').style.setProperty('--tile', size + 'px'); try { localStorage.setItem('clipartcraft-size', size); } catch (err) { /* blocked */ } }; }
+  function status() { const S = shown(); $('status').innerHTML = `<span title="${esc(serverUrl)}">${serverUrl ? `Server: <b>${serverOk ? 'connected' : 'not answering'}</b> · ${items.filter((it) => it.serverId).length} on it` : 'No server'}</span><span>${cat === '*' && !query ? '' : `<b>${S.length}</b> shown`}</span><span class="grow"></span><span><b>${items.length}</b> in the library</span><label class="hint">Size <input type="range" id="size" min="80" max="260" value="${size}" aria-label="Thumbnail size"></label><span class="sel-n">${sel.size ? `<b>${sel.size}</b> chosen` : 'none chosen'}</span>`; $('size').oninput = (e) => { size = +e.target.value; $('grid').style.setProperty('--tile', size + 'px'); try { localStorage.setItem('clipartcraft-size', size); } catch (err) { /* blocked */ } }; }
 
   // ------------------------------------------------------------------ actions
   function pick(accept, multiple = true) { return new Promise((ok) => { const i = document.createElement('input'); i.type = 'file'; i.accept = accept; i.multiple = multiple; i.onchange = () => ok([...i.files]); i.click(); }); }
   async function addFiles(files, how = 'Added') { if (!files.length) return; try { const made = await L.add(files, { category: cat !== '*' ? cat : '' }); await reload(); sel = new Set(made.map((m) => m.id)); render(); toast(`${how}: ${made.length} item${made.length === 1 ? '' : 's'}.`); } catch (e) { fail(e); } }
   const chosen = () => items.filter((it) => sel.has(it.id));
   // the Montage Slicer (js/slicer.js): what it added is shown and chosen
-  const slicer = (file) => window.ClipArtSlicer.open({ file, toast, categories: KNOWN(), done: async (made, category, sheetFile) => {
-    await reload(); offerResume(); cat = category || '*'; sel = new Set(made.map((m) => m.id)); render(); toast(`${made.length} picture${made.length === 1 ? '' : 's'} added${category ? ` to “${category}”` : ''}.`); sortNew(made); } });
+  const slicer = (file) => window.ClipArtSlicer.open({ file, toast, categories: KNOWN(), done: async (made, category, sheetFile, o = {}) => {
+    await reload(); offerResume(); cat = category || '*'; sel = new Set(made.map((m) => m.id)); render(); if (!o.more) toast(`${made.length} picture${made.length === 1 ? '' : 's'} added${category ? ` to “${category}”` : ''}.`); sortNew(made); } });
   // Import pictures (js/importer.js): what it added is shown and chosen
   const importer = (files) => window.ClipArtImporter.open({ files, toast, server: !!serverUrl && serverOk, categories: KNOWN(), done: async (made) => { setTimeout(() => sortNew(made), 0); await reload(); offerResume(); cat = '*'; sel = new Set(made.map((m) => m.id)); render(); toast(`${made.length} picture${made.length === 1 ? '' : 's'} added to the library.`); } });
   async function act(a) {
@@ -202,18 +202,96 @@
     }
   }
   // a name, category or tags changed (for one, or the category/tags for several at once)
-  $('details').addEventListener('change', async (e) => {
+  async function onDetailsChange(e) {
     const f = e.target.dataset.f; if (!f) return; const S = chosen(), v = e.target.value.trim(); if (e.target.tagName === 'SELECT' && S.length > 1 && !v) return;
     const teachIt = S.length === 1 && S[0].vec && ['name', 'category', 'style', 'form'].includes(f);
     for (const it of S) { if (f === 'name' && v) it.name = v; if (f === 'category') it.category = v; if (f === 'style' || f === 'form') it[f] = v; if (['original', 'seen', 'matched', 'description'].includes(f)) it[f] = e.target.value.trim(); it.checked = true; if (f === 'tags') it.tags = S.length === 1 ? v.split(',').map((t) => t.trim()).filter(Boolean) : [...new Set([...(it.tags || []), ...v.split(',').map((t) => t.trim()).filter(Boolean)])]; await L.put(it); }
     if (teachIt) await teach(S[0]);
     await reload(); if (!teachIt && f === 'category' && v && cat !== '*' && cat !== v) toast(`Moved to “${v}”.`);
-  });
+  }
+  $('details').addEventListener('change', onDetailsChange);
   // one of the AI's guesses chosen: its name (numbered if taken) and its category
-  $('details').addEventListener('click', async (e) => {
+  async function onDetailsClick(e) {
     const b = e.target.closest('[data-ai]'); if (!b) return; const it = chosen()[0]; if (!it || !it.ai) return; const w = it.ai[+b.dataset.ai];
     const base = w.word.charAt(0).toUpperCase() + w.word.slice(1), taken = new Set(items.filter((x) => x.id !== it.id).map((x) => x.name.toLowerCase())); let nm = base; for (let k = 2; taken.has(nm.toLowerCase()); k++) nm = `${base}_${String(k).padStart(3, '0')}`;
     it.name = nm; it.category = w.category; it.checked = true; await L.put(it); await teach(it); await reload();
+  }
+  $('details').addEventListener('click', onDetailsClick);
+  // ------------------------------------------------------------------ Properties as a window, and right-click menus
+  // The same properties as the panel on the right, in a window of their own (Alt+Enter, or Properties… on the menu):
+  // it follows what is chosen and changes the same way.
+  let propsBox = null;
+  function openProps(focus) {
+    if (!sel.size) return toast('Choose a picture first.');
+    if (!propsBox) {
+      propsBox = document.createElement('div'); propsBox.className = 'lists-dlg props-dlg'; propsBox.setAttribute('role', 'dialog'); propsBox.setAttribute('aria-label', 'Properties');
+      propsBox.innerHTML = `<div class="lists-in props-in"><div class="lists-head"><b>Properties</b><span class="grow"></span><button class="btn outline" type="button" data-c="close">Close</button></div><div class="props-body side"></div></div>`;
+      const body = propsBox.querySelector('.props-body'); body.addEventListener('change', onDetailsChange); body.addEventListener('click', onDetailsClick);
+      propsBox.addEventListener('click', (e) => { if (e.target.closest('[data-c=close]') || e.target === propsBox) closeProps(); });
+      propsBox.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); closeProps(); } });
+      document.body.append(propsBox);
+    }
+    propsBox.hidden = false; syncProps();
+    const f = propsBox.querySelector(`[data-f=${focus || 'name'}]`) || propsBox.querySelector('select, input'); if (f) { f.focus(); if (f.select) f.select(); }
+  }
+  function closeProps() { if (propsBox) propsBox.hidden = true; }
+  function syncProps() { if (!propsBox || propsBox.hidden) return; if (!sel.size) return closeProps(); const y = propsBox.querySelector('.props-body').scrollTop; propsBox.querySelector('.props-body').innerHTML = $('details').innerHTML; propsBox.querySelector('.props-body').scrollTop = y; }
+  // right-click a picture (or a file in the working area): what can be done to it, like the panel and the ribbon
+  $('grid').addEventListener('contextmenu', (e) => {
+    const t = e.target.closest('.tile'); if (!t || !window.CraftMenu) return; e.preventDefault();
+    const id = t.dataset.id; if (!sel.has(id)) { sel = new Set([id]); last = id; render(); }
+    const n = sel.size, one = n === 1, them = one ? 'it' : `these ${n}`;
+    if (cat === '#work') return CraftMenu.show(e.clientX, e.clientY, [
+      { label: one ? 'Import it again…' : `Import these ${n} again…`, run: () => act('work-import') }, { label: 'Slice it…', run: () => act('work-slice'), disabled: !one },
+      { label: 'Save the file…', run: () => act('work-dl'), disabled: !one }, '-', { label: `Delete ${them}`, key: 'Del', danger: true, run: () => act('work-del') }]);
+    const S = chosen(), it = S[0], move = (c) => async () => { for (const x of chosen()) { x.category = c; x.checked = true; await L.put(x); } await reload(); toast(c ? `Moved to “${c}”.` : 'Category taken off.'); };
+    // what is known about it, first (its name, category and style; the set and place on the sheet it came from)
+    const info = one ? [{ info: it.name, strong: true }, { info: [it.category || 'Not sorted yet', it.style, it.form].filter(Boolean).join(' · ') }, ...(it.collection || it.place ? [{ info: [it.collection && `from “${it.collection}”`, it.place].filter(Boolean).join(' · ') }] : []), ...((it.tags || []).length ? [{ info: `Tags: ${it.tags.slice(0, 8).join(', ')}` }] : [])]
+      : [{ info: `${n} chosen`, strong: true }, { info: [...new Set(S.map((x) => x.category || 'Not sorted yet'))].slice(0, 3).join(', ') }];
+    CraftMenu.show(e.clientX, e.clientY, [...info, '-',
+      { label: 'Properties…', key: 'Alt+Enter', run: () => openProps() }, { label: 'Rename…', key: 'F2', disabled: !one, run: () => openProps('name') },
+      { label: 'Category', sub: [...KNOWN().map((c) => ({ label: c, checked: S.every((x) => x.category === c), run: move(c) })), '-', { label: 'Not sorted yet', run: move('') }] },
+      '-', { label: one && it.ai ? 'Ask the AI again' : 'Ask the AI', run: () => act('ai-again') }, { label: 'Ask a cloud AI…', run: () => act('cloud-ask') },
+      '-', { label: 'Copy', key: 'Ctrl+C', disabled: !one, run: () => act('copy') }, { label: 'Save as PNG…', disabled: !one || !it.png, run: () => act('dl-png') }, { label: 'Save as SVG…', disabled: !one || !it.svg, run: () => act('dl-svg') },
+      { label: one ? 'Export it (ZIP)…' : `Export these ${n} (ZIP)…`, run: () => act('export-sel') },
+      '-', { label: 'Select all', key: 'Ctrl+A', run: () => act('select-all') }, { label: `Delete ${them}`, key: 'Del', danger: true, run: () => act('delete') }]);
+  });
+  // right-click a category, a sheet or file, or a branch under one on the left: the same for all the pictures in it
+  $('cats').addEventListener('contextmenu', (e) => {
+    const b = e.target.closest('[data-cat]'); if (!b || !window.CraftMenu) return; e.preventDefault(); const key = b.dataset.cat, label = b.querySelector('span')?.textContent || key;
+    if (key === '#work') return CraftMenu.show(e.clientX, e.clientY, [{ label: 'Show the working area', run: () => { cat = key; sel.clear(); render(); } }, { label: 'Delete the used files…', disabled: !work.some((w) => w.used), run: () => act('work-del-used') }]);
+    const keepCat = cat, keepQ = query; cat = key; query = ''; const list = shown(); cat = keepCat; query = keepQ; const n = list.length, them = `${n} picture${n === 1 ? '' : 's'}`;
+    const use = (fn) => async () => { cat = key; sel = new Set(list.map((it) => it.id)); render(); await fn(); };
+    const move = (c) => async () => { for (const it of list) { it.category = c; it.checked = true; await L.put(it); } await reload(); toast(c ? `${them} moved to “${c}”.` : `${them}: category taken off.`); };
+    const src = key.startsWith('#src:') ? key.slice(5) : '', file = src && work.find((w) => w.name === src || (w.fileName || '').replace(/\.[^.]+$/, '') === src);
+    CraftMenu.show(e.clientX, e.clientY, [
+      { label: `Show ${label}`, run: () => { cat = key; sel.clear(); render(); } }, { label: `Choose all ${them}`, disabled: !n, run: use(async () => {}) },
+      '-', { label: 'Move all to a category', disabled: !n, sub: [...KNOWN().map((c) => ({ label: c, checked: n && list.every((it) => it.category === c), run: move(c) })), '-', { label: 'Not sorted yet', run: move('') }] },
+      { label: `Sort ${them} with AI`, disabled: !n, run: use(() => act('ai-again')) }, { label: 'Ask a cloud AI about them…', disabled: !n, run: use(() => act('cloud-ask')) },
+      '-', { label: `Export ${them} (ZIP)…`, disabled: !n, run: use(() => act('export-sel')) }, ...(file ? [{ label: 'Slice the sheet again…', run: () => slicer(WA.fileOf(file)) }] : []),
+      '-', { label: `Delete all ${them}…`, danger: true, disabled: !n, run: use(() => act('delete')) }]);
+  });
+  // A picture that is all dark (black line art, a black silhouette) is hard to see on the dark checkerboard: its tile
+  // gets a light one instead. Worked out once per picture from its thumbnail.
+  const darkOf = new Map();
+  function isDark(img) {
+    const c = document.createElement('canvas'), n = 32; c.width = c.height = n; const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(img, 0, 0, n, n); const d = x.getImageData(0, 0, n, n).data; let k = 0, sum = 0, light = 0;
+    for (let i = 0; i < d.length; i += 4) { if (d[i + 3] < 128) continue; const l = 0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2]; k++; sum += l; if (l > 150) light++; }
+    return k > 8 && sum / k < 80 && light < k * 0.12;
+  }
+  function lightUp(root) {
+    root.querySelectorAll('.tile[data-id] .pic img, .big.check-bg img').forEach((im) => {
+      const host = im.parentElement, id = im.closest('[data-id]')?.dataset.id || (host.classList.contains('big') && sel.size === 1 ? [...sel][0] : '');
+      const set = (v) => { host.classList.toggle('lit', !!v); }; if (id && darkOf.has(id)) return set(darkOf.get(id));
+      const go = () => { try { const v = isDark(im); if (id) darkOf.set(id, v); set(v); } catch (err) { /* not readable */ } };
+      if (im.complete && im.naturalWidth) go(); else im.addEventListener('load', go, { once: true });
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || document.querySelector('.slicer:not([hidden]), .imp:not([hidden])')) return;
+    if (e.key === 'F2' && sel.size === 1 && cat !== '#work') { e.preventDefault(); openProps('name'); }
+    if (e.key === 'Enter' && e.altKey && sel.size && cat !== '#work') { e.preventDefault(); openProps(); }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && sel.size === 1 && cat !== '#work' && !String(getSelection())) { e.preventDefault(); act('copy'); }
   });
   document.addEventListener('click', (e) => { if (startOpen && e.target.closest('.start .tiles [data-act]')) { startOpen = false; $('start').hidden = true; } const c = e.target.closest('[data-copy]'); if (c) { navigator.clipboard.writeText(c.dataset.copy).then(() => toast('Link copied: paste it into any app or web page.')); return; } const b = e.target.closest('[data-act]'); if (b) act(b.dataset.act); });
   // the clip-art server (optional): is it there?
