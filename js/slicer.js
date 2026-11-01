@@ -301,7 +301,7 @@
         return `<div class="touch-opts"><div class="field"><span>Shape</span>${seg('shape', [['box', 'Box'], ['ellipse', 'Ellipse'], ['lasso', 'Lasso']])}</div><div class="field"><span>Do</span>${seg('op', [['keep', 'Keep (add)'], ['erase', 'Erase (subtract)']])}</div><div class="field"><span>Where</span>${seg('side', [['in', 'Inside'], ['out', 'Outside']])}</div></div>`; })() : ''}
       <p class="hint">${TOOLS[tool]}</p>
       <div class="field"><span>Main area: margins <small class="hint">(pixels left off each side)</small></span><div class="four">${[['t', 'Top'], ['b', 'Bottom'], ['l', 'Left'], ['r', 'Right']].map(([k, w]) => `<label><small>${w}</small><input class="input" type="number" min="0" step="1" data-m="${k}" value="${Math.round(m[k])}"></label>`).join('')}</div></div>
-      <div class="btns"><button class="btn outline sm" type="button" data-sl="whole" ${area ? '' : 'disabled'}>Whole sheet</button><button class="btn outline sm" type="button" data-sl="clear-outs" ${outs.length ? '' : 'disabled'}>Clear ${outs.length || ''} ruled out</button>${marks.length ? `<button class="btn outline sm" type="button" data-sl="unsolid">Clear ${marks.length} touch-up${marks.length === 1 ? '' : 's'}</button><button class="btn outline sm" type="button" data-sl="unlast">Undo the last touch-up</button>` : ''}${zones.length ? `<button class="btn outline sm" type="button" data-sl="unzone">Remove ${zones.length} grid${zones.length === 1 ? '' : 's'} set by hand</button>` : ''}${moved.size || prefs.size || splits.size ? `<button class="btn outline sm" type="button" data-sl="unmove">Undo ${moved.size + splits.size + [...prefs.keys()].filter((k) => !moved.has(k)).length} changed box${moved.size + prefs.size + splits.size === 1 ? '' : 'es'}</button>` : ''}</div>
+      <div class="btns"><button class="btn outline sm" type="button" data-sl="whole" ${area ? '' : 'disabled'}>Whole sheet</button><button class="btn outline sm" type="button" data-sl="clear-outs" ${outs.length ? '' : 'disabled'}>Clear ${outs.length || ''} ruled out</button>${marks.length ? `<button class="btn outline sm" type="button" data-sl="unsolid">Clear ${marks.length} touch-up${marks.length === 1 ? '' : 's'}</button>` : ''}${zones.length ? `<button class="btn outline sm" type="button" data-sl="unzone">Remove ${zones.length} grid${zones.length === 1 ? '' : 's'} set by hand</button>` : ''}${moved.size || prefs.size || splits.size ? `<button class="btn outline sm" type="button" data-sl="unmove">Undo ${moved.size + splits.size + [...prefs.keys()].filter((k) => !moved.has(k)).length} changed box${moved.size + prefs.size + splits.size === 1 ? '' : 'es'}</button>` : ''}</div>
       ${chk('notext', 'Leave out text: labels and captions (they can become names)')}`;
   }
   // a table's (or grid's) rows and columns: untick to leave one out; row labels name the pictures, column headings
@@ -502,14 +502,30 @@
     if (down) { offRows.clear(); rowNames = []; } else { offCols.clear(); colNames = []; }
     skip.clear(); moved.clear(); prefs.clear(); splits.clear(); renderPanel(); find();
   }
+  // ------------------------------------------------------------------ one Undo and Redo for every change made by hand
+  // Everything set on the sheet is kept as a snapshot each time the sheet is redrawn after a change; Undo and Redo step
+  // through them (Ctrl+Z, Ctrl+Y, the tool bar, the right-click menus).
+  let past = [], future = [], now = '', restoring = false;
+  const snapshot = () => JSON.stringify({ area, outs, zones, marks, moved: [...moved], prefs: [...prefs], splits: [...splits], skip: [...skip], offRows: [...offRows], offCols: [...offCols], rowNames, colNames, sheetTitle, table, mode: S.mode, rows: S.rows, cols: S.cols, inset: S.inset, cut: S.cut, see: S.see, notext: S.notext });
+  function checkpoint() { if (!sheet || restoring) return; const s2 = snapshot(); if (s2 === now) return; if (now) { past.push(now); if (past.length > 200) past.shift(); } now = s2; future = []; undoButtons(); }
+  function restore(js) {
+    const o = JSON.parse(js); restoring = true;
+    ({ area, outs, zones, marks, rowNames, colNames, sheetTitle, table } = o); moved = new Map(o.moved); prefs = new Map(o.prefs); splits = new Map(o.splits); skip = new Set(o.skip); offRows = new Set(o.offRows); offCols = new Set(o.offCols);
+    Object.assign(S, { mode: o.mode, rows: o.rows, cols: o.cols, inset: o.inset, cut: o.cut, see: o.see, notext: o.notext }); now = js;
+    renderPanel(); find(); restoring = false; undoButtons();
+  }
+  function undo() { if (!past.length) return; future.push(now); restore(past.pop()); }
+  function redo() { if (!future.length) return; past.push(now); restore(future.pop()); }
+  function undoButtons() { if (!el) return; const u = el.querySelector('[data-hist=undo]'), r = el.querySelector('[data-hist=redo]'); if (u) u.disabled = !past.length; if (r) r.disabled = !future.length; }
+  const histItems = () => [{ label: 'Undo', key: 'Ctrl+Z', disabled: !past.length, run: undo }, { label: 'Redo', key: 'Ctrl+Y', disabled: !future.length, run: redo }];
   // Back to how the sheet was found: every change by hand undone and the sheet worked out again (the labels, headings
   // and title already read stay, so they need not be read again)
   function resetSheet() {
-    if (!sheet || !confirm('Reset the whole sheet to how it was found? Every box moved, split, set or touched up by hand, the main area, ruled-out parts and grids are undone. (Labels and names already read stay.)')) return;
+    if (!sheet) return; // (Undo brings it all back)
     const keepNames = { rowNames: rowNames.slice(), colNames: colNames.slice(), sheetTitle };
     area = null; outs = []; zones = []; marks = []; table = null; offRows.clear(); offCols.clear(); moved.clear(); prefs.clear(); splits.clear(); skip.clear(); poly = null; showLasso(null);
     try { const a = autoCut(sheet); Object.assign(S, a.settings); autoSaid = a.said; table = a.table || null; area = a.area || null; S.notext = !!a.notext; } catch (e) { autoSaid = ''; }
-    ({ rowNames, colNames, sheetTitle } = keepNames); tool = 'pick'; renderPanel(); find(); opts.toast && opts.toast('The sheet is back to how it was found.');
+    ({ rowNames, colNames, sheetTitle } = keepNames); tool = 'pick'; renderPanel(); find(); opts.toast && opts.toast('The sheet is back to how it was found (Undo brings your changes back).');
   }
   // one picture back to how it was found: its moved edges, split, settings, wand and the touch-ups drawn on it
   function resetBox(b) {
@@ -526,8 +542,8 @@
     const tools = [{ label: 'Touch up', checked: tool === 'solid', run: () => { tool = 'solid'; renderPanel(); } }, { label: 'Grid here', checked: tool === 'grid', run: () => { tool = 'grid'; renderPanel(); } }, { label: 'Pick', checked: tool === 'pick', run: () => { tool = 'pick'; renderPanel(); } }, { label: 'Main area', checked: tool === 'area', run: () => { tool = 'area'; renderPanel(); } }, { label: 'Rule out', checked: tool === 'out', run: () => { tool = 'out'; renderPanel(); } }];
     if (i < 0) {
       const o = outs.findIndex((r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h);
-      return CraftMenu.show(e.clientX, e.clientY, [...(o >= 0 ? [{ label: 'Take this ruled-out box away', run: () => { outs.splice(o, 1); renderPanel(); find(); } }, '-'] : []), ...tools, '-',
-        { label: 'Whole sheet (no main area)', disabled: !area, run: () => { area = null; skip.clear(); renderPanel(); find(); } }, { label: 'Clear all ruled out', disabled: !outs.length, run: () => { outs = []; renderPanel(); find(); } }, { label: 'Undo all moved and split boxes', disabled: !moved.size && !prefs.size && !splits.size, run: () => { moved.clear(); prefs.clear(); splits.clear(); renderPanel(); find(); } }, '-', { label: 'Reset the whole sheet to how it was found…', run: resetSheet }]);
+      return CraftMenu.show(e.clientX, e.clientY, [...histItems(), '-', ...(o >= 0 ? [{ label: 'Take this ruled-out box away', run: () => { outs.splice(o, 1); renderPanel(); find(); } }, '-'] : []), ...tools, '-',
+        { label: 'Whole sheet (no main area)', disabled: !area, run: () => { area = null; skip.clear(); renderPanel(); find(); } }, { label: 'Clear all ruled out', disabled: !outs.length, run: () => { outs = []; renderPanel(); find(); } }, { label: 'Undo all moved and split boxes', disabled: !moved.size && !prefs.size && !splits.size, run: () => { moved.clear(); prefs.clear(); splits.clear(); renderPanel(); find(); } }, '-', { label: 'Reset the whole sheet', run: resetSheet }]);
     }
     const b = boxes[i], off = skip.has(i), isCell = S.mode !== 'find' && b.r !== undefined, plan = namesNow().get(i), mt = metaOf(b);
     // what the sheet says about it (the name it will get, its style and tags, where it sits), then what can be done
@@ -535,16 +551,16 @@
       ...(mt.style || mt.tags.length ? [{ info: [mt.style && `Style: ${mt.style}`, mt.tags.length && `Tags: ${mt.tags.join(', ')}`].filter(Boolean).join(' · ') }] : []),
       ...(mt.where || mt.title ? [{ info: [mt.where && mt.where.charAt(0).toUpperCase() + mt.where.slice(1), mt.title && `from “${mt.title}”`].filter(Boolean).join(' · ') }] : []),
       ...(!mt.fromSheet && S.mode === 'table' ? [{ info: 'No row label or heading yet: read them with the AI, or type them in the panel' }] : [])];
-    CraftMenu.show(e.clientX, e.clientY, [...info, '-',
+    CraftMenu.show(e.clientX, e.clientY, [...info, '-', ...histItems(), '-',
       { label: 'Name this picture…', disabled: off, run: () => { const v = prompt('Name for this picture:', b.name || plan.name); if (v === null) return; setPref(b, { name: v.trim() }); } },
       { label: off ? 'Put this picture back' : 'Leave this picture out', run: () => { if (off) skip.delete(i); else skip.add(i); draw(); count(); } },
+      { label: 'Reset just this cell', disabled: !moved.has(b.key) && !prefs.has(b.key) && b.part === undefined && !marks.some((mk) => { const [mx, my] = midOf(mk.pts), sb = sheetBox(b); return mx >= sb.x && mx <= sb.x + sb.w && my >= sb.y && my <= sb.y + sb.h; }), run: () => resetBox(b) },
       '-', { label: 'Snap the box to the picture', run: snap(b, true) }, { label: 'Snap to the picture, leaving out its shadow', run: snap(b, false) },
       '-', { label: 'Background', disabled: off, sub: [{ label: 'How much background to take', disabled: off, sub: [[12, 'Much less (keeps light parts)'], [24, 'Less'], [0, 'Normal'], [60, 'More']].map(([v, l]) => ({ label: l, checked: (b.ctol || 0) === v, run: () => setPref(b, { ctol: v || undefined }) })) },
       { label: 'Touch up', disabled: off, sub: [['box', 'keep', 'in', 'Keep inside a box'], ['lasso', 'keep', 'in', 'Keep inside a lasso'], ['lasso', 'erase', 'in', 'Erase inside a lasso'], ['lasso', 'erase', 'out', 'Erase outside a lasso'], ['lasso', 'keep', 'out', 'Keep outside a lasso']].map(([shape, op, side, label]) => ({ label: label + '…', run: () => { tool = 'solid'; S.touch = { shape, op, side }; keep(); renderPanel(); opts.toast && opts.toast(`${shape === 'box' ? 'Drag a box' : 'Draw round the part'} on the picture.`); } })) },
       ...(marks.some((mk) => inPoly(mk.pts, p.x, p.y)) ? [{ label: 'Take away the touch-up here', run: () => { let i = -1; marks.forEach((mk, j) => { if (inPoly(mk.pts, p.x, p.y)) i = j; }); marks.splice(i, 1); renderPanel(); draw(); } }] : []),
       { label: 'Fill its shape: keep everything inside its outline', checked: !!b.fillShape, disabled: off, run: () => setPref(b, { fillShape: !b.fillShape }) },
       { label: 'Magic wand: erase from here', disabled: off, run: () => setPref(b, { wand: [...(b.wand || []), { x: p.x, y: p.y }] }) }, { label: 'Magic wand: keep from here', disabled: off, run: () => setPref(b, { wand: [...(b.wand || []), { x: p.x, y: p.y, keep: true }] }) },
-      ...(b.wand && b.wand.length ? [{ label: `Undo the last wand (${b.wand.length})`, run: () => setPref(b, { wand: b.wand.slice(0, -1) }) }] : []),
       '-', { label: 'Keep its shadow', checked: !b.noShadow, run: () => setPref(b, { noShadow: false }) }, { label: 'Leave out its shadow', checked: !!b.noShadow, run: () => setPref(b, { noShadow: true }) },
       '-', { label: 'Cut the picture out', checked: !b.whole && !b.boxOnly && (S.cut || b.cutOut), run: () => setPref(b, { whole: false, boxOnly: false, cutOut: true }) }, { label: 'Keep the whole box', checked: !!b.boxOnly || (!S.cut && !b.whole && !b.cutOut), run: () => setPref(b, { whole: false, boxOnly: true, cutOut: false }) }, { label: 'Keep the whole box as it is (a photo)', checked: !!b.whole, run: () => setPref(b, { whole: true, boxOnly: false, cutOut: false }) }] },
       '-', { label: 'Split this box', sub: [{ label: 'Into 2, side by side', run: () => splitBox(b, 2, false) }, { label: 'Into 3, side by side', run: () => splitBox(b, 3, false) }, '-', { label: 'Into 2, one above the other', run: () => splitBox(b, 2, true) }, { label: 'Into 3, one above the other', run: () => splitBox(b, 3, true) }] },
@@ -553,7 +569,7 @@
       ...(b.zone !== undefined ? [{ label: `Change this grid (${zones[b.zone].cols} × ${zones[b.zone].rows})…`, run: () => { const z = zones[b.zone], n = askGrid(z, z); if (!n) return; Object.assign(z, n); skip.clear(); renderPanel(); find(); } }, { label: 'Remove this grid', run: () => { zones.splice(b.zone, 1); skip.clear(); renderPanel(); find(); } }] : []),
       { label: 'Grid here: cut this box as a grid…', run: () => { const sb = clampBox(sheetBox(b)), n = askGrid(sb); if (!n) return; zones.push({ ...sb, ...n }); skip.clear(); renderPanel(); find(); } },
       { label: 'Rule out what is in this box', run: () => { const sb = clampBox(sheetBox(b)); outs.push(sb); renderPanel(); find(); } },
-      '-', { label: 'Reset this picture to how it was found', run: () => resetBox(b) }, { label: 'Reset the whole sheet to how it was found…', run: resetSheet }, '-', { label: 'Tools', sub: tools }]);
+      '-', { label: 'Reset the whole sheet', run: resetSheet }, '-', { label: 'Tools', sub: tools }]);
   }
   // the sides as they apply now: auto only means something when the background is see-through (a whole box touches all round)
   const edgesNow = () => { const e = { t: 'auto', b: 'auto', l: 'auto', r: 'auto', ...(S.edges || {}) }; if (!S.see) for (const k in e) if (e[k] === 'auto') e[k] = 'off'; return e; };
@@ -583,7 +599,7 @@
     touchCount = n; const r = el.querySelector('.room-row'); if (r) { const f = r.closest('.field'); f.outerHTML = roomHtml(); }
   }
   async function draw() {
-    const c = el.querySelector('canvas'); if (!sheet) { c.hidden = true; return; } c.hidden = false;
+    const c = el.querySelector('canvas'); if (!sheet) { c.hidden = true; return; } c.hidden = false; checkpoint();
     const run = ++drawRun, live = S.view === 'result';
     setTimeout(() => { if (run === drawRun) countTouches(); }, 0);
     // the result is worked out off-screen and shown when ready, so the sheet never flickers while settings change
@@ -747,7 +763,7 @@
     if (!file) return; try { sheet = await readSheet(file); } catch (e) { opts.toast && opts.toast('That picture could not be read.'); return; }
     if (window.CraftWork) window.CraftWork.add(file, { used: 0, pending: 'slice' }).catch(() => {});
     pagePlain = null; sheetFile = file; sheetName = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim(); skip.clear(); S.names = ''; S.category = ''; el.querySelector('.sl-empty').hidden = true;
-    original = sheet; zoom = 1;
+    original = sheet; zoom = 1; past = []; future = []; now = '';
     area = null; outs = []; table = null; offRows.clear(); offCols.clear(); rowNames = []; colNames = []; captions = []; readText.clear(); moved.clear(); prefs.clear(); splits.clear(); zones = []; marks = []; sheetTitle = ''; tool = 'pick';
     try { const a = autoCut(sheet); Object.assign(S, a.settings); autoSaid = a.said; table = a.table || null; area = a.area || null; S.notext = !!a.notext; } catch (e) { console.warn('Working out the cut failed', e); autoSaid = ''; S.notext = false; }
     renderPanel(); find(); applyZoom(); const d = desk(); d.scrollLeft = d.scrollTop = 0;
@@ -1129,7 +1145,7 @@
       x.translate(c.width / 2, c.height / 2); if (kind === 'flipx') x.scale(-1, 1); else if (kind === 'flipy') x.scale(1, -1); else x.rotate(a); x.imageSmoothingQuality = 'high'; x.drawImage(src, -W / 2, -H / 2);
       sheet = x.getImageData(0, 0, c.width, c.height);
     }
-    svgSheet = null; area = null; outs = []; zones = []; marks = []; table = null; offRows.clear(); offCols.clear(); rowNames = []; colNames = []; captions = []; readText.clear(); moved.clear(); prefs.clear(); splits.clear(); skip.clear(); pagePlain = null;
+    past = []; future = []; now = ''; svgSheet = null; area = null; outs = []; zones = []; marks = []; table = null; offRows.clear(); offCols.clear(); rowNames = []; colNames = []; captions = []; readText.clear(); moved.clear(); prefs.clear(); splits.clear(); skip.clear(); pagePlain = null;
     try { const a = autoCut(sheet); Object.assign(S, a.settings); autoSaid = a.said; table = a.table || null; area = a.area || null; S.notext = !!a.notext; } catch (e) { autoSaid = ''; }
     zoom = 1; renderPanel(); find(); applyZoom();
   }
@@ -1152,6 +1168,7 @@
     el = document.createElement('div'); el.className = 'slicer'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Montage Slicer');
     el.innerHTML = `<div class="sl-bar"><b>Montage Slicer</b><span class="hint">Cut a sheet of clip art into separate pictures for the library</span><span class="grow"></span><button class="btn outline" type="button" data-sl="close">Close</button></div>
       <div class="sl-main"><div class="sl-left"><div class="imp-tools sl-tools" role="toolbar" aria-label="Sheet tools">
+        <button class="btn outline" type="button" data-hist="undo" disabled title="Undo (Ctrl+Z)">↶ Undo</button><button class="btn outline" type="button" data-hist="redo" disabled title="Redo (Ctrl+Y)">↷ Redo</button><span class="sep"></span>
         <div class="seg" role="group" aria-label="Zoom"><button class="btn" type="button" data-z="out" title="Zoom out (mouse wheel down)">−</button><button class="btn sl-zoom" type="button" data-z="fit" title="Fit the sheet in the window (Ctrl+0)">Fit</button><button class="btn" type="button" data-z="in" title="Zoom in (mouse wheel up)">+</button></div>
         <button class="btn outline" type="button" data-z="100" title="Actual pixels (Ctrl+1)">100%</button><span class="sep"></span>
         <button class="btn outline" type="button" data-tf="left" title="Turn the sheet a quarter to the left">⟲ Left</button><button class="btn outline" type="button" data-tf="right" title="Turn the sheet a quarter to the right">⟳ Right</button>
@@ -1178,13 +1195,13 @@
       const sd = e.target.closest('[data-side]'); if (sd) { const k = sd.dataset.side, ed = { t: 'auto', b: 'auto', l: 'auto', r: 'auto', ...(S.edges || {}) }; ed[k] = { auto: 'on', on: 'off', off: 'auto' }[ed[k]]; S.edges = ed; keep(); renderPanel(); draw(); return; }
       const ae = e.target.closest('[data-edges]'); if (ae) { const v = ae.dataset.edges; S.edges = { t: v, b: v, l: v, r: v }; keep(); renderPanel(); draw(); return; }
       const v = e.target.closest('[data-view]'); if (v) { S.view = v.dataset.view; keep(); renderPanel(); draw(); return; }
+      const hb = e.target.closest('[data-hist]'); if (hb) { if (hb.dataset.hist === 'undo') undo(); else redo(); return; }
       const zb = e.target.closest('[data-z]'); if (zb) { const z = zb.dataset.z; if (z === 'fit') setZoom(1); else if (z === '100') setZoom(1 / fitScale()); else { const r = desk().getBoundingClientRect(); setZoom(zoom * (z === 'in' ? 1.25 : 0.8), { x: r.left + r.width / 2, y: r.top + r.height / 2 }); } return; }
       const tf = e.target.closest('[data-tf]'); if (tf) return transform(tf.dataset.tf);
       const tl = e.target.closest('[data-tool]'); if (tl) { poly = null; showLasso(null); tool = tl.dataset.tool; renderPanel(); return; }
       if (a && a.dataset.sl === 'whole') { area = null; skip.clear(); renderPanel(); find(); return; }
       if (a && a.dataset.sl === 'clear-outs') { outs = []; renderPanel(); find(); return; }
       if (a && a.dataset.sl === 'unsolid') { marks = []; renderPanel(); draw(); return; }
-      if (a && a.dataset.sl === 'unlast') { marks.pop(); renderPanel(); draw(); return; }
       const tc = e.target.closest('[data-touch]'); if (tc) { const [k, v] = tc.dataset.touch.split(':'); S.touch = { shape: 'box', op: 'keep', side: 'in', ...(S.touch || {}), [k]: v }; keep(); renderPanel(); return; }
       const vw = e.target.closest('[data-show]'); if (vw) { const k = vw.dataset.show; S[k] = S[k] === false; keep(); vw.setAttribute('aria-pressed', S[k] !== false); draw(); return; }
       if (a && a.dataset.sl === 'unzone') { zones = []; skip.clear(); renderPanel(); find(); return; }
@@ -1208,7 +1225,8 @@
     document.body.append(el);
   }
   function onKey(e) {
-    if (!el || el.hidden) return; if (lassoKey(e)) { e.preventDefault(); return; } if (e.key === 'Escape' && !(window.CraftMenu && CraftMenu.isOpen())) close();
+    if (!el || el.hidden) return; if (lassoKey(e)) { e.preventDefault(); return; }
+    if ((e.ctrlKey || e.metaKey) && !/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) && sheet) { const k = e.key.toLowerCase(); if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; } if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); return; } } if (e.key === 'Escape' && !(window.CraftMenu && CraftMenu.isOpen())) close();
     if (!/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) && !e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'n' || e.key === 'b') && sheet) { const b = el.querySelector(`[data-show=${e.key === 'n' ? 'showNames' : 'showBoxes'}]`); if (b) b.click(); return; }
     if ((e.ctrlKey || e.metaKey) && (e.key === '0' || e.key === '1') && sheet) { e.preventDefault(); setZoom(e.key === '0' ? 1 : 1 / fitScale()); }
   }
