@@ -82,8 +82,9 @@
       + (toSort ? `<button type="button" class="btn outline sort-ai" data-act="sort-ai" title="The AI looks at each picture and gives it a category, style, form and tags (and a name, where it only has a number)">Sort ${toSort} with AI</button>` : '')
       + (srcs.length ? `<div class="work-head">From sheets and files</div>` + srcs.map(([k, l, n]) => branch('#src:' + k, l, n, groupBy(items.filter((it) => srcOf(it) === k), (it) => (KNOWN().includes(it.category || '') ? it.category : 'Not sorted yet')).map(([c, m]) => ['#srcat:' + k + '|' + c, c, m]))).join('') : '')
       + `<div class="work-head">Working area</div>` + catBtn(['#work', 'Files imported from', work.length]);
-    const S = shown(), g = $('grid'); g.style.setProperty('--tile', size + 'px');
+    const S = shown(), g = $('grid'), keepY = g.scrollTop; g.style.setProperty('--tile', size + 'px');
     g.innerHTML = cat === '#work' ? S.map((w) => `<button type="button" class="tile" role="option" data-id="${w.id}" aria-selected="${sel.has(w.id)}" title="${esc(w.fileName)}"><span class="pic">${w.thumb ? `<img src="${w.thumb}" alt="" loading="lazy">` : ''}</span><span class="nm">${esc(w.name)}</span>${w.used ? `<i class="used">${w.used} made</i>` : ''}<i class="fmt">${esc((w.fileName.split('.').pop() || '').toUpperCase())}</i></button>`).join('') : S.map((it) => `<button type="button" class="tile" role="option" data-id="${it.id}" aria-selected="${sel.has(it.id)}" title="${esc(it.name)}${it.category ? ' · ' + esc(it.category) : ''}"><span class="pic"><img src="${it.thumb}" alt="" loading="lazy"></span><span class="nm">${esc(it.name)}</span>${it.anim ? '<i class="fmt">▶</i>' : it.svg ? '<i class="fmt">SVG</i>' : ''}</button>`).join('');
+    g.scrollTop = keepY; // (redrawn in place: choosing a picture does not jump the grid)
     const showIt = startOpen || (!items.length && cat !== '#work'); $('start').hidden = !showIt; if (showIt) renderStart();
     renderDetails(); syncProps(); status(); lightUp(g); lightUp($('details')); if (propsBox && !propsBox.hidden) lightUp(propsBox);
   }
@@ -105,6 +106,17 @@
     if (!it.ai || !it.ai.length) return '';
     return `<div class="field"><span>The AI’s guesses <small class="hint">(click one to use its name and category)</small></span><div class="ai-chips">${it.ai.map((w, i) => `<button type="button" class="ai-chip${subjectOf(it).toLowerCase() === w.word.toLowerCase() ? ' on' : ''}" data-ai="${i}" title="${esc(w.category)} · ${Math.round(w.score * 100)}"><b>${esc(w.word.charAt(0).toUpperCase() + w.word.slice(1))}</b><small>${esc(w.category)}</small></button>`).join('')}</div></div>`;
   }
+  // Same DNA / style: the same subject drawn in other styles on the same sheet (a style table's row: Phone in pixel art,
+  // sticker, glazed, photo…). A picture's DNA is its sheet (or collection) and its subject; the column puts them in order.
+  const dnaSubject = (it) => String(it.original || it.name || '').replace(/\s*[–-]\s.*$/, '').replace(/_\d{3,}$/, '').trim().toLowerCase();
+  const dnaOf = (it) => { const from = it.collection || it.sheet || ''; const sj = dnaSubject(it); return from && sj ? `${from}|${sj}` : ''; };
+  const colOf = (it) => +((String(it.place || '').match(/column (\d+)/) || [])[1] || 99);
+  function sameDna(it) { const k = dnaOf(it); return k ? items.filter((x) => x.id !== it.id && dnaOf(x) === k).sort((a, b) => colOf(a) - colOf(b) || a.name.localeCompare(b.name)) : []; }
+  function dnaRow(it) {
+    const sib = sameDna(it); if (!sib.length) return '';
+    return `<div class="field"><span>Same DNA / style <small class="hint">(${sib.length + 1} styles of ${esc(dnaSubject(it).replace(/^./, (c) => c.toUpperCase()))}: click one to go to it)</small></span><div class="dna-row">${[it, ...sib].sort((a, b) => colOf(a) - colOf(b)).map((x) => `<button type="button" class="dna${x.id === it.id ? ' on' : ''}" data-dna="${x.id}" title="${esc(x.name)}${x.style ? ' · ' + esc(x.style) : ''}"><img src="${x.thumb}" alt=""><small>${esc(x.style || (String(x.place || '').match(/column \d+/) || [''])[0])}</small></button>`).join('')}</div>
+      <button class="btn ghost sm" type="button" data-dna-all="${it.id}">Choose all ${sib.length + 1}</button></div>`;
+  }
   function renderDetails() {
     if (cat === '#work') return renderWork();
     const d = $('details'), S = items.filter((it) => sel.has(it.id));
@@ -119,6 +131,7 @@
         <div class="two"><label class="field"><span>Original name</span><input class="input" data-f="original" value="${esc(one.original || '')}"></label><label class="field"><span>Seen as <small class="hint">(the AI’s description)</small></span><input class="input" data-f="seen" value="${esc(one.seen || '')}"></label></div>
         <label class="field"><span>Matched word <small class="hint">(nearest on the lists)</small></span><input class="input" data-f="matched" value="${esc(one.matched || '')}"></label>
         <label class="field"><span>Description</span><textarea class="input" data-f="description" rows="2">${esc(one.description || '')}</textarea></label></details>` : ''}
+      ${one ? dnaRow(one) : ''}
       ${one ? aiChips(one) : ''}
       <div class="btns"><button class="btn outline sm" type="button" data-act="ai-again" title="The AI looks at ${one ? 'this picture' : 'these pictures'} again: new guesses to choose from">Ask the AI${one && one.ai ? ' again' : ''}</button><button class="btn outline sm" type="button" data-act="cloud-ask" title="A cloud AI (Claude, Gemini, GPT or OpenRouter, with your own key) looks at ${one ? 'it' : 'them'}: for pictures the AI here gets wrong. Costs a little per picture">Ask a cloud AI</button><button class="btn ghost sm" type="button" data-act="edit-lists" title="Add, rename or remove categories (and the words the AI knows for each), styles and forms">Edit the lists…</button></div>
       <label class="field"><span>Tags <small class="hint">(separated by commas)</small></span><input class="input" data-f="tags" value="${esc(one ? (one.tags || []).join(', ') : '')}" placeholder="${one ? 'farm, red, barn' : 'added to each'}"></label>
@@ -212,6 +225,8 @@
   $('details').addEventListener('change', onDetailsChange);
   // one of the AI's guesses chosen: its name (numbered if taken) and its category
   async function onDetailsClick(e) {
+    const dn = e.target.closest('[data-dna]'); if (dn) { sel = new Set([dn.dataset.dna]); last = dn.dataset.dna; render(); document.querySelector(`#grid [data-id="${dn.dataset.dna}"]`)?.scrollIntoView({ block: 'nearest' }); return; }
+    const da = e.target.closest('[data-dna-all]'); if (da) { const it = items.find((x) => x.id === da.dataset.dnaAll); if (it) { sel = new Set([it.id, ...sameDna(it).map((x) => x.id)]); render(); } return; }
     const b = e.target.closest('[data-ai]'); if (!b) return; const it = chosen()[0]; if (!it || !it.ai) return; const w = it.ai[+b.dataset.ai];
     const base = w.word.charAt(0).toUpperCase() + w.word.slice(1), taken = new Set(items.filter((x) => x.id !== it.id).map((x) => x.name.toLowerCase())); let nm = base; for (let k = 2; taken.has(nm.toLowerCase()); k++) nm = `${base}_${String(k).padStart(3, '0')}`;
     it.name = nm; it.category = w.category; it.checked = true; await L.put(it); await teach(it); await reload();
@@ -250,6 +265,7 @@
       : [{ info: `${n} chosen`, strong: true }, { info: [...new Set(S.map((x) => x.category || 'Not sorted yet'))].slice(0, 3).join(', ') }];
     CraftMenu.show(e.clientX, e.clientY, [...info, '-',
       { label: 'Properties…', key: 'Alt+Enter', run: () => openProps() }, { label: 'Rename…', key: 'F2', disabled: !one, run: () => openProps('name') },
+      ...(one && sameDna(it).length ? [{ label: 'Same DNA / style', sub: [...[it, ...sameDna(it)].sort((a, b) => colOf(a) - colOf(b)).map((x) => ({ label: `${x.name}${x.style ? ` (${x.style})` : ''}`, checked: x.id === it.id, run: () => { sel = new Set([x.id]); last = x.id; render(); document.querySelector(`#grid [data-id="${x.id}"]`)?.scrollIntoView({ block: 'nearest' }); } })), '-', { label: `Choose all ${sameDna(it).length + 1}`, run: () => { sel = new Set([it.id, ...sameDna(it).map((x) => x.id)]); render(); } }] }] : []),
       { label: 'Category', sub: [...KNOWN().map((c) => ({ label: c, checked: S.every((x) => x.category === c), run: move(c) })), '-', { label: 'Not sorted yet', run: move('') }] },
       '-', { label: one && it.ai ? 'Ask the AI again' : 'Ask the AI', run: () => act('ai-again') }, { label: 'Ask a cloud AI…', run: () => act('cloud-ask') },
       '-', { label: 'Copy', key: 'Ctrl+C', disabled: !one, run: () => act('copy') }, { label: 'Save as PNG…', disabled: !one || !it.png, run: () => act('dl-png') }, { label: 'Save as SVG…', disabled: !one || !it.svg, run: () => act('dl-svg') },

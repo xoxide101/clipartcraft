@@ -5,7 +5,7 @@
 (function () {
   'use strict';
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-  let open = [];
+  let open = [], shownAt = 0;
   function close() { open.forEach((m) => m.remove()); open = []; }
   function place(m, x, y, beside) {
     document.body.append(m); const r = m.getBoundingClientRect(), W = innerWidth, H = innerHeight;
@@ -32,9 +32,9 @@
   }
   function show(x, y, items) {
     close(); const list = items.filter((it, i, a) => it !== '-' || (i > 0 && i < a.length - 1 && a[i - 1] !== '-')); if (!list.length) return;
-    const m = build(list, 0); open.push(m); place(m, x, y); m.querySelector('button:not([disabled])')?.focus({ preventScroll: true });
+    const m = build(list, 0); open.push(m); place(m, x, y); shownAt = performance.now(); m.querySelector('button:not([disabled])')?.focus({ preventScroll: true });
   }
   document.addEventListener('pointerdown', (e) => { if (open.length && !e.target.closest('.ctx-menu')) close(); }, true);
-  addEventListener('blur', close); addEventListener('resize', close); document.addEventListener('scroll', (e) => { if (!(e.target instanceof Element && e.target.closest('.ctx-menu'))) close(); }, true);
+  addEventListener('blur', close); addEventListener('resize', close); document.addEventListener('scroll', (e) => { if (performance.now() - shownAt < 250) return; if (!(e.target instanceof Element && e.target.closest('.ctx-menu'))) close(); }, true); // (not the page settling as it opens)
   window.CraftMenu = { show, close, isOpen: () => open.length > 0 };
 })();

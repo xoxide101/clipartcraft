@@ -301,3 +301,10 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 .cn-help { font-size: 13px; }
 @media (max-width: 700px) { .cn-row { grid-template-columns: 1fr; } }
 .cn-save { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+/* Same DNA / style: the same subject in the other styles */
+.dna-row { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }
+.dna { flex: 0 0 64px; display: grid; gap: 2px; justify-items: center; padding: 4px; border: 2px solid transparent; border-radius: 8px; background: repeating-conic-gradient(var(--check-a) 0 25%, var(--check-b) 0 50%) 0 0 / 10px 10px; color: var(--fg); cursor: pointer; }
+.dna img { width: 52px; height: 52px; object-fit: contain; }
+.dna small { font-size: 9.5px; color: var(--muted); max-width: 58px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dna.on { border-color: var(--accent); }
+.dna:hover { border-color: var(--line); }

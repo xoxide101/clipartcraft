@@ -916,13 +916,22 @@
     const hr = ruleLines(L, W, H, false);
     const rows = evenSplit(fainter(cellsOf(hr, H), L, W, H, false, w)), cols = evenSplit(fainter(cellsOf(ruleLines(L, W, H, true), W), L, W, H, true, w));
     if (rows.length < 2 || cols.length < 2) return null;
-    const mh = median(rows.map(([a, b]) => b - a)), mw = median(cols.map(([a, b]) => b - a)), short = rows.map(([a, b]) => b - a < mh * 0.7);
+    let mh = median(rows.map(([a, b]) => b - a)); const mw = median(cols.map(([a, b]) => b - a));
+    // a row cut in two by a line that is not one (keyboards' long edges, window title bars all at one height): two short
+    // rows side by side that together make about one row are joined back (between the first and last full rows only:
+    // the title and headings above are short on purpose)
+    { const full = rows.map(([a, b]) => b - a >= mh * 0.75), f = full.indexOf(true), l = full.lastIndexOf(true);
+      for (let i = Math.max(0, f); i + 1 <= l && i + 1 < rows.length; i++) { const h1 = rows[i][1] - rows[i][0], h2 = rows[i + 1][1] - rows[i + 1][0], both = rows[i + 1][1] - rows[i][0];
+        if (h1 < mh * 0.75 && h2 < mh * 0.75 && both >= mh * 0.8 && both <= mh * 1.3) { rows.splice(i, 2, [rows[i][0], rows[i + 1][1]]); i--; } }
+      mh = median(rows.map(([a, b]) => b - a)); }
+    const short = rows.map(([a, b]) => b - a < mh * 0.7);
     const rowKind = rows.map(() => 'pic'), colKind = cols.map(() => 'pic');
     let t = 0; while (t < rows.length && short[t]) rowKind[t++] = 'head';
     let b = rows.length - 1; while (b > t && short[b]) rowKind[b--] = 'foot';
-    // a short strip between rows: words (thin ink on the page) are captions; solid parts of the pictures (a row of little
-    // windows' title bars that looked like a line) belong to the row below, so it is joined back onto it
-    for (let i = t; i <= b; i++) if (short[i]) { const r = ringOf(w, cols[0][0], rows[i][0], cols[cols.length - 1][1], rows[i][1], 1e6); rowKind[i] = r.sd > 6 ? (r.even < 0.6 && i < b && rows[i][1] - rows[i][0] < mh * 0.4 ? 'join' : 'caption') : 'gap'; }
+    // a short strip between rows: words (thin ink on the page) are captions; a thin strip of solid picture (a row of little
+    // windows' title bars that looked like a line) belongs to the row below, so it is joined back onto it; a short row
+    // that is all picture is a row of pictures
+    for (let i = t; i <= b; i++) if (short[i]) { const r = ringOf(w, cols[0][0], rows[i][0], cols[cols.length - 1][1], rows[i][1], 1e6); rowKind[i] = r.sd <= 6 ? 'gap' : r.even >= 0.6 ? 'caption' : i < b && rows[i][1] - rows[i][0] < mh * 0.4 ? 'join' : 'pic'; } // (a short row full of picture, like monitors, is a picture row)
     for (let i = rows.length - 2; i >= 0; i--) if (rowKind[i] === 'join') { rows.splice(i, 2, [rows[i][0], rows[i + 1][1]]); rowKind.splice(i, 2, 'pic'); short.splice(i, 2, false); }
     // a row or column with nothing in it (the see-through or plain page under a table) is not pictures
     const empty = (x0, y0, x1, y1) => { const r = ringOf(w, x0, y0, x1, y1, 1e6); return r.sd < 3; };
