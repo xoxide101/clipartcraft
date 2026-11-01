@@ -279,3 +279,8 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 .sl-side .seg .btn { padding-left: 6px; padding-right: 6px; }
 .sl-drag[data-tool=solid] { border-color: #16a34a; background: rgba(34,197,94,.15); }
 .sl-side .seg { flex-wrap: wrap; }
+.touch-opts { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
+.touch-opts .field { gap: 3px; }
+.sl-lasso { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 5; pointer-events: none; }
+.sl-lasso polygon { fill: rgba(34,197,94,.12); stroke: #16a34a; stroke-width: 2; stroke-dasharray: 5 3; }
+.sl-lasso[data-op=erase] polygon { fill: rgba(220,38,38,.12); stroke: #dc2626; }

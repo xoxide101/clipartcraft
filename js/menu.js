@@ -35,6 +35,6 @@
     const m = build(list, 0); open.push(m); place(m, x, y); m.querySelector('button:not([disabled])')?.focus({ preventScroll: true });
   }
   document.addEventListener('pointerdown', (e) => { if (open.length && !e.target.closest('.ctx-menu')) close(); }, true);
-  addEventListener('blur', close); addEventListener('resize', close); document.addEventListener('scroll', close, true);
+  addEventListener('blur', close); addEventListener('resize', close); document.addEventListener('scroll', (e) => { if (!(e.target instanceof Element && e.target.closest('.ctx-menu'))) close(); }, true);
   window.CraftMenu = { show, close, isOpen: () => open.length > 0 };
 })();
