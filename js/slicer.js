@@ -43,7 +43,8 @@
   // specks smaller than `min` (share of the sheet) left out, in reading order
   function splitSheet(img, { gap = 0, min = 0.002, tolerance = 40 } = {}) {
     const W = img.width, H = img.height, n = W * H, d = img.data, bg = cornerBg(img), m = new Uint8Array(n); let clear = false;
-    for (let p = 0; p < n; p++) if (d[p * 4 + 3] < 250) { clear = true; break; }
+    // see-through: a real share of it is clear (AI-made pictures are 98-99% solid all over, which is not see-through)
+    { let k = 0; for (let p = 0; p < n; p++) if (d[p * 4 + 3] < 128 && ++k > n * 0.01) { clear = true; break; } }
     const b0 = Math.max(2, Math.round(Math.min(W, H) * 0.03)), Ls = [], As = [], Bs = [];
     if (!clear) for (let y = 0; y < H; y += 2) for (let x = 0; x < W; x += 2) { if (x >= b0 && y >= b0 && x < W - b0 && y < H - b0) continue; const i = (y * W + x) * 4, q = toLab(d[i] / 255, d[i + 1] / 255, d[i + 2] / 255); Ls.push(q[0]); As.push(q[1]); Bs.push(q[2]); }
     const pct = (a, t) => { const s2 = a.slice().sort((u, v) => u - v); return s2[Math.min(s2.length - 1, Math.floor(t * s2.length))]; }, tl = tolerance / 40;
@@ -145,9 +146,10 @@
   }
   // one grid cell: the whole cell (its background see-through or not), or its picture found in it and cut out
   // (everything in the cell kept together)
-  function gridItem(img, cell, { cut = true, see = true, pad = 6, tol = 40 } = {}) {
+  // (ctol: how close to the page counts as page when cutting out; lower keeps more of a light picture)
+  function gridItem(img, cell, { cut = true, see = true, pad = 6, tol = 40, ctol = 40 } = {}) {
     const c = cropOf(img, cell.x, cell.y, cell.w, cell.h); c.at = { ...cell }; if (!cut) return see ? boxClear(c, tol) : c;
-    const sh = splitSheet(c, { gap: Math.max(c.width, c.height), min: 0.002 }); if (!sh.items.length) return c;
+    const sh = splitSheet(c, { gap: Math.max(c.width, c.height), min: 0.002, tolerance: ctol }); if (!sh.items.length) return c;
     const keep = new Set(sh.items.map((i) => i.id)), x0 = Math.min(...sh.items.map((i) => i.x)), y0 = Math.min(...sh.items.map((i) => i.y)), x1 = Math.max(...sh.items.map((i) => i.x + i.w)), y1 = Math.max(...sh.items.map((i) => i.y + i.h));
     for (let p = 0; p < sh.lab.length; p++) if (keep.has(sh.lab[p])) sh.lab[p] = 1;
     const o = sheetItem(c, sh, { id: 1, x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, { pad, see }); o.at = { x: cell.x + o.at.x, y: cell.y + o.at.y, w: o.at.w, h: o.at.h }; return o;
@@ -216,7 +218,7 @@
   const keyOf = (b) => `${Math.round(b.x + wx)},${Math.round(b.y + wy)},${Math.round(b.w)},${Math.round(b.h)}`;
   function prep() {
     const a = area || { x: 0, y: 0, w: sheet.width, h: sheet.height }; wx = a.x; wy = a.y; work = cropOf(sheet, a.x, a.y, a.w, a.h); pagePlain = null;
-    let clear = false; for (let i = 3; i < work.data.length; i += 4) if (work.data[i] < 250) { clear = true; break; }
+    let clear = false, k = 0; for (let i = 3; i < work.data.length; i += 4) if (work.data[i] < 128 && ++k > work.data.length / 400) { clear = true; break; }
     work.page = clear ? null : cornerBg(work);
     for (const o of outs) paint(work, { x: o.x - wx, y: o.y - wy, w: o.w, h: o.h }, work.page);
   }
@@ -391,8 +393,47 @@
   // shadow taken off when asked
   function baseCut(b) {
     const o0 = { cut: S.cut, see: S.see, pad: +S.pad, tol: +S.tol || 16 }, o = b.whole ? { ...o0, cut: false, see: false } : b.boxOnly ? { ...o0, cut: false } : b.cutOut ? { ...o0, cut: true } : o0;
-    const img = b.fixed || S.mode !== 'find' ? gridItem(work, b, o) : findItem(work, found, b.item, o);
-    return b.noShadow ? dropShadow(img, pageOf(b)) : img;
+    // a box with its own "how much background" is cut from just its box, at that setting
+    const own = b.ctol ? { ...o, ctol: b.ctol, tol: Math.max(4, Math.round((b.ctol / 40) * o.tol)) } : o;
+    let img = b.fixed || S.mode !== 'find' || b.ctol ? gridItem(work, b.fixed || S.mode !== 'find' ? b : (() => { const sb = sheetBox(b); return { x: Math.max(0, Math.round(sb.x - wx)), y: Math.max(0, Math.round(sb.y - wy)), w: Math.round(sb.w), h: Math.round(sb.h) }; })(), own) : findItem(work, found, b.item, o);
+    // A cell cut out can lose light parts that touch the page (a realistic picture's highlights on white): the whole cell
+    // with only the page reached from its edges cleared (strictly) keeps them. When cutting out keeps clearly less, that is used.
+    if (S.mode !== 'find' && o === o0 && S.cut && S.see && !b.ctol) {
+      const alt = gridItem(work, b, { ...o, cut: false, see: true }), n = (q) => { let k = 0; for (let i = 3; i < q.data.length; i += 4) if (q.data[i] > 128) k++; return k; };
+      if (n(img) < n(alt) * 0.85 && n(alt) < alt.width * alt.height * 0.85) img = alt; // (and it did clear the page: at least 15% of the cell)
+    }
+    if (b.fillShape) img = fillShape(img);
+    if (b.noShadow) img = dropShadow(img, pageOf(b));
+    return b.wand && b.wand.length ? wandApply(img, b.wand) : img;
+  }
+  // Everything inside the outline of what was kept, brought back as it is on the sheet: for a solid thing whose face is
+  // the colour of the page (a silver drive on light grey). The outline is the convex hull of the kept pixels.
+  function fillShape(img) {
+    const W = img.width, H = img.height, d = img.data, pts = [];
+    for (let y = 0; y < H; y++) { let a = -1, b = -1; for (let x = 0; x < W; x++) if (d[(y * W + x) * 4 + 3] > 128) { if (a < 0) a = x; b = x; } if (a >= 0) { pts.push([a, y]); if (b !== a) pts.push([b, y]); } }
+    if (pts.length < 3) return img; pts.sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+    const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]), lo = [], hi = [];
+    for (const p of pts) { while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+    for (let i = pts.length - 1; i >= 0; i--) { const p = pts[i]; while (hi.length >= 2 && cross(hi[hi.length - 2], hi[hi.length - 1], p) <= 0) hi.pop(); hi.push(p); }
+    const hull = [...lo.slice(0, -1), ...hi.slice(0, -1)], c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d', { willReadFrequently: true });
+    x.beginPath(); hull.forEach(([px, py], i) => (i ? x.lineTo(px + 0.5, py + 0.5) : x.moveTo(px + 0.5, py + 0.5))); x.closePath(); x.fill(); const m = x.getImageData(0, 0, W, H).data;
+    const o = new ImageData(new Uint8ClampedArray(d), W, H), at = img.at || { x: 0, y: 0 }, src = work.data, SW = work.width;
+    for (let y = 0; y < H; y++) for (let xx = 0; xx < W; xx++) { const k = (y * W + xx) * 4; if (m[k + 3] < 128 || d[k + 3] > 200) continue; const sx = at.x + xx, sy = at.y + y; if (sx >= SW || sy >= work.height) continue; const q = (sy * SW + sx) * 4; o.data[k] = src[q]; o.data[k + 1] = src[q + 1]; o.data[k + 2] = src[q + 2]; o.data[k + 3] = src[q + 3]; }
+    o.at = img.at; return o;
+  }
+  // The magic wand, at points clicked on the sheet: from each, everything joined to it of about the same colour (on the
+  // sheet as it is) is made see-through ("erase") or brought back as it is on the sheet ("keep").
+  function wandApply(img, pts) {
+    const o = new ImageData(new Uint8ClampedArray(img.data), img.width, img.height), d = o.data, W = img.width, H = img.height, at = img.at || { x: 0, y: 0 }, src = work.data, SW = work.width;
+    for (const pt of pts) {
+      const lx = Math.round(pt.x - wx - at.x), ly = Math.round(pt.y - wy - at.y); if (lx < 0 || ly < 0 || lx >= W || ly >= H) continue;
+      const sp = (x, y) => ((at.y + y) * SW + at.x + x) * 4, s0 = sp(lx, ly), seed = [src[s0], src[s0 + 1], src[s0 + 2]], tol = pt.tol || 30, seen = new Uint8Array(W * H), st = [ly * W + lx]; seen[ly * W + lx] = 1;
+      while (st.length) { const k = st.pop(), x = k % W, y = (k / W) | 0, q = sp(x, y); if (at.x + x >= SW || at.y + y >= work.height) continue;
+        if (Math.abs(src[q] - seed[0]) + Math.abs(src[q + 1] - seed[1]) + Math.abs(src[q + 2] - seed[2]) > tol) continue;
+        if (pt.keep) { d[k * 4] = src[q]; d[k * 4 + 1] = src[q + 1]; d[k * 4 + 2] = src[q + 2]; d[k * 4 + 3] = src[q + 3]; } else d[k * 4 + 3] = 0;
+        for (const n of [x > 0 ? k - 1 : -1, x < W - 1 ? k + 1 : -1, y > 0 ? k - W : -1, y < H - 1 ? k + W : -1]) if (n >= 0 && !seen[n]) { seen[n] = 1; st.push(n); } }
+    }
+    o.at = img.at; return o;
   }
   // the page round a box: the sheet's own, or (a cell) its corners'
   const pageOf = (b) => (work.page && S.mode === 'find' ? work.page : cornerBg(cropOf(work, b.x, b.y, b.w, b.h)));
@@ -461,6 +502,10 @@
       { label: 'Name this picture…', disabled: off, run: () => { const v = prompt('Name for this picture:', b.name || plan.name); if (v === null) return; setPref(b, { name: v.trim() }); } },
       { label: off ? 'Put this picture back' : 'Leave this picture out', run: () => { if (off) skip.delete(i); else skip.add(i); draw(); count(); } },
       '-', { label: 'Snap the box to the picture', run: snap(b, true) }, { label: 'Snap to the picture, leaving out its shadow', run: snap(b, false) },
+      '-', { label: 'How much background to take', disabled: off, sub: [[12, 'Much less (keeps light parts)'], [24, 'Less'], [0, 'Normal'], [60, 'More']].map(([v, l]) => ({ label: l, checked: (b.ctol || 0) === v, run: () => setPref(b, { ctol: v || undefined }) })) },
+      { label: 'Fill its shape: keep everything inside its outline', checked: !!b.fillShape, disabled: off, run: () => setPref(b, { fillShape: !b.fillShape }) },
+      { label: 'Magic wand: erase from here', disabled: off, run: () => setPref(b, { wand: [...(b.wand || []), { x: p.x, y: p.y }] }) }, { label: 'Magic wand: keep from here', disabled: off, run: () => setPref(b, { wand: [...(b.wand || []), { x: p.x, y: p.y, keep: true }] }) },
+      ...(b.wand && b.wand.length ? [{ label: `Undo the last wand (${b.wand.length})`, run: () => setPref(b, { wand: b.wand.slice(0, -1) }) }] : []),
       '-', { label: 'Keep its shadow', checked: !b.noShadow, run: () => setPref(b, { noShadow: false }) }, { label: 'Leave out its shadow', checked: !!b.noShadow, run: () => setPref(b, { noShadow: true }) },
       '-', { label: 'Cut the picture out', checked: !b.whole && !b.boxOnly && (S.cut || b.cutOut), run: () => setPref(b, { whole: false, boxOnly: false, cutOut: true }) }, { label: 'Keep the whole box', checked: !!b.boxOnly || (!S.cut && !b.whole && !b.cutOut), run: () => setPref(b, { whole: false, boxOnly: true, cutOut: false }) }, { label: 'Keep the whole box as it is (a photo)', checked: !!b.whole, run: () => setPref(b, { whole: true, boxOnly: false, cutOut: false }) },
       '-', { label: 'Split this box', sub: [{ label: 'Into 2, side by side', run: () => splitBox(b, 2, false) }, { label: 'Into 3, side by side', run: () => splitBox(b, 3, false) }, '-', { label: 'Into 2, one above the other', run: () => splitBox(b, 2, true) }, { label: 'Into 3, one above the other', run: () => splitBox(b, 3, true) }] },
