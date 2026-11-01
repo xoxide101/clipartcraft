@@ -85,7 +85,7 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 .big img { max-width: 100%; max-height: 224px; object-fit: contain; }
 .many { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
 .many img { width: 100%; aspect-ratio: 1; object-fit: contain; background: var(--panel-2); border-radius: 4px; }
-.start { position: absolute; inset: 0; display: grid; place-items: center; padding: 20px; }
+.start { position: absolute; inset: 0; display: grid; place-items: center; padding: 20px; background: var(--desk); z-index: 3; overflow: auto; }
 .start-in { max-width: 760px; text-align: center; display: grid; gap: 14px; }
 .start h2 { margin: 0; font-size: 22px; }
 .start .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
