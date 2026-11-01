@@ -295,8 +295,9 @@
     // (a white tile on white paper, light parts at the edge)
     if (S.see && S.cut && img.at) {
       const strict = boxClear(cropOf(sheet, img.at.x, img.at.y, img.at.w, img.at.h), 8), sd = strict.data; let lost = 0;
-      for (let i = 3; i < d.length && i < sd.length; i += 4) if (sd[i] > 128 && d[i] < 16) lost++;
-      if (lost > W * H * 0.02) out.push('Light parts of the picture may have gone with the background (a white tile?): try Cut out off with See-through on.');
+      // only light parts count (a white tile on white paper); a dark or speckled background can differ a little anyway
+      for (let i = 3; i < d.length && i < sd.length; i += 4) if (sd[i] > 128 && d[i] < 16 && 0.3 * sd[i - 3] + 0.59 * sd[i - 2] + 0.11 * sd[i - 1] > 200) lost++;
+      if (lost > W * H * 0.04) out.push('Light parts of the picture may have gone with the background (a white tile?): try Cut out off with See-through on.');
     }
     if (W < 24 || H < 24) out.push(`Very small (${W} × ${H} pixels).`);
     return out;
@@ -309,7 +310,9 @@
     try {
       review = await cuts((n) => { btn.textContent = `Getting ${n} of ${total} ready…`; }); review.forEach((r) => { r.doubts = doubts(r.img); });
       // on a sheet of like pictures, one clearly smaller than the rest has probably lost a part (a white tile on white paper)
-      if (review.length >= 4) { const med = (a) => a.slice().sort((p, q) => p - q)[a.length >> 1], mw = med(review.map((r) => r.img.width)), mh = med(review.map((r) => r.img.height));
+      // (only on a sheet whose pictures really are alike in size: most within a tenth of the usual size)
+      const med = (a) => a.slice().sort((p, q) => p - q)[a.length >> 1], mw = med(review.map((r) => r.img.width)), mh = med(review.map((r) => r.img.height)), alike = review.filter((r) => Math.abs(r.img.width - mw) <= mw * 0.1 && Math.abs(r.img.height - mh) <= mh * 0.1).length;
+      if (review.length >= 4 && alike >= review.length * 0.7) {
         for (const r of review) if (r.img.width < mw * 0.92 || r.img.height < mh * 0.92) r.doubts.push(`Smaller than the others (${r.img.width} × ${r.img.height}, most are about ${mw} × ${mh}): part of it may have gone with the background. Try Cut out off with See-through on.`); }
       showReview();
     }
