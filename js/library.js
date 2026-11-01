@@ -112,7 +112,7 @@
 
   // ------------------------------------------------------------------ the clip-art server (optional)
   const b64 = (blob) => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result).replace(/^data:[^,]*,/, '')); r.onerror = () => no(r.error); r.readAsDataURL(blob); });
-  const META = ['type', 'name', 'category', 'style', 'form', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash'];
+  const META = ['type', 'name', 'original', 'seen', 'matched', 'category', 'style', 'form', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash'];
   async function server(url) { if (url !== undefined) { await meta('server', url ? String(url).trim().replace(/\/+$/, '') : ''); } return (await meta('server')) || ''; }
   async function serverKey(k) { if (k !== undefined) await meta('serverKey', k || ''); return (await meta('serverKey')) || ''; }
   async function call(path, opts = {}) { const u = await server(); if (!u) throw new Error('No clip-art server is connected.'); const k = await serverKey(); if (k) opts = { ...opts, headers: { ...(opts.headers || {}), 'x-craft-key': k } }; let r; try { r = await fetch(u + path, opts); } catch (e) { throw new Error(`The clip-art server at ${u} did not answer (is it running?).`); } const j = r.headers.get('content-type')?.includes('json') ? await r.json() : null; if (!r.ok) throw Object.assign(new Error((j && j.error) || `The server said ${r.status}.`), { status: r.status }); return j; }

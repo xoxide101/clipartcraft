@@ -13,7 +13,7 @@
 
   // ------------------------------------------------------------------ what is shown
   const cats = () => { const m = new Map(); items.forEach((it) => { const c = it.category || ''; m.set(c, (m.get(c) || 0) + 1); }); return [...m].sort((a, b) => (a[0] === '' ? 1 : b[0] === '' ? -1 : a[0].localeCompare(b[0]))); };
-  const shown = () => { const q = query.trim().toLowerCase(); const words = q.split(/\s+/).filter(Boolean); if (cat === '#work') return work.filter((w) => words.every((x) => w.name.toLowerCase().includes(x))); return items.filter((it) => (cat === '*' || (cat === '#unsorted' ? !KNOWN().includes(it.category || '') : cat.startsWith('#src:') ? srcOf(it) === cat.slice(5) : cat.startsWith('#sub:') ? (() => { const [c, sj] = cat.slice(5).split('|'); return it.category === c && subjectOf(it) === sj; })() : cat.startsWith('#srcat:') ? (() => { const [k, c] = cat.slice(7).split('|'); return srcOf(it) === k && (c === 'Not sorted yet' ? !KNOWN().includes(it.category || '') : it.category === c); })() : (it.category || '') === cat)) && words.every((x) => [it.name, (it.tags || []).join(' '), it.category, it.style, it.form, it.kind === 'bw' ? 'black and white' : it.kind, it.anim ? 'animated animation' : '', it.description].join(' ').toLowerCase().includes(x))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })); };
+  const shown = () => { const q = query.trim().toLowerCase(); const words = q.split(/\s+/).filter(Boolean); if (cat === '#work') return work.filter((w) => words.every((x) => w.name.toLowerCase().includes(x))); return items.filter((it) => (cat === '*' || (cat === '#unsorted' ? !KNOWN().includes(it.category || '') : cat.startsWith('#src:') ? srcOf(it) === cat.slice(5) : cat.startsWith('#sub:') ? (() => { const [c, sj] = cat.slice(5).split('|'); return it.category === c && subjectOf(it) === sj; })() : cat.startsWith('#srcat:') ? (() => { const [k, c] = cat.slice(7).split('|'); return srcOf(it) === k && (c === 'Not sorted yet' ? !KNOWN().includes(it.category || '') : it.category === c); })() : (it.category || '') === cat)) && words.every((x) => [it.name, it.original, it.seen, it.matched, (it.tags || []).join(' '), it.category, it.style, it.form, it.kind === 'bw' ? 'black and white' : it.kind, it.anim ? 'animated animation' : '', it.description].join(' ').toLowerCase().includes(x))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })); };
   // the agreed categories (the AI's), and which pictures still need sorting: no category from them, or a name that
   // only says where it came from (Sheet 6 – 3, IMG_2041, clip art 12)
   const KNOWN = () => (window.CraftNamer ? CraftNamer.CATEGORIES : []);
@@ -36,16 +36,27 @@
     if (it.category && CraftNamer.learnWord(subject, it.category)) await L.lists(CraftNamer.lists());
     toast(`The AI will remember: pictures like this are “${subject}”${it.category ? ` in ${it.category}` : ''}.`);
   }
+  // describing each picture (Florence-2): better names, a little slower; on unless turned off
+  const describeOn = () => { try { return localStorage.getItem('clipartcraft-describe') !== '0'; } catch (e) { return true; } };
+  // the first time: what will be downloaded
+  async function aiOk() {
+    const N = window.CraftNamer, a = await N.downloaded(), b = !describeOn() || (await N.describerDownloaded()); if (a && b) return true;
+    return confirm(`The AI looks at each picture in this browser (nothing is uploaded). The first time it downloads about ${(a ? 0 : N.MB) + (b ? 0 : N.DESCRIBER_MB)} MB (kept for next time, then it works offline). Go ahead?`);
+  }
   async function sortWithAI(list, { quiet = false, again = false } = {}) {
     const N = window.CraftNamer; if (!N || !list.length) return 0;
     return L.guard(async () => {
+      const prog = (got, total, what) => busy(what === 'words' ? `Learning the words… ${got} of ${total}` : `Getting the AI (once)… ${Math.round(got / 1048576)} of ${Math.round(total / 1048576)} MB${what ? ` · ${String(what).split('/').pop()}` : ''}`);
+      if (describeOn()) { busy('Getting the describing AI ready…'); try { await N.describeReady(prog); } catch (e) { console.warn(e); toast('The describing AI could not start here; names come from the word list.'); } }
       await N.ready((got, total, what) => busy(what === 'words' ? `Learning the words… ${got} of ${total}` : `Getting the AI (once, about ${N.MB} MB)… ${Math.round(got / 1048576)} of ${Math.round(total / 1048576)} MB`));
       const taken = new Set(items.map((it) => it.name.toLowerCase())); let n = 0;
       for (const it of list) {
         busy(`Sorting ${++n} of ${list.length}: ${it.name}…`);
         let src; try { src = it.png ? await createImageBitmap(it.png) : await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = L.svgUrl(it.svg); }); } catch (e) { continue; }
         const c = document.createElement('canvas'); c.width = src.width || 224; c.height = src.height || 224; c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
-        const ai = await N.name(c, { lessons: await L.lessons() }); it.ai = ai.words; it.vec = ai.vec;
+        const ai = await N.name(c, { lessons: await L.lessons(), describe: describeOn() }); it.ai = ai.words; it.vec = ai.vec; if (ai.description) it.description = ai.description;
+        // the names side by side: the one it came with (kept for good), what the AI sees, and the nearest word on the lists
+        if (!it.original) it.original = it.name; if (ai.described) it.seen = ai.name; const mw = (ai.words || []).find((w) => !w.described && !w.learnt); if (mw) it.matched = mw.word.charAt(0).toUpperCase() + mw.word.slice(1);
         if (!KNOWN().includes(it.category || '') || again) it.category = it.checked && !again ? it.category : ai.category;
         it.style = it.style || ai.style; it.form = it.form || ai.form; it.tags = [...new Set([...(it.tags || []), ...ai.tags])];
         if (placeholderName(it.name) || (again && !it.checked)) { taken.delete(it.name.toLowerCase()); let nm = ai.name; for (let k = 2; taken.has(nm.toLowerCase()); k++) nm = `${ai.name}_${String(k).padStart(3, '0')}`; it.name = nm; taken.add(nm.toLowerCase()); }
@@ -58,7 +69,7 @@
   // after new pictures come in: sorted at once if the AI is already here, otherwise the button in the menu offers it
   async function sortNew(made) {
     const todo = made.filter(needsSort); if (!todo.length || !window.CraftNamer) return;
-    if (await CraftNamer.downloaded()) { await sortWithAI(todo, { quiet: true }); await reload(); toast(`${todo.length} new picture${todo.length === 1 ? '' : 's'} sorted into categories by the AI.`); }
+    if ((await CraftNamer.downloaded()) && (!describeOn() || (await CraftNamer.describerDownloaded()))) { await sortWithAI(todo, { quiet: true }); await reload(); toast(`${todo.length} new picture${todo.length === 1 ? '' : 's'} sorted into categories by the AI.`); }
   }
   async function reload() { items = await L.all(); work = WA ? await WA.all() : []; [...sel].forEach((id) => { if (!items.some((it) => it.id === id)) sel.delete(id); }); render(); }
   function render() {
@@ -104,6 +115,10 @@
       <label class="field"><span>Name</span><input class="input" data-f="name" value="${esc(one.name)}"></label>` : `<div class="many">${S.slice(0, 12).map((it) => `<img src="${it.thumb}" alt="">`).join('')}</div>`}
       ${pickField('category', 'Category', KNOWN(), one ? one.category : (new Set(S.map((x) => x.category)).size === 1 ? S[0].category : ''), !one)}
       <div class="two">${pickField('style', 'Style', window.CraftNamer ? CraftNamer.STYLES : [], one ? one.style : (new Set(S.map((x) => x.style || '')).size === 1 ? S[0].style : ''), !one)}${pickField('form', 'Form', window.CraftNamer ? CraftNamer.FORMS : [], one ? one.form : (new Set(S.map((x) => x.form || '')).size === 1 ? S[0].form : ''), !one)}</div>
+      ${one && (one.original || one.seen || one.matched || one.description) ? `<details class="names-more" open><summary>Other names</summary>
+        <div class="two"><label class="field"><span>Original name</span><input class="input" data-f="original" value="${esc(one.original || '')}"></label><label class="field"><span>Seen as <small class="hint">(the AI’s description)</small></span><input class="input" data-f="seen" value="${esc(one.seen || '')}"></label></div>
+        <label class="field"><span>Matched word <small class="hint">(nearest on the lists)</small></span><input class="input" data-f="matched" value="${esc(one.matched || '')}"></label>
+        <label class="field"><span>Description</span><textarea class="input" data-f="description" rows="2">${esc(one.description || '')}</textarea></label></details>` : ''}
       ${one ? aiChips(one) : ''}
       <div class="btns"><button class="btn outline sm" type="button" data-act="ai-again" title="The AI looks at ${one ? 'this picture' : 'these pictures'} again: new guesses to choose from">Ask the AI${one && one.ai ? ' again' : ''}</button><button class="btn ghost sm" type="button" data-act="edit-lists" title="Add, rename or remove categories (and the words the AI knows for each), styles and forms">Edit the lists…</button></div>
       <label class="field"><span>Tags <small class="hint">(separated by commas)</small></span><input class="input" data-f="tags" value="${esc(one ? (one.tags || []).join(', ') : '')}" placeholder="${one ? 'farm, red, barn' : 'added to each'}"></label>
@@ -134,9 +149,9 @@
   const importer = (files) => window.ClipArtImporter.open({ files, toast, server: !!serverUrl && serverOk, categories: KNOWN(), done: async (made) => { setTimeout(() => sortNew(made), 0); await reload(); offerResume(); cat = '*'; sel = new Set(made.map((m) => m.id)); render(); toast(`${made.length} picture${made.length === 1 ? '' : 's'} added to the library.`); } });
   async function act(a) {
     try {
-      if (a === 'ai-again') { const S = chosen(); if (!S.length) return; if (!(await CraftNamer.downloaded()) && !confirm(`The AI looks at each picture in this browser (nothing is uploaded). The first time it downloads about ${CraftNamer.MB} MB, then works offline. Go ahead?`)) return; await sortWithAI(S, { again: true }); await reload(); return; }
+      if (a === 'ai-again') { const S = chosen(); if (!S.length) return; if (!(await aiOk())) return; await sortWithAI(S, { again: true }); await reload(); return; }
       if (a === 'edit-lists') return editLists();
-      if (a === 'sort-ai') { const S = sel.size ? chosen() : items.filter(needsSort); if (!S.length) return toast('Everything is sorted already.'); if (!(await CraftNamer.downloaded()) && !confirm(`The AI looks at each picture in this browser (nothing is uploaded). The first time it downloads about ${CraftNamer.MB} MB, then works offline. Go ahead?`)) return; await sortWithAI(S); await reload(); return; }
+      if (a === 'sort-ai') { const S = sel.size ? chosen() : items.filter(needsSort); if (!S.length) return toast('Everything is sorted already.'); if (!(await aiOk())) return; await sortWithAI(S); await reload(); return; }
       if (a === 'start') { startOpen = true; render(); return; }
       if (a === 'start-close') { startOpen = false; render(); return; }
       if (a === 'add') return importer([]);
@@ -188,7 +203,7 @@
   $('details').addEventListener('change', async (e) => {
     const f = e.target.dataset.f; if (!f) return; const S = chosen(), v = e.target.value.trim(); if (e.target.tagName === 'SELECT' && S.length > 1 && !v) return;
     const teachIt = S.length === 1 && S[0].vec && ['name', 'category', 'style', 'form'].includes(f);
-    for (const it of S) { if (f === 'name' && v) it.name = v; if (f === 'category') it.category = v; if (f === 'style' || f === 'form') it[f] = v; it.checked = true; if (f === 'tags') it.tags = S.length === 1 ? v.split(',').map((t) => t.trim()).filter(Boolean) : [...new Set([...(it.tags || []), ...v.split(',').map((t) => t.trim()).filter(Boolean)])]; await L.put(it); }
+    for (const it of S) { if (f === 'name' && v) it.name = v; if (f === 'category') it.category = v; if (f === 'style' || f === 'form') it[f] = v; if (['original', 'seen', 'matched', 'description'].includes(f)) it[f] = e.target.value.trim(); it.checked = true; if (f === 'tags') it.tags = S.length === 1 ? v.split(',').map((t) => t.trim()).filter(Boolean) : [...new Set([...(it.tags || []), ...v.split(',').map((t) => t.trim()).filter(Boolean)])]; await L.put(it); }
     if (teachIt) await teach(S[0]);
     await reload(); if (!teachIt && f === 'category' && v && cat !== '*' && cat !== v) toast(`Moved to “${v}”.`);
   });
@@ -290,10 +305,12 @@
           <div class="lists-rows">${l.categories.map((c, i) => `<div class="lists-row" data-i="${i}"><input class="input" data-k="name" value="${esc(c.name)}" aria-label="Category name"><textarea class="input" data-k="words" rows="2" aria-label="Words for ${esc(c.name)}">${esc(c.words.join(', '))}</textarea><button class="btn ghost sm" type="button" data-l="del" title="Remove this category (its pictures become Not sorted yet)">✕</button></div>`).join('')}</div>
           <button class="btn outline" type="button" data-l="add">Add a category</button>`
         : `<p class="hint">One per line.</p><textarea class="input lists-one" data-k="${tab}" rows="14">${esc(l[tab].join('\n'))}</textarea>`}
+        <label class="check"><input type="checkbox" data-describe ${describeOn() ? 'checked' : ''}> Describe each picture (Florence-2, about 250 MB once): better names for close things like a stagecoach and a wagon, a second or two per picture</label>
         <p class="hint" data-lessons>The AI also learns from your corrections (a name, category, style or form you change, or a guess you pick): pictures that look like a corrected one get your answer.</p>
         <div class="lists-foot"><button class="btn ghost" type="button" data-l="reset">Back to the starting lists</button><button class="btn ghost" type="button" data-l="forget">Forget my corrections</button><span class="grow"></span><button class="btn primary" type="button" data-l="save">Save the lists</button></div></div>`;
     };
     const read = () => { box.querySelectorAll('.lists-row').forEach((r) => { const c = l.categories[+r.dataset.i]; c.name = r.querySelector('[data-k=name]').value.trim(); c.words = r.querySelector('[data-k=words]').value.split(/[,\n]+/).map((w) => w.trim()).filter(Boolean); }); const one = box.querySelector('.lists-one'); if (one) l[one.dataset.k] = one.value.split('\n').map((w) => w.trim()).filter(Boolean); };
+    box.addEventListener('change', (e) => { if (e.target.matches('[data-describe]')) { try { localStorage.setItem('clipartcraft-describe', e.target.checked ? '1' : '0'); } catch (err) { /* blocked */ } } });
     box.addEventListener('click', async (e) => {
       const t = e.target.closest('[data-tab]'), b = e.target.closest('[data-l]');
       if (t) { read(); tab = t.dataset.tab; paint(); return; }

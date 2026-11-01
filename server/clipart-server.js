@@ -67,7 +67,7 @@ function saveSettings(s) { try { fs.writeFileSync(SETTINGS, GUARD + JSON.stringi
 
 // ------------------------------------------------------------------ the item: what every database keeps
 // Columns are plain text and numbers so SQLite, MySQL and MariaDB hold them the same way.
-const COLS = ['id', 'type', 'name', 'category', 'style', 'form', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash', 'added', 'changed', 'files'];
+const COLS = ['id', 'type', 'name', 'original', 'seen', 'matched', 'category', 'style', 'form', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash', 'added', 'changed', 'files'];
 const FILE_KINDS = ['png', 'svg', 'anim', 'orig', 'thumb', 'model']; // the files one item may have (model: a 3D mesh)
 const TYPES = ['clipart', 'model']; // what an item is: clip art, or a 3D model (its png/thumb are pictures of it)
 const MIME = { png: 'image/png', svg: 'image/svg+xml', gif: 'image/gif', webp: 'image/webp', apng: 'image/apng', jpg: 'image/jpeg', jpeg: 'image/jpeg', avif: 'image/avif', bmp: 'image/bmp', ico: 'image/x-icon', tif: 'image/tiff', tiff: 'image/tiff', json: 'application/json', zip: 'application/zip', glb: 'model/gltf-binary', gltf: 'model/gltf+json', obj: 'model/obj', stl: 'model/stl', ply: 'application/ply', '3mf': 'model/3mf' };
@@ -87,8 +87,8 @@ async function uniqueName(db, name, id) {
 
 // ------------------------------------------------------------------ databases (drivers): sqlite, mysql/mariadb, json
 // columns added since the first version: an older database gets them when it is opened
-const ADDED = ['type VARCHAR(20)', 'style VARCHAR(40)', 'form VARCHAR(40)'];
-const SCHEMA = (big) => `CREATE TABLE IF NOT EXISTS items (id VARCHAR(40) PRIMARY KEY, type VARCHAR(20), name VARCHAR(200) NOT NULL, category VARCHAR(200), style VARCHAR(40), form VARCHAR(40), tags ${big}, description ${big},
+const ADDED = ['type VARCHAR(20)', 'style VARCHAR(40)', 'form VARCHAR(40)', 'original VARCHAR(200)', 'seen VARCHAR(200)', 'matched VARCHAR(200)'];
+const SCHEMA = (big) => `CREATE TABLE IF NOT EXISTS items (id VARCHAR(40) PRIMARY KEY, type VARCHAR(20), name VARCHAR(200) NOT NULL, original VARCHAR(200), seen VARCHAR(200), matched VARCHAR(200), category VARCHAR(200), style VARCHAR(40), form VARCHAR(40), tags ${big}, description ${big},
   kind VARCHAR(20), width INTEGER, height INTEGER, frames INTEGER, colours INTEGER, source VARCHAR(500), author VARCHAR(200), licence VARCHAR(200),
   hash VARCHAR(64), added VARCHAR(40), changed VARCHAR(40), files ${big})`;
 
@@ -112,7 +112,7 @@ function sqliteDb(dir) {
 }
 // a search: every word must be found in the name, tags, category or description
 function filter(text, category, type) {
-  const w = [], a = []; if (type) { w.push("COALESCE(type, 'clipart') = ?"); a.push(type); } for (const word of String(text).toLowerCase().split(/\s+/).filter(Boolean)) { w.push("LOWER(CONCAT_WS(' ', name, tags, category, style, form, description)) LIKE ?"); a.push(`%${word}%`); }
+  const w = [], a = []; if (type) { w.push("COALESCE(type, 'clipart') = ?"); a.push(type); } for (const word of String(text).toLowerCase().split(/\s+/).filter(Boolean)) { w.push("LOWER(CONCAT_WS(' ', name, original, seen, matched, tags, category, style, form, description)) LIKE ?"); a.push(`%${word}%`); }
   if (category !== null && category !== undefined) { w.push("COALESCE(category, '') = ?"); a.push(category); }
   return [w.length ? 'WHERE ' + w.join(' AND ') : '', a];
 }
@@ -156,7 +156,7 @@ function jsonDb(dir) {
   const save = () => fs.writeFileSync(f, JSON.stringify({ library: lib.library, made: new Date().toISOString(), by: 'Craft clip-art server', items: items.map((it) => ({ ...it, ...it.files, files: undefined })) }, null, 1));
   return {
     kind: 'json', where: dir, filesDir: dir, named: true,
-    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0 } = {}) { const words = String(text).toLowerCase().split(/\s+/).filter(Boolean), m = items.filter((it) => (category === null || category === undefined || (it.category || '') === category) && words.every((w) => [it.name, (it.tags || []).join(' '), it.category, it.style, it.form, it.description].join(' ').toLowerCase().includes(w))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })); return { total: m.length, items: m.slice(+offset, +offset + +limit) }; },
+    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0 } = {}) { const words = String(text).toLowerCase().split(/\s+/).filter(Boolean), m = items.filter((it) => (category === null || category === undefined || (it.category || '') === category) && words.every((w) => [it.name, it.original, it.seen, it.matched, (it.tags || []).join(' '), it.category, it.style, it.form, it.description].join(' ').toLowerCase().includes(w))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })); return { total: m.length, items: m.slice(+offset, +offset + +limit) }; },
     async get(id) { return items.find((it) => it.id === id); },
     async byName(name) { return items.find((it) => it.name.toLowerCase() === String(name).toLowerCase()); },
     async namesLike(base) { const b = base.toLowerCase(); return items.filter((it) => it.name.toLowerCase() === b || it.name.toLowerCase().startsWith(b + '_')); },

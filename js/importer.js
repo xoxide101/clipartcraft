@@ -110,7 +110,7 @@
     if (!N()) return; aiState = 'loading'; render();
     try {
       await N().ready((got, total, what) => { aiState = what === 'words' ? `Learning the words… ${got} of ${total}` : `Getting the AI (once, about ${N().MB} MB)… ${Math.round(got / 1048576)} of ${Math.round(total / 1048576)} MB`; status(); });
-      let k = 0; for (const p of pages) { k++; if (p.ai) continue; aiState = `Looking at ${k} of ${pages.length}…`; status(); p.ai = await N().name(result(p)); if (!p.seam) p.form = p.ai.form === 'tile' ? 'background' : p.ai.form; p.style = p.ai.style; p.category = p.ai.category; p.tags = [...new Set([...p.ai.tags, ...p.tags])]; renderCard(p); if (p.id === cur) renderSide(); }
+      let k = 0; for (const p of pages) { k++; if (p.ai) continue; aiState = `Looking at ${k} of ${pages.length}…`; status(); p.ai = await N().name(result(p), { describe: (() => { try { return localStorage.getItem('clipartcraft-describe') !== '0'; } catch (e) { return true; } })(), lessons: await L.lessons() }); if (!p.seam) p.form = p.ai.form === 'tile' ? 'background' : p.ai.form; p.style = p.ai.style; p.category = p.ai.category; p.tags = [...new Set([...p.ai.tags, ...p.tags])]; renderCard(p); if (p.id === cur) renderSide(); }
       aiState = 'done';
       if (pages.some((p) => !p.ai)) return nameAll(); // cropped or turned while it was looking: look again
     } catch (e) { console.error(e); aiState = ''; opts.toast && opts.toast('The AI could not be used: ' + (e.message || e) + '. Names come from the file names.'); S.naming = 'file'; }

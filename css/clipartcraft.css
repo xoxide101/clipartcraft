@@ -211,3 +211,14 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 .lists-row { display: grid; grid-template-columns: 200px 1fr auto; gap: 6px; align-items: start; }
 .lists-row textarea { height: auto; min-height: 30px; padding: 6px 8px; font-size: 12px; }
 .lists-one { height: auto; padding: 8px; }
+
+.names-more summary { cursor: pointer; font-size: 12px; color: var(--muted); padding: 2px 0 6px; }
+.names-more { display: grid; gap: 8px; }
+.names-more textarea { height: auto; padding: 6px 8px; }
+
+/* the status bar keeps still while numbers change: even-width digits and room for each part */
+.statusbar { font-variant-numeric: tabular-nums; }
+.statusbar > span:not(.grow):not(:empty) { min-width: 8.5em; }
+.statusbar > span:empty { display: none; }
+/* Sort with AI fits the left panel */
+.sort-ai { display: block; width: calc(100% - 16px); text-align: center; white-space: normal; height: auto; min-height: 30px; padding: 5px 8px; }

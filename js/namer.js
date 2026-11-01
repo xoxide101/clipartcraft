@@ -86,7 +86,7 @@
     return (wordsP = wordsP || (async () => {
       const all = [...WORDS.map((w) => `an illustration of a ${w}`), ...EXTRA.map(([, t]) => t)];
       try { const c = await caches.open('clipartcraft-ai'), hit = await c.match(WKEY()); if (hit) return split(new Float32Array(await hit.arrayBuffer()), all.length); } catch (e) { /* no cache */ }
-      const T = await lib(), tok = await T.AutoTokenizer.from_pretrained(MODEL), model = await T.CLIPTextModelWithProjection.from_pretrained(MODEL, { device: 'wasm', dtype: 'q8' });
+      const { tok, model } = await textModel();
       const out = []; for (let i = 0; i < all.length; i += 48) { const part = all.slice(i, i + 48), { text_embeds: e } = await model(tok(part, { padding: true, truncation: true })), d = e.dims[1]; for (let k = 0; k < part.length; k++) out.push(norm(e.data.slice(k * d, (k + 1) * d))); if (progress) progress(Math.min(i + 48, all.length), all.length, 'words'); }
       const flat = new Float32Array(out.length * out[0].length); out.forEach((v, i) => flat.set(v, i * v.length));
       try { const c = await caches.open('clipartcraft-ai'); await c.put(WKEY(), new Response(flat.buffer)); } catch (e) { /* not kept */ }
@@ -94,6 +94,50 @@
     })().catch((e) => { wordsP = null; throw e; }));
   }
   const split = (flat, n) => { const d = flat.length / n, v = []; for (let i = 0; i < n; i++) v.push(flat.subarray(i * d, (i + 1) * d)); return { words: v.slice(0, WORDS.length), extra: v.slice(WORDS.length) }; };
+  let textP = null;
+  const textModel = () => (textP = textP || (async () => { const T = await lib(); return { tok: await T.AutoTokenizer.from_pretrained(MODEL), model: await T.CLIPTextModelWithProjection.from_pretrained(MODEL, { device: 'wasm', dtype: 'q8' }) }; })().catch((e) => { textP = null; throw e; }));
+  async function embedText(t) { const { tok, model } = await textModel(), { text_embeds: e } = await model(tok([t], { padding: true, truncation: true })); return norm(e.data); }
+
+  // ------------------------------------------------------------------ describing a picture (Florence-2, MIT): a sentence
+  // about what it shows ("a stagecoach with a driver's bench"), from which the subject is taken. On the graphics card
+  // when there is one (WebGPU), on the processor otherwise. About 250 MB the first time.
+  const DESCRIBER = 'onnx-community/Florence-2-base-ft';
+  let descP = null;
+  async function describer(progress) {
+    return (descP = descP || (async () => {
+      const T = await lib(), cb = (p) => { if (progress && p.status === 'progress' && p.total) progress(p.loaded, p.total, p.file); };
+      let gpu = false; try { gpu = !!(navigator.gpu && (await navigator.gpu.requestAdapter())); } catch (e) { gpu = false; }
+      const dtype = gpu ? { embed_tokens: 'fp16', vision_encoder: 'fp16', encoder_model: 'q4', decoder_model_merged: 'q4' } : 'q8';
+      const model = await T.Florence2ForConditionalGeneration.from_pretrained(DESCRIBER, { dtype, device: gpu ? 'webgpu' : 'wasm', progress_callback: cb });
+      return { model, processor: await T.AutoProcessor.from_pretrained(DESCRIBER), tokenizer: await T.AutoTokenizer.from_pretrained(DESCRIBER), gpu };
+    })().catch((e) => { descP = null; throw e; }));
+  }
+  async function describe(src, { progress, detail = false } = {}) {
+    const { model, processor, tokenizer } = await describer(progress), T = await lib();
+    const c = document.createElement('canvas'), k = Math.min(1, 768 / Math.max(src.width, src.height)); c.width = Math.max(1, Math.round(src.width * k)); c.height = Math.max(1, Math.round(src.height * k));
+    const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); x.drawImage(src instanceof ImageData ? canvasOf(src) : src, 0, 0, c.width, c.height);
+    const img = T.RawImage.fromCanvas(c), task = detail ? '<DETAILED_CAPTION>' : '<CAPTION>';
+    const ids = await model.generate({ ...tokenizer(processor.construct_prompts(task)), ...(await processor(img)), max_new_tokens: 60 });
+    const text = tokenizer.batch_decode(ids, { skip_special_tokens: false })[0];
+    return String(processor.post_process_generation(text, task, img.size)[task] || '').trim();
+  }
+  // the subject of a description: "An illustration of an old stagecoach with four wheels." → "old stagecoach"
+  const KINDS = /^(?:(?:a|an|the|this|that)\s+)?(?:(?:image|picture|drawing|illustration|cartoon|clip ?art|clipart|painting|photo(?:graph)?|icon|sketch|logo|vector|graphic|rendering|render|close[- ]up|view|pixel art|line drawing)\s+(?:of\s+)?)+/i;
+  const STOP = new Set(['with', 'on', 'in', 'at', 'that', 'which', 'who', 'is', 'are', 'has', 'have', 'sitting', 'standing', 'holding', 'being', 'pulled', 'and', 'against', 'over', 'under', 'next', 'near', 'from', 'by', 'for', 'to', 'of', 'while', 'as', 'its', 'their', 'his', 'her']);
+  function subjectOf(caption) {
+    let t = String(caption).toLowerCase().replace(/[.,;:!?"“”()]/g, ' ').replace(/\s+/g, ' ').trim();
+    t = t.replace(/^(?:in\s+)?(?:the|this)\s+(?:image|picture|illustration|drawing|photo)\s+(?:shows|depicts|features|contains|is of|is)\s+/, '');
+    for (let i = 0; i < 3; i++) t = t.replace(KINDS, '').replace(/^(?:a|an|the)\s+/, '');
+    // up to the first word that is not part of the thing itself (with, on, holding, filled…)
+    const words = []; for (const w of t.split(' ')) { if (!w || STOP.has(w) || (words.length && /(?:ing|ed)$/.test(w) && w.length > 4)) break; words.push(w); if (words.length >= 4) break; }
+    // age, size, colour and the like belong in the tags, not the name
+    const SOFT = /^(?:old|older|vintage|antique|retro|modern|new|little|small|tiny|large|big|huge|cute|simple|plain|white|black|grey|gray|red|blue|green|yellow|orange|purple|pink|brown|colou?rful|bright|dark|light)$/;
+    while (words.length > 1 && SOFT.test(words[0])) words.shift();
+    return words.join(' ').trim();
+  }
+  async function describeReady(progress) { await describer(progress); return true; }
+  async function describerDownloaded() { try { const c = await caches.open('transformers-cache'); return !!(await c.keys()).find((r) => r.url.includes('Florence-2')); } catch (e) { return false; } }
+
   async function ready(progress) { await vision(progress); await words(progress); return true; }
   async function downloaded() { try { const c = await caches.open('transformers-cache'); return !!(await c.keys()).find((r) => r.url.includes('clip-vit-base-patch32') && r.url.includes('vision_model')); } catch (e) { return false; } }
 
@@ -107,7 +151,7 @@
   const canvasOf = (img) => { const c = document.createElement('canvas'); c.width = img.width; c.height = img.height; c.getContext('2d').putImageData(img, 0, 0); return c; };
   // lessons: [{ vec, name, category, style, form }] — the user's corrections, each with how the picture looked (vec).
   // A new picture that looks very like one of them takes the user's answer; one that looks a bit like it gets it as a guess.
-  async function name(src, { progress, lessons = [] } = {}) {
+  async function name(src, { progress, lessons = [], describe: useDescriber = false } = {}) {
     const [{ proc, model }, W] = await Promise.all([vision(progress), words(progress)]), T = await lib();
     const c = prepare(src), { image_embeds: e } = await model(await proc(T.RawImage.fromCanvas(c))), q = norm(e.data);
     const dot = (v) => { let s = 0; for (let k = 0; k < v.length; k++) s += v[k] * q[k]; return s; };
@@ -117,6 +161,21 @@
     const best = top[0], near = top.filter((t) => t.score > best.score - 0.02).map((t) => t.word);
     const colours = colourWords(src instanceof ImageData ? src : c.getContext('2d').getImageData(0, 0, 224, 224));
     const out = { name: cap(best.word), category: best.category, style, form, era, tags: [...new Set([...near, ...colours, ...(era === 'vintage' ? ['vintage'] : [])])], words: top, colours, vec: Array.from(q, (v) => +v.toFixed(5)) };
+    if (useDescriber) {
+      try {
+        const caption = await describe(src, { progress }), subject = subjectOf(caption);
+        out.description = caption;
+        if (subject) {
+          // the subject's category: the word on the lists nearest to it in meaning (and how near)
+          const sv = await embedText('a picture of a ' + subject), ws = W.words.map((v) => { let t = 0; for (let k2 = 0; k2 < v.length; k2++) t += v[k2] * sv[k2]; return t; });
+          let bi = 0; for (let i = 1; i < ws.length; i++) if (ws[i] > ws[bi]) bi = i;
+          const cat = ws[bi] > 0.78 ? CAT[bi] : best.category;
+          Object.assign(out, { name: cap(subject), category: cat, described: true });
+          out.words = [{ word: subject, category: cat, score: +ws[bi].toFixed(3), described: true }, ...top.filter((w) => w.word !== subject)].slice(0, 6);
+          out.tags = [...new Set([...subject.split(' ').filter((w) => w.length > 2), ...out.tags])];
+        }
+      } catch (e) { console.warn('Describing failed; the matched word is used', e); }
+    }
     let lesson = null, ls = -1; for (const l of lessons) { if (!l.vec || l.vec.length !== q.length) continue; const v = dot(l.vec); if (v > ls) { ls = v; lesson = l; } }
     if (lesson && ls > 0.86) { Object.assign(out, { name: lesson.name || out.name, category: lesson.category || out.category, style: lesson.style || out.style, form: lesson.form || out.form, learnt: +ls.toFixed(3) }); }
     if (lesson && ls > 0.78) out.words = [{ word: lesson.name || out.name, category: lesson.category || out.category, score: +ls.toFixed(3), learnt: true }, ...out.words.filter((w) => w.word.toLowerCase() !== String(lesson.name || '').toLowerCase())].slice(0, 6);
@@ -149,7 +208,7 @@
     return [...n].filter(([, k]) => k / Math.max(1, total) > 0.12).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([w]) => w);
   }
 
-  window.CraftNamer = { ready, downloaded, name, fromFile, colourWords, configure, learnWord, MB,
+  window.CraftNamer = { ready, downloaded, name, describe, describeReady, describerDownloaded, subjectOf, fromFile, colourWords, configure, learnWord, MB, DESCRIBER_MB: 250,
     get WORDS() { return WORDS; }, get CATEGORIES() { return cats.map((c) => c.name); }, get STYLES() { return styles.map((x) => x[0]); }, get FORMS() { return forms.map((x) => x[0]); },
     lists: () => { const all = new Set(cats.flatMap((c) => c.words.map((w) => w.toLowerCase()))); return { categories: cats.map((c) => ({ name: c.name, words: c.words.slice() })), styles: styles.map((x) => x[0]), forms: forms.map((x) => x[0]), removed: START.categories.flatMap((c) => c.words).filter((w) => !all.has(w.toLowerCase())) }; },
     startingLists: () => JSON.parse(JSON.stringify(START)) };
