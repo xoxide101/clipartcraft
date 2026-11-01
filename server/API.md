@@ -4,24 +4,37 @@ The same API is served by `clipart-server.js` (Node 22.5+, on a PC or a Linux co
 (any web host with PHP 7.4+ and PDO). Apps can't tell them apart. Every answer allows any origin (CORS), so pages
 opened from disk can use it.
 
-## Libraries and databases
+## Setting it up: …/setup
 
-A library is a database for the names, tags and properties plus a folder for the files. Several libraries can sit
-side by side (`?library=name` on any call; the first one is the main one).
+Open `http://server:8790/setup` (Node) or `…/setup` beside `clipart-server.php` (PHP). The first time it asks for an
+admin user ID and password (only a salted PBKDF2-SHA256 hash is kept). Then:
 
-| Database | Node (`clipart-server.json`) | PHP (`clipart-config.php`) |
-|---|---|---|
-| SQLite (one file, nothing to set up) | `"main": "sqlite:libraries/main"` | `'dsn' => 'sqlite:libraries/main/clipart.sqlite'` |
-| MySQL / MariaDB | `"main": "mysql://user:pass@host/clipart?files=libraries/main/files"` (needs `npm install mysql2`) | `'dsn' => 'mysql:host=…;dbname=clipart;charset=utf8mb4', 'user' => …, 'password' => …` |
-| JSON + files (export, import, moving) | `"main": "json:folder"` | via export/import ZIP |
+- **Libraries and their databases**: one or more, each in **SQLite** (one file, nothing to set up), **MySQL / MariaDB**
+  (host, port, database name, user ID, password, pictures folder) or, on the Node server, a **JSON + files** folder.
+  **Test** connects (and makes a MySQL/MariaDB database the first time, if the login may); one library is the **main**
+  one (its links are `/clipart/Name.png`, the others `/clipart/library/Name.png`).
+- **Copy a library** from one to another: the way to move to a new database or server.
+- The **key for apps**, and the admin login.
 
-Moving a library between any of them: `node clipart-server.js copy FROM TO`, e.g.
-`copy sqlite:libraries/main json:backup`, then `copy json:backup mysql://…`. The export ZIP is the same JSON + files.
+Everything is kept in `clipart-settings.php` beside the server: the same file for Node and PHP (its first line stops PHP
+showing it; `.htaccess` blocks it too). Database passwords are kept there, so the server can connect; they are never
+sent back to the page. The Node server needs `npm install mysql2` for MySQL/MariaDB; PHP has it built in (PDO).
+
+On the command line (Node): `node clipart-server.js copy FROM TO`, where FROM and TO are library names from the
+settings, or `sqlite:folder`, `json:folder`, `mysql://user:pass@host:port/db?files=folder`.
 
 ## Who may change things
 
-Anyone may look (guest first). Changes are allowed from the same computer, or with the header `x-craft-key: KEY`
-(the key is in `clipart-server.json` / `clipart-config.php`; the apps ask for it once).
+Anyone may look (guest first). Changes are allowed from the same computer, with the header `x-craft-key: KEY` (the key
+is on the setup page; the apps ask for it once), or with the admin login (`x-craft-login: base64(user:password)`).
+
+| Setup call | |
+|---|---|
+| `GET /api/setup` | the settings (no passwords), or `{ needAdmin: true }` the first time |
+| `POST /api/setup/admin` | `{ user, password }`: make (first time) or change the admin login |
+| `PUT /api/setup` | `{ main, connections: [...] }`; a connection without `password` keeps its saved one |
+| `POST /api/setup/test` | `{ connection }` → `{ ok, items, where }` or `{ ok: false, error }` |
+| `POST /api/setup/copy` | `{ from, to }` → `{ copied }` |
 
 ## An item
 

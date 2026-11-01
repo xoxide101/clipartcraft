@@ -106,7 +106,7 @@
     } catch (e) {
       if (e && e.name === 'AbortError') return;
       // a server elsewhere wants its key before anything changes: ask once, keep it, try again
-      if (e && e.status === 403 && !act.asked) { const k = prompt('This clip-art server needs its key to change the library (it is in clipart-config.php or clipart-server.json on the server):', ''); if (k) { await L.serverKey(k.trim()); act.asked = true; try { return await act(a); } finally { act.asked = false; } } }
+      if (e && e.status === 403 && !act.asked) { const k = prompt('This clip-art server needs its key to change the library (it is on the server’s setup page, …/setup):', ''); if (k) { await L.serverKey(k.trim()); act.asked = true; try { return await act(a); } finally { act.asked = false; } } }
       busy(); fail(e);
     }
   }

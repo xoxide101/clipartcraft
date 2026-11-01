@@ -17,14 +17,44 @@ const http = require('node:http'), fs = require('node:fs'), path = require('node
 const VERSION = '1.0';
 const HERE = __dirname;
 
-// ------------------------------------------------------------------ settings (clipart-server.json beside this file)
-function settings() {
-  const f = path.join(HERE, 'clipart-server.json'); let s = {};
-  try { s = JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) { /* first run */ }
-  s = { port: 8790, share: false, key: '', libraries: { main: 'sqlite:libraries/main' }, ...s };
-  if (!s.key) { s.key = crypto.randomBytes(12).toString('hex'); try { fs.writeFileSync(f, JSON.stringify(s, null, 2)); } catch (e) { /* read-only */ } }
-  return s;
+// ------------------------------------------------------------------ settings: clipart-settings.php beside this file
+// The same file as the PHP server's, so the folder works under either: a first line that stops PHP showing it, then JSON.
+// { key, port, share, main, connections: [{ id, name, db: 'sqlite'|'mysql'|'json', path, host, port, database, user,
+//   password, files }] }. Each connection is a library; the setup page (/setup) edits them.
+const SETTINGS = path.join(HERE, 'clipart-settings.php'), GUARD = '<?php exit; ?>\n';
+const cid = () => 'k' + crypto.randomBytes(4).toString('hex');
+// an old-style spec ('sqlite:folder', 'json:folder', 'mysql://user:pass@host:port/db?files=folder') as a connection
+function connOf(name, spec) {
+  if (/^(mysql|mariadb):/i.test(spec)) { const u = new URL(spec.replace(/^mariadb:/i, 'mysql:')); return { id: cid(), name, db: 'mysql', host: u.hostname, port: +u.port || 3306, database: decodeURIComponent(u.pathname.slice(1)), user: decodeURIComponent(u.username), password: decodeURIComponent(u.password), files: u.searchParams.get('files') || '' }; }
+  if (/^json:/i.test(spec)) return { id: cid(), name, db: 'json', path: spec.slice(5) };
+  return { id: cid(), name, db: 'sqlite', path: spec.replace(/^sqlite:/i, '') };
 }
+// a connection as the spec openDb() takes
+function specOf(c) {
+  if (c.db === 'mysql') return `mysql://${encodeURIComponent(c.user || '')}:${encodeURIComponent(c.password || '')}@${c.host || '127.0.0.1'}:${+c.port || 3306}/${encodeURIComponent(c.database || 'clipart')}?files=${encodeURIComponent(c.files || path.join('libraries', c.name, 'files'))}`;
+  return `${c.db === 'json' ? 'json' : 'sqlite'}:${c.path || path.join('libraries', c.name)}`;
+}
+function settings() {
+  let s = null;
+  try { s = JSON.parse(fs.readFileSync(SETTINGS, 'utf8').replace(/^<\?php[^\n]*\n/, '')); } catch (e) { /* first run */ }
+  if (!s) { // the old clipart-server.json, moved over once
+    let old = {}; try { old = JSON.parse(fs.readFileSync(path.join(HERE, 'clipart-server.json'), 'utf8')); } catch (e) { /* none */ }
+    s = { port: old.port || 8790, share: !!old.share, key: old.key || '', main: 'main', connections: Object.entries(old.libraries || { main: 'sqlite:libraries/main' }).map(([n, spec]) => connOf(n, spec)) };
+  }
+  s = { port: 8790, share: false, key: '', main: '', connections: [], ...s };
+  if (!s.connections.length) s.connections.push({ id: cid(), name: 'main', db: 'sqlite', path: 'libraries/main' });
+  if (!s.connections.some((c) => c.name === s.main)) s.main = s.connections[0].name;
+  if (!s.key) s.key = crypto.randomBytes(12).toString('hex');
+  saveSettings(s); return s;
+}
+// the admin login: only a salted hash is kept (PBKDF2-SHA256, 100,000 rounds; PHP checks the same with hash_pbkdf2)
+function makeLogin(user, password) { const salt = crypto.randomBytes(16).toString('hex'); return { user, salt, rounds: 100000, hash: crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256').toString('hex') }; }
+function checkLogin(a, user, password) {
+  if (!a || String(user).toLowerCase() !== String(a.user).toLowerCase()) return false;
+  const h = crypto.pbkdf2Sync(password, a.salt, a.rounds || 100000, 32, 'sha256'), want = Buffer.from(a.hash, 'hex');
+  return h.length === want.length && crypto.timingSafeEqual(h, want);
+}
+function saveSettings(s) { try { fs.writeFileSync(SETTINGS, GUARD + JSON.stringify(s, null, 2)); return true; } catch (e) { return false; } }
 
 // ------------------------------------------------------------------ the item: what every database keeps
 // Columns are plain text and numbers so SQLite, MySQL and MariaDB hold them the same way.
@@ -83,7 +113,15 @@ function mysqlDb(url) {
   let mysql; try { mysql = require('mysql2/promise'); } catch (e) { throw new Error('MySQL/MariaDB needs the mysql2 package: run "npm install mysql2" in the server folder.'); }
   const u = new URL(url), files = u.searchParams.get('files') || path.join('libraries', decodeURIComponent(u.pathname.slice(1)) || 'mysql', 'files'); u.search = '';
   const filesDir = path.resolve(HERE, files); fs.mkdirSync(filesDir, { recursive: true });
-  const pool = mysql.createPool({ uri: u.toString(), charset: 'utf8mb4' }), ready = pool.query(SCHEMA('MEDIUMTEXT')).then(() => Promise.all(ADDED.map((c) => pool.query(`ALTER TABLE items ADD COLUMN ${c}`).catch(() => {})))).catch((e) => { throw new Error('The MySQL/MariaDB database could not be opened: ' + e.message); });
+  // the first time the database may not be there yet: it is made (if this login may), then the table in it
+  const dbName = decodeURIComponent(u.pathname.slice(1)), made = (async () => {
+    if (!dbName) throw new Error('The MySQL/MariaDB address needs a database name: mysql://user:pass@host:port/clipart');
+    const s = new URL(u.toString()); s.pathname = '/'; const c = await mysql.createConnection({ uri: s.toString(), charset: 'utf8mb4' });
+    try { await c.query(`CREATE DATABASE IF NOT EXISTS \`${dbName.replace(/`/g, '``')}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`); }
+    catch (e) { const [rows] = await c.query('SHOW DATABASES LIKE ?', [dbName]); if (!rows.length) throw new Error(`The database “${dbName}” does not exist yet, and this login may not make it (${e.message}). Make it in phpMyAdmin, or use a login that may create databases.`); }
+    finally { await c.end(); }
+  })();
+  const pool = mysql.createPool({ uri: u.toString(), charset: 'utf8mb4' }), ready = made.then(() => pool.query(SCHEMA('MEDIUMTEXT'))).then(() => Promise.all(ADDED.map((c) => pool.query(`ALTER TABLE items ADD COLUMN ${c}`).catch(() => {})))).catch((e) => { throw new Error('The MySQL/MariaDB database could not be opened: ' + e.message); });
   const q = async (sql, a = []) => { await ready; return (await pool.query(sql, a))[0]; };
   return {
     kind: 'mysql', where: `${u.host}${u.pathname}`, filesDir,
@@ -203,36 +241,83 @@ async function importEntries(lib, entries, { category } = {}) {
 
 // ------------------------------------------------------------------ http
 function serve(S) {
-  const libs = new Map(Object.entries(S.libraries).map(([n, spec]) => [n, library(n, spec)]));
-  const libOf = (n) => { const l = libs.get(n || 'main') || libs.values().next().value; if (!l) throw Object.assign(new Error('No such library.'), { code: 404 }); return l; };
+  // the libraries, opened when first used (a database that is down does not stop the others)
+  let libs = new Map();
+  const libOf = (n) => {
+    const c = S.connections.find((x) => x.name === (n || S.main)) || S.connections.find((x) => x.name === S.main); if (!c) throw Object.assign(new Error('No such library.'), { code: 404 });
+    if (!libs.has(c.name)) libs.set(c.name, library(c.name, specOf(c))); return libs.get(c.name);
+  };
+  const closeAll = async () => { const old = [...libs.values()]; libs = new Map(); for (const l of old) try { await l.db.close(); } catch (e) { /* gone */ } };
   const base = (req) => `http://${req.headers.host}`;
   // what the API returns for an item: its fields and a real link for each picture
-  const shown = (req, lib, it) => { if (!it) return null; const L = lib.name === 'main' ? '' : encodeURIComponent(lib.name) + '/', nm = encodeURIComponent(it.name), links = {};
+  const shown = (req, lib, it) => { if (!it) return null; const L = lib.name === S.main ? '' : encodeURIComponent(lib.name) + '/', nm = encodeURIComponent(it.name), links = {};
     for (const k of Object.keys(it.files || {})) links[k] = `${base(req)}/clipart/${L}${nm}${k === 'png' || k === 'svg' ? '' : '.' + k}.${extOf(it.files[k])}`;
     return { ...it, files: undefined, links, library: lib.name }; };
   const body = (req) => new Promise((ok, no) => { const c = []; let n = 0; req.on('data', (d) => { n += d.length; if (n > 200e6) { no(Object.assign(new Error('Too big.'), { code: 413 })); req.destroy(); } else c.push(d); }); req.on('end', () => ok(Buffer.concat(c))); req.on('error', no); });
   const send = (res, code, data, type = 'application/json; charset=utf-8', extra = {}) => { res.writeHead(code, { 'Content-Type': type, 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'GET,POST,PATCH,PUT,DELETE,OPTIONS', 'Access-Control-Allow-Private-Network': 'true', ...extra }); res.end(Buffer.isBuffer(data) || typeof data === 'string' ? data : JSON.stringify(data)); };
   const local = (req) => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
-  const mayWrite = (req) => local(req) || req.headers['x-craft-key'] === S.key;
+  // the admin's login, sent with each setup call as x-craft-login: base64("user:password")
+  const loginOk = (req) => { if (!S.admin || !req.headers['x-craft-login']) return false; const t = Buffer.from(String(req.headers['x-craft-login']), 'base64').toString('utf8'), i = t.indexOf(':'); return i > 0 && checkLogin(S.admin, t.slice(0, i), t.slice(i + 1)); };
+  const mayWrite = (req) => local(req) || req.headers['x-craft-key'] === S.key || loginOk(req);
 
   return http.createServer(async (req, res) => {
     const u = new URL(req.url, 'http://x'), p = decodeURIComponent(u.pathname).split('/').filter(Boolean), Q = Object.fromEntries(u.searchParams);
     try {
       if (req.method === 'OPTIONS') return send(res, 204, '');
-      if (req.method !== 'GET' && req.method !== 'HEAD' && !mayWrite(req)) return send(res, 403, { error: 'Only this computer, or a program with the key, can change the library.' });
+      // the setup has its own login (below); everything else that changes the library needs this computer, the key or that login
+      if (req.method !== 'GET' && req.method !== 'HEAD' && !(p[0] === 'api' && p[1] === 'setup') && !mayWrite(req)) return send(res, 403, { error: 'Only this computer, or a program with the key, can change the library.' });
       // pictures: /clipart/[library/]Name.png | Name.svg | Name.thumb.png | Name.anim.gif
       if (p[0] === 'clipart' && p.length >= 2) {
-        const lib = p.length > 2 ? libOf(p[1]) : libOf('main'), f = p[p.length - 1], m = f.match(/^(.*?)(?:\.(thumb|anim|orig|model))?\.([a-z0-9]+)$/i); if (!m) return send(res, 404, { error: 'No such picture.' });
+        const lib = p.length > 2 ? libOf(p[1]) : libOf(S.main), f = p[p.length - 1], m = f.match(/^(.*?)(?:\.(thumb|anim|orig|model))?\.([a-z0-9]+)$/i); if (!m) return send(res, 404, { error: 'No such picture.' });
         const it = (await lib.db.byName(m[1])) || (await lib.db.get(m[1])), k = m[2] || (m[3].toLowerCase() === 'svg' ? 'svg' : 'png');
         const b = it && (lib.readFile(it, k) || (k === 'thumb' && lib.readFile(it, 'png'))); if (!b) return send(res, 404, { error: 'No such picture.' });
         return send(res, 200, b, MIME[extOf((it.files[k] || it.files.png))] || 'application/octet-stream', { 'Cache-Control': 'no-cache' });
+      }
+      if (p[0] === 'setup' && p.length === 1) return send(res, 200, fs.readFileSync(path.join(HERE, 'setup.html')), 'text/html; charset=utf-8', { 'Cache-Control': 'no-cache' });
+      // the setup page's calls: the connections (passwords are never sent back), test one, copy one library into another
+      if (p[0] === 'api' && p[1] === 'setup') {
+        // who may: this computer, or the admin's user ID and password (made the first time the page is opened)
+        const j = req.method === 'GET' ? {} : JSON.parse((await body(req)).toString('utf8') || '{}');
+        if (p[2] === 'admin' && req.method === 'POST') {
+          if (S.admin && !local(req) && !loginOk(req)) return send(res, 403, { error: 'Log in first.' });
+          const user = String(j.user || '').trim(); if (!user || String(j.password || '').length < 6) return send(res, 400, { error: 'Give a user ID and a password of at least 6 characters.' });
+          S.admin = makeLogin(user, String(j.password)); if (!saveSettings(S)) return send(res, 500, { error: 'The settings could not be saved (is the server folder read-only?).' });
+          return send(res, 200, { saved: true, user });
+        }
+        if (!S.admin && !local(req)) return send(res, 200, { needAdmin: true, server: 'node' });
+        if (!local(req) && !loginOk(req)) return send(res, 403, { error: 'The user ID or password is not right.', login: true });
+        const hide = (c) => ({ ...c, password: undefined, hasPassword: !!c.password });
+        if (!p[2] && req.method === 'GET') return send(res, 200, { server: 'node', drivers: ['sqlite', 'mysql', 'json'], port: S.port, share: S.share, main: S.main, admin: S.admin ? S.admin.user : '', key: S.key, connections: S.connections.map(hide), file: SETTINGS });
+        const withPassword = (c) => ({ ...c, password: c.password !== undefined ? c.password : (S.connections.find((x) => x.id === c.id) || {}).password || '' });
+        if (!p[2] && req.method === 'PUT') {
+          const list = (j.connections || []).map((c) => withPassword({ ...c, id: c.id || cid(), name: String(c.name || '').trim() }));
+          const bad = list.find((c) => !/^[\w\- ]{1,40}$/.test(c.name)); if (bad) return send(res, 400, { error: `“${bad.name}” cannot be a library name: use letters, numbers, spaces, - and _ (up to 40).` });
+          if (new Set(list.map((c) => c.name.toLowerCase())).size !== list.length) return send(res, 400, { error: 'Two libraries have the same name.' });
+          if (!list.length) return send(res, 400, { error: 'Keep at least one library.' });
+          const restart = (j.port && +j.port !== S.port) || (j.share !== undefined && !!j.share !== S.share);
+          Object.assign(S, { connections: list, main: list.some((c) => c.name === j.main) ? j.main : list[0].name, port: +j.port || S.port, share: j.share !== undefined ? !!j.share : S.share });
+          if (j.key) S.key = String(j.key);
+          await closeAll(); if (!saveSettings(S)) return send(res, 500, { error: 'The settings could not be saved (is the server folder read-only?).' });
+          return send(res, 200, { saved: true, restart, main: S.main, connections: S.connections.map(hide) });
+        }
+        if (p[2] === 'test' && req.method === 'POST') {
+          const c = withPassword(j.connection || {}); let l = null;
+          try { l = library(c.name || 'test', specOf(c)); const r = await l.db.list({ limit: 1 }); return send(res, 200, { ok: true, items: r.total, where: l.db.where, database: l.db.kind }); }
+          catch (e) { return send(res, 200, { ok: false, error: String(e.message || e) }); } finally { if (l) try { await l.db.close(); } catch (e) { /* gone */ } }
+        }
+        if (p[2] === 'copy' && req.method === 'POST') {
+          if (j.from === j.to) return send(res, 400, { error: 'Choose two different libraries.' });
+          for (const w of ['from', 'to']) if (!S.connections.some((c) => c.name === j[w])) return send(res, 400, { error: `There is no library called “${j[w] || ''}” (save the libraries first).` });
+          const n = await copyLibrary(libOf(j.from), libOf(j.to), () => {}); return send(res, 200, { copied: n, from: j.from, to: j.to });
+        }
+        return send(res, 404, { error: 'Not found.' });
       }
       if (p[0] !== 'api') {
         if (!p.length) return send(res, 200, `<!doctype html><meta charset="utf-8"><title>Craft clip-art server</title><body style="font:16px system-ui;margin:2em;max-width:40em"><h1>Craft clip-art server</h1><p>It is running. Open ClipArtCraft and connect to <b>${base(req)}</b>, or see <a href="/api/info">/api/info</a>.</p>`, 'text/html; charset=utf-8');
         return send(res, 404, { error: 'Not found.' });
       }
       const lib = libOf(Q.library), db = lib.db;
-      if (p[1] === 'info') return send(res, 200, { server: 'Craft clip-art server', version: VERSION, api: 1, writable: mayWrite(req), libraries: [...libs.values()].map((l) => ({ name: l.name, database: l.db.kind })) });
+      if (p[1] === 'info') return send(res, 200, { server: 'Craft clip-art server', version: VERSION, api: 1, writable: mayWrite(req), main: S.main, libraries: S.connections.map((c) => ({ name: c.name, database: c.db })) });
       if (p[1] === 'categories') return send(res, 200, await db.categories());
       if (p[1] === 'export.zip') return send(res, 200, await exportZip(lib, { q: Q.q, category: Q.category, type: Q.type }), 'application/zip', { 'Content-Disposition': `attachment; filename="${slug(lib.name)} clip art.zip"` });
       if (p[1] === 'import' && req.method === 'POST') { const made = await importEntries(lib, unzip(await body(req)), { category: Q.category }); return send(res, 200, { added: made.length, items: made.map((it) => shown(req, lib, it)) }); }
@@ -260,13 +345,16 @@ if (require.main === module) {
   const a = process.argv.slice(2);
   if (a[0] === 'copy') {
     if (a.length < 3) { console.log('node clipart-server.js copy FROM TO   (sqlite:folder, json:folder, mysql://user:pass@host/db?files=folder)'); process.exit(1); }
-    (async () => { const from = library('from', a[1]), to = library('to', a[2]); console.log(`Copying ${from.db.kind} ${from.db.where} → ${to.db.kind} ${to.db.where}`); const n = await copyLibrary(from, to); await from.db.close(); await to.db.close(); console.log(`Done: ${n} item${n === 1 ? '' : 's'}.`); })().catch((e) => { console.error(e.message); process.exit(1); });
+    // FROM and TO: a library's name from the settings, or a spec (sqlite:folder, json:folder, mysql://…)
+    const S = settings(), lib = (x) => { const c = S.connections.find((k) => k.name === x); return library(c ? c.name : 'copy', c ? specOf(c) : x); };
+    (async () => { const from = lib(a[1]), to = lib(a[2]); console.log(`Copying ${from.db.kind} ${from.db.where} → ${to.db.kind} ${to.db.where}`); const n = await copyLibrary(from, to); await from.db.close(); await to.db.close(); console.log(`Done: ${n} item${n === 1 ? '' : 's'}.`); })().catch((e) => { console.error(e.message); process.exit(1); });
   } else {
     const S = settings(); if (a.includes('--share')) S.share = true; const pi = a.indexOf('--port'); if (pi >= 0) S.port = +a[pi + 1];
     const srv = serve(S); srv.listen(S.port, S.share ? '0.0.0.0' : '127.0.0.1', () => {
       console.log(`Craft clip-art server ${VERSION}: http://localhost:${S.port}/`);
-      for (const [n, spec] of Object.entries(S.libraries)) console.log(`  library “${n}”: ${spec}`);
-      if (S.share) { const ips = Object.values(os.networkInterfaces()).flat().filter((i) => i && i.family === 'IPv4' && !i.internal).map((i) => i.address); console.log(`  shared on the network: ${ips.map((ip) => `http://${ip}:${S.port}/`).join(' ')}`); console.log('  other computers can look; to change the library they need the key in clipart-server.json'); }
+      for (const c of S.connections) console.log(`  library “${c.name}”${c.name === S.main ? ' (main)' : ''}: ${c.db === 'mysql' ? `MySQL/MariaDB ${c.host}:${c.port}/${c.database}` : `${c.db} ${c.path}`}`);
+      console.log(`  set up the databases: http://localhost:${S.port}/setup${S.admin ? '' : ' (make the admin login there first)'}`);
+      if (S.share) { const ips = Object.values(os.networkInterfaces()).flat().filter((i) => i && i.family === 'IPv4' && !i.internal).map((i) => i.address); console.log(`  shared on the network: ${ips.map((ip) => `http://${ip}:${S.port}/`).join(' ')}`); console.log('  other computers can look; to change the library they need the key (on the setup page) or the admin login'); }
       console.log('Close this window to stop it.');
     });
   }

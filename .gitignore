@@ -1,5 +1,6 @@
 _private_test/
 server/libraries/
+server/clipart-settings.php
 server/clipart-server.json
 server/clipart-config.php
 server/node_modules/

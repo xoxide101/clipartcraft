@@ -1,9 +1,10 @@
 <?php
 /* The Craft clip-art server for a web host (Apache/Nginx + PHP 7.4 or newer with PDO): the same API as
-   clipart-server.js, so the Craft apps can't tell them apart. Put this folder on the web server, copy
-   clipart-config.example.php to clipart-config.php and fill it in (SQLite needs nothing; MySQL/MariaDB needs a
-   database and its login). With .htaccess (Apache) the links are /clipart/Name.png; without it they still work as
-   clipart-server.php/clipart/Name.png. Changes need the key from clipart-config.php (the apps ask for it once). */
+   clipart-server.js, so the Craft apps can't tell them apart. Put this folder on the web server and open …/setup
+   (or clipart-server.php/setup): make the admin login, then the databases (SQLite needs nothing; MySQL/MariaDB needs
+   a host and login, and the database is made the first time). The settings are kept in clipart-settings.php, the same
+   file the Node server uses. With .htaccess (Apache) the links are /clipart/Name.png; without it they still work as
+   clipart-server.php/clipart/Name.png. Changes need the key (on the setup page; the apps ask for it once). */
 declare(strict_types=1);
 const VERSION = '1.0';
 const COLS = ['id', 'type', 'name', 'category', 'style', 'form', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash', 'added', 'changed', 'files'];
@@ -11,12 +12,39 @@ const FILE_KINDS = ['png', 'svg', 'anim', 'orig', 'thumb', 'model']; // model: a
 const TYPES = ['clipart', 'model'];
 const MIME = ['png' => 'image/png', 'svg' => 'image/svg+xml', 'gif' => 'image/gif', 'webp' => 'image/webp', 'apng' => 'image/apng', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'avif' => 'image/avif', 'bmp' => 'image/bmp', 'ico' => 'image/x-icon', 'tif' => 'image/tiff', 'tiff' => 'image/tiff', 'glb' => 'model/gltf-binary', 'gltf' => 'model/gltf+json', 'obj' => 'model/obj', 'stl' => 'model/stl', 'ply' => 'application/ply', '3mf' => 'model/3mf'];
 
-function cfg(): array {
-  static $c = null; if ($c) return $c;
-  $f = __DIR__ . '/clipart-config.php';
-  $c = is_file($f) ? require $f : [];
-  $c += ['key' => '', 'libraries' => ['main' => ['dsn' => 'sqlite:libraries/main/clipart.sqlite', 'files' => 'libraries/main/files']]];
+// ------------------------------------------------------------------ settings: clipart-settings.php (shared with the Node server)
+// A first line that stops PHP showing it, then JSON: { key, main, admin, connections: [{ id, name, db: 'sqlite'|'mysql',
+// path, host, port, database, user, password, files }] }. The setup page edits it.
+const SETTINGS = __DIR__ . '/clipart-settings.php';
+function cid(): string { return 'k' . bin2hex(random_bytes(4)); }
+// an old clipart-config.php library ['dsn' => …, 'user', 'password', 'files'] as a connection
+function conn_from_dsn(string $name, array $l): array {
+  $dsn = $l['dsn'] ?? '';
+  if (stripos($dsn, 'mysql:') === 0) { $o = []; foreach (explode(';', substr($dsn, 6)) as $kv) { [$k, $v] = array_pad(explode('=', $kv, 2), 2, ''); $o[strtolower(trim($k))] = trim($v); }
+    return ['id' => cid(), 'name' => $name, 'db' => 'mysql', 'host' => $o['host'] ?? '127.0.0.1', 'port' => (int) ($o['port'] ?? 3306), 'database' => $o['dbname'] ?? 'clipart', 'user' => $l['user'] ?? '', 'password' => $l['password'] ?? '', 'files' => $l['files'] ?? ''];
+  }
+  return ['id' => cid(), 'name' => $name, 'db' => 'sqlite', 'path' => dirname(substr($dsn, 7) ?: "libraries/$name/clipart.sqlite")];
+}
+function cfg(?array $set = null): array {
+  static $c = null; if ($set !== null) return $c = $set; if ($c !== null) return $c;
+  if (is_file(SETTINGS)) $c = json_decode(preg_replace('/^<\?php[^\n]*\n/', '', (string) file_get_contents(SETTINGS)), true);
+  if (!$c) { // the old clipart-config.php, moved over once
+    $old = is_file(__DIR__ . '/clipart-config.php') ? (require __DIR__ . '/clipart-config.php') : [];
+    $c = ['key' => $old['key'] ?? '', 'connections' => array_map(fn ($n) => conn_from_dsn((string) $n, $old['libraries'][$n]), array_keys($old['libraries'] ?? []))];
+    $c['main'] = $c['connections'][0]['name'] ?? 'main';
+  }
+  $c += ['key' => '', 'main' => '', 'connections' => [], 'admin' => null, 'port' => 8790, 'share' => false];
+  if (!$c['connections']) $c['connections'][] = ['id' => cid(), 'name' => 'main', 'db' => 'sqlite', 'path' => 'libraries/main'];
+  if (!in_array($c['main'], array_column($c['connections'], 'name'), true)) $c['main'] = $c['connections'][0]['name'];
+  if ($c['key'] === '') { $c['key'] = bin2hex(random_bytes(12)); save_cfg($c); }
   return $c;
+}
+function save_cfg(array $c): bool { return @file_put_contents(SETTINGS, "<?php exit; ?>\n" . json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)) !== false; }
+// the admin login: only a salted hash (PBKDF2-SHA256, the same as the Node server makes)
+function make_login(string $user, string $password): array { $salt = bin2hex(random_bytes(16)); return ['user' => $user, 'salt' => $salt, 'rounds' => 100000, 'hash' => hash_pbkdf2('sha256', $password, $salt, 100000, 64)]; }
+function check_login(?array $a, string $user, string $password): bool {
+  if (!$a || strtolower($user) !== strtolower((string) $a['user'])) return false;
+  return hash_equals((string) $a['hash'], hash_pbkdf2('sha256', $password, (string) $a['salt'], (int) ($a['rounds'] ?? 100000), 64));
 }
 function out(int $code, $data, string $type = 'application/json; charset=utf-8', array $extra = []): void {
   http_response_code($code);
@@ -34,12 +62,37 @@ function now(): string { return gmdate('Y-m-d\TH:i:s.v\Z'); }
 // ------------------------------------------------------------------ a library: database (SQLite or MySQL/MariaDB) + its pictures
 class Library {
   public string $name; public PDO $db; public string $files; public bool $mysql;
+  public string $where = '';
+  // $c: a connection from the settings (problems are thrown, so the setup page's Test can show them)
   function __construct(string $name, array $c) {
-    $this->name = $name; $dsn = $c['dsn']; $this->mysql = stripos($dsn, 'mysql:') === 0;
-    if (!$this->mysql) { $p = substr($dsn, 7); if (!preg_match('#^(/|[A-Za-z]:)#', $p)) $p = __DIR__ . '/' . $p; @mkdir(dirname($p), 0775, true); $dsn = 'sqlite:' . $p; }
-    $this->files = preg_match('#^(/|[A-Za-z]:)#', $c['files']) ? $c['files'] : __DIR__ . '/' . $c['files']; @mkdir($this->files, 0775, true);
-    try { $this->db = new PDO($dsn, $c['user'] ?? null, $c['password'] ?? null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]); }
-    catch (Throwable $e) { fail(500, 'The library database could not be opened: ' . $e->getMessage()); }
+    $this->name = $name; $db = $c['db'] ?? 'sqlite'; $this->mysql = $db === 'mysql';
+    $abs = fn (string $p): string => preg_match('#^(/|[A-Za-z]:)#', $p) ? $p : __DIR__ . '/' . $p;
+    if ($db === 'json') throw new RuntimeException('The PHP server keeps libraries in SQLite or MySQL/MariaDB (a JSON folder is for export and import).');
+    if ($this->mysql) {
+      $dbname = trim((string) ($c['database'] ?? '')) ?: 'clipart'; $host = trim((string) ($c['host'] ?? '')) ?: '127.0.0.1'; $port = (int) ($c['port'] ?? 3306) ?: 3306;
+      $dsn = "mysql:host=$host;port=$port;dbname=$dbname;charset=utf8mb4"; $files = $abs(trim((string) ($c['files'] ?? '')) ?: "libraries/$name/files"); $this->where = "$host:$port/$dbname";
+    } else {
+      if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) throw new RuntimeException('This PHP has no SQLite (pdo_sqlite); use MySQL/MariaDB.');
+      $dir = $abs(trim((string) ($c['path'] ?? '')) ?: "libraries/$name"); @mkdir($dir, 0775, true); $dsn = "sqlite:$dir/clipart.sqlite"; $files = "$dir/files"; $this->where = $dir;
+    }
+    $this->files = $files; @mkdir($this->files, 0775, true);
+    if (!is_dir($this->files) || !is_writable($this->files)) throw new RuntimeException("The pictures folder {$this->files} cannot be made or written (the web server needs write access to the server folder).");
+    $o = [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC];
+    $user = $this->mysql ? (string) ($c['user'] ?? '') : null; $pass = $this->mysql ? (string) ($c['password'] ?? '') : null;
+    try { $this->db = new PDO($dsn, $user, $pass, $o); }
+    catch (PDOException $e) {
+      // the first time: MySQL/MariaDB has no such database yet (1049), so it is made, then opened
+      $code = (int) ($e->errorInfo[1] ?? 0);
+      if ($this->mysql && $code === 1044) throw new RuntimeException("This login may not use the database “{$dbname}” (it may not exist yet, and this login may not make it). Make it in phpMyAdmin and give this login all rights on it, or use a login that may create databases.");
+      if ($this->mysql && $code === 1045) throw new RuntimeException('MySQL/MariaDB did not accept that user ID and password.');
+      if ($this->mysql && $code === 2002) throw new RuntimeException("Nothing answered at {$this->where} (is the host and port right? the QNAP's MariaDB 10 is usually port 3307).");
+      if (!$this->mysql || $code !== 1049) throw new RuntimeException('The library database could not be opened: ' . $e->getMessage());
+      try {
+        $server = new PDO(preg_replace('/dbname=[^;]*;?/i', '', $dsn), $user, $pass, $o);
+        $server->exec('CREATE DATABASE IF NOT EXISTS `' . str_replace('`', '``', $dbname) . '` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
+        $this->db = new PDO($dsn, $user, $pass, $o);
+      } catch (Throwable $e2) { throw new RuntimeException("The database “{$dbname}” does not exist yet, and this login may not make it (" . $e2->getMessage() . '). Make it in phpMyAdmin, or use a login that may create databases.'); }
+    }
     $big = $this->mysql ? 'MEDIUMTEXT' : 'TEXT';
     $this->db->exec("CREATE TABLE IF NOT EXISTS items (id VARCHAR(40) PRIMARY KEY, type VARCHAR(20), name VARCHAR(200) NOT NULL, category VARCHAR(200), style VARCHAR(40), form VARCHAR(40), tags $big, description $big,
       kind VARCHAR(20), width INTEGER, height INTEGER, frames INTEGER, colours INTEGER, source VARCHAR(500), author VARCHAR(200), licence VARCHAR(200),
@@ -100,20 +153,69 @@ $uri = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
 $self = '/' . basename(__FILE__); $script = $_SERVER['SCRIPT_NAME'] ?? '';
 if (($i = strpos($uri, $self)) !== false) { $prefix = substr($uri, 0, $i + strlen($self)); $rest = substr($uri, $i + strlen($self)); }
 elseif (substr($script, -strlen($self)) === $self) { $prefix = rtrim(str_replace('\\', '/', dirname($script)), '/'); $rest = substr($uri, strlen($prefix)); }
-elseif (preg_match('#^(.*?)(/(?:api|clipart)(?:/.*)?)$#', $uri, $m)) { $prefix = $m[1]; $rest = $m[2]; }
+elseif (preg_match('#^(.*?)(/(?:api|clipart)(?:/.*)?|/setup/?)$#', $uri, $m)) { $prefix = $m[1]; $rest = $m[2]; }
 else { $prefix = rtrim($uri, '/'); $rest = ''; }
 $base = ((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'] . $prefix;
 $p = array_values(array_filter(array_map('rawurldecode', explode('/', $rest)), 'strlen'));
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET'; $Q = $_GET;
 $local = in_array($_SERVER['REMOTE_ADDR'] ?? '', ['127.0.0.1', '::1'], true);
 $key = $_SERVER['HTTP_X_CRAFT_KEY'] ?? '';
-$may_write = $local || ($C['key'] !== '' && hash_equals((string) $C['key'], $key));
+// the admin's login, sent with each setup call as x-craft-login: base64("user:password")
+$login_ok = (function () use ($C): bool { $t = base64_decode((string) ($_SERVER['HTTP_X_CRAFT_LOGIN'] ?? ''), true); if (!$t || ($i = strpos($t, ':')) === false) return false; return check_login($C['admin'], substr($t, 0, $i), substr($t, $i + 1)); })();
+$may_write = $local || ($C['key'] !== '' && hash_equals((string) $C['key'], $key)) || $login_ok;
 
 if ($method === 'OPTIONS') out(204, '');
-if ($method !== 'GET' && $method !== 'HEAD' && !$may_write) fail(403, 'Changing the library needs the key (in clipart-config.php on the server).');
-$libs = $C['libraries'];
-$lib_of = function (?string $n) use ($libs): Library { static $open = []; $n = $n && isset($libs[$n]) ? $n : array_key_first($libs); if (!$n) fail(404, 'No such library.'); return $open[$n] ??= new Library($n, $libs[$n]); };
-$shown = function (Library $lib, ?array $it) use ($base) { if (!$it) return null; $L = $lib->name === array_key_first(cfg()['libraries']) ? '' : rawurlencode($lib->name) . '/'; $links = [];
+// the libraries: one per connection, opened when first used (one that is down does not stop the others)
+$conn_of = fn (?string $n): ?array => array_values(array_filter($C['connections'], fn ($c) => $c['name'] === ($n ?: $C['main'])))[0] ?? null;
+$lib_of = function (?string $n) use ($conn_of, $C): Library { static $open = []; $c = $conn_of($n) ?? $conn_of($C['main']); if (!$c) fail(404, 'No such library.'); return $open[$c['name']] ??= new Library($c['name'], $c); };
+
+// ------------------------------------------------------------------ the setup page and its calls
+if (($p[0] ?? '') === 'setup' && count($p) === 1) { header('Cache-Control: no-cache'); out(200, (string) file_get_contents(__DIR__ . '/setup.html'), 'text/html; charset=utf-8'); }
+if (($p[0] ?? '') === 'api' && ($p[1] ?? '') === 'setup') {
+  @set_time_limit(0);
+  $j = $method === 'GET' ? [] : (json_decode((string) file_get_contents('php://input'), true) ?: []);
+  if (($p[2] ?? '') === 'admin' && $method === 'POST') {
+    if ($C['admin'] && !$local && !$login_ok) fail(403, 'Log in first.');
+    $user = trim((string) ($j['user'] ?? '')); if ($user === '' || strlen((string) ($j['password'] ?? '')) < 6) fail(400, 'Give a user ID and a password of at least 6 characters.');
+    $C['admin'] = make_login($user, (string) $j['password']); if (!save_cfg($C)) fail(500, 'The settings could not be saved: the web server needs write access to the server folder (clipart-settings.php).');
+    out(200, ['saved' => true, 'user' => $user]);
+  }
+  if (!$C['admin'] && !$local) out(200, ['needAdmin' => true, 'server' => 'php']);
+  if (!$local && !$login_ok) out(403, ['error' => 'The user ID or password is not right.', 'login' => true]);
+  $hide = fn (array $c): array => array_merge(array_diff_key($c, ['password' => 1]), ['hasPassword' => !empty($c['password'])]);
+  if (!isset($p[2]) && $method === 'GET') out(200, ['server' => 'php', 'drivers' => array_values(array_filter(['sqlite', 'mysql'], fn ($d) => in_array($d, PDO::getAvailableDrivers(), true))), 'main' => $C['main'], 'admin' => $C['admin']['user'] ?? '', 'key' => $C['key'], 'connections' => array_map($hide, $C['connections']), 'file' => SETTINGS]);
+  // a password left empty on the page means: keep the one saved for that connection
+  $with_password = function (array $c) use ($C): array { if (!array_key_exists('password', $c)) { foreach ($C['connections'] as $o) if (($o['id'] ?? '') === ($c['id'] ?? '-')) $c['password'] = $o['password'] ?? ''; } unset($c['hasPassword']); return $c; };
+  if (!isset($p[2]) && $method === 'PUT') {
+    $list = []; $names = [];
+    foreach (($j['connections'] ?? []) as $c) { $c = $with_password($c); $c['id'] = $c['id'] ?? cid(); $c['name'] = trim((string) ($c['name'] ?? ''));
+      if (!preg_match('/^[\w\- ]{1,40}$/', $c['name'])) fail(400, "“{$c['name']}” cannot be a library name: use letters, numbers, spaces, - and _ (up to 40).");
+      if (isset($names[strtolower($c['name'])])) fail(400, 'Two libraries have the same name.'); $names[strtolower($c['name'])] = 1; $list[] = $c; }
+    if (!$list) fail(400, 'Keep at least one library.');
+    $C['connections'] = $list; $C['main'] = in_array($j['main'] ?? '', array_column($list, 'name'), true) ? $j['main'] : $list[0]['name'];
+    if (!save_cfg($C)) fail(500, 'The settings could not be saved: the web server needs write access to the server folder (clipart-settings.php).');
+    out(200, ['saved' => true, 'restart' => false, 'main' => $C['main'], 'connections' => array_map($hide, $C['connections'])]);
+  }
+  if (($p[2] ?? '') === 'test' && $method === 'POST') {
+    $c = $with_password((array) ($j['connection'] ?? []));
+    try { $l = new Library((string) ($c['name'] ?? 'test'), $c); $r = $l->list('', null, 1, 0); out(200, ['ok' => true, 'items' => $r['total'], 'where' => $l->where, 'database' => $l->mysql ? 'mysql' : 'sqlite']); }
+    catch (Throwable $e) { out(200, ['ok' => false, 'error' => $e->getMessage()]); }
+  }
+  if (($p[2] ?? '') === 'copy' && $method === 'POST') {
+    if (($j['from'] ?? '') === ($j['to'] ?? '')) fail(400, 'Choose two different libraries.');
+    foreach (['from', 'to'] as $w) if (!$conn_of((string) ($j[$w] ?? '')) || ($j[$w] ?? '') === '') fail(400, 'There is no library called “' . ($j[$w] ?? '') . '” (save the libraries first).');
+    try { $from = $lib_of($j['from'] ?? null); $to = $lib_of($j['to'] ?? null); } catch (Throwable $e) { fail(500, $e->getMessage()); }
+    $n = 0;
+    try { for ($off = 0; ; $off += 200) { $r = $from->list('', null, 200, $off); if (!$r['items']) break;
+      foreach ($r['items'] as $it) { $pics = []; foreach ($it['files'] as $k => $f) { $pics[$k] = $from->read_file($it, $k); $pics[$k . 'Ext'] = ext_of($f); } $meta = $it; unset($meta['files'], $meta['id']); $to->save($meta, $pics); $n++; } } }
+    catch (Throwable $e) { fail(500, "Copying stopped after $n items: " . $e->getMessage()); }
+    out(200, ['copied' => $n, 'from' => $from->name, 'to' => $to->name]);
+  }
+  fail(404, 'Not found.');
+}
+
+if ($method !== 'GET' && $method !== 'HEAD' && !$may_write) fail(403, 'Changing the library needs the key (on the server’s setup page).');
+$shown = function (Library $lib, ?array $it) use ($base, $C) { if (!$it) return null; $L = $lib->name === $C['main'] ? '' : rawurlencode($lib->name) . '/'; $links = [];
   foreach ($it['files'] as $k => $f) $links[$k] = "$base/clipart/$L" . rawurlencode($it['name']) . ($k === 'png' || $k === 'svg' ? '' : ".$k") . '.' . ext_of($f);
   unset($it['files']); $it['links'] = (object) $links; $it['library'] = $lib->name; return $it; };
 $body = fn () => file_get_contents('php://input');
@@ -132,9 +234,9 @@ try {
     if (!$p) out(200, "<!doctype html><meta charset=\"utf-8\"><title>Craft clip-art server</title><body style=\"font:16px system-ui;margin:2em;max-width:40em\"><h1>Craft clip-art server</h1><p>It is running. Open ClipArtCraft and connect to <b>" . htmlspecialchars($base) . "</b>, or see <a href=\"" . htmlspecialchars($prefix) . "/api/info\">api/info</a>.</p>", 'text/html; charset=utf-8');
     fail(404, 'Not found.');
   }
-  $lib = $lib_of($Q['library'] ?? null);
   $what = $p[1] ?? '';
-  if ($what === 'info') out(200, ['server' => 'Craft clip-art server (PHP)', 'version' => VERSION, 'api' => 1, 'writable' => $may_write, 'libraries' => array_map(fn ($n) => ['name' => $n, 'database' => stripos($libs[$n]['dsn'], 'mysql:') === 0 ? 'mysql' : 'sqlite'], array_keys($libs))]);
+  if ($what === 'info') out(200, ['server' => 'Craft clip-art server (PHP)', 'version' => VERSION, 'api' => 1, 'writable' => $may_write, 'main' => $C['main'], 'libraries' => array_map(fn ($c) => ['name' => $c['name'], 'database' => $c['db'] ?? 'sqlite'], $C['connections'])]);
+  $lib = $lib_of($Q['library'] ?? null);
   if ($what === 'categories') out(200, $lib->categories());
   if ($what === 'export.zip' || ($what === 'import' && $method === 'POST')) {
     if (!class_exists('ZipArchive')) fail(501, 'This PHP has no ZIP support (the zip extension); export and import need it.');

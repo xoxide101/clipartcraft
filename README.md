@@ -30,7 +30,8 @@ The library over http: `server/clipart-server.js` (Node 22.5 or newer, on a PC o
 - Libraries are kept in **SQLite** (built in, one file) or **MySQL / MariaDB**, with the pictures in a folder beside them. Several libraries can sit side by side.
 - **JSON + files** (`library.json` beside the pictures) is the format for export, import and moving: `node clipart-server.js copy FROM TO` moves a library between SQLite, MySQL/MariaDB and JSON.
 - Items are clip art or **3D models** (GLB, glTF, OBJ, STL, PLY, 3MF, with pictures of them), searchable by type.
-- Anyone may look; changes are allowed from the same computer, or with the server's key.
+- **Setup page** (`…/setup`): an admin login (made the first time), then the libraries and their databases: add, edit and **Test** each connection (a MySQL/MariaDB database is made the first time), choose the main one, and **copy** a library from one database to another when moving. Settings are kept in `clipart-settings.php`, the same file for Node and PHP.
+- Anyone may look; changes are allowed from the same computer, with the server's key, or with the admin login.
 
 ## How the apps share it
 

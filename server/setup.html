@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clip-art server setup</title>
+<style>
+  :root { --bg: #f1f2f6; --panel: #fff; --panel-2: #eef0f6; --line: #d8dbe6; --fg: #1d1f29; --muted: #626779; --accent: #0f766e; --accent-ink: #fff; --bad: #b91c1c; --good: #15803d; color-scheme: light; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #17181e; --panel: #1f2028; --panel-2: #282a34; --line: #393c4a; --fg: #eceef6; --muted: #a3a8ba; --accent: #2dd4bf; --accent-ink: #0b1f1c; --bad: #f87171; --good: #4ade80; color-scheme: dark; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 17px; margin: 0; }
+  header .grow { flex: 1; }
+  main { max-width: 900px; margin: 0 auto; padding: 20px 16px 60px; display: grid; gap: 18px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; display: grid; gap: 12px; }
+  h2 { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0; }
+  .hint { color: var(--muted); font-size: 12.5px; margin: 0; }
+  label.f { display: grid; gap: 3px; font-size: 12px; color: var(--muted); min-width: 0; }
+  input, select { font: inherit; color: var(--fg); background: var(--panel-2); border: 1px solid var(--line); border-radius: 7px; height: 32px; padding: 0 9px; width: 100%; min-width: 0; }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .row { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); align-items: end; }
+  .btns { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button { font: inherit; height: 32px; padding: 0 14px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); cursor: pointer; }
+  button:hover { background: var(--panel-2); }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  button.danger { color: var(--bad); }
+  button:disabled { opacity: .5; cursor: default; }
+  .conn { border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: grid; gap: 10px; background: var(--panel-2); }
+  .conn .top { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .conn .top b { font-size: 15px; }
+  .tag { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 5px; background: var(--accent); color: var(--accent-ink); }
+  .ok { color: var(--good); } .no { color: var(--bad); }
+  .msg { min-height: 1.4em; font-size: 13px; }
+  .login { max-width: 380px; margin: 60px auto; }
+  code { background: var(--panel-2); padding: 1px 6px; border-radius: 5px; word-break: break-all; }
+  .radio { display: flex; gap: 6px; align-items: center; font-size: 13px; color: var(--fg); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header><h1>Clip-art server setup</h1><span class="hint" id="who"></span><span class="grow"></span><button type="button" id="logout" hidden>Log out</button></header>
+<main id="main"><p class="hint">Loading…</p></main>
+<script>
+/* The setup page of the Craft clip-art server (served by clipart-server.js and clipart-server.php alike): the databases
+   it keeps libraries in (one or more: SQLite, MySQL/MariaDB, a JSON folder), testing them, copying a library from one to
+   another when moving, and the admin login. Passwords are sent to the server and kept there; they are never sent back. */
+(function () {
+  'use strict';
+  const $ = (s, el = document) => el.querySelector(s), esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  // the API lives beside this page: …/setup → …/api/setup (also when PHP serves it as clipart-server.php/setup)
+  const API = location.pathname.replace(/\/setup\/?$/, '') + '/api/setup';
+  let login = ''; try { login = sessionStorage.getItem('craft-clipart-login') || ''; } catch (e) { /* blocked */ }
+  let S = null;
+  const DB = { sqlite: 'SQLite (one file, nothing to set up)', mysql: 'MySQL / MariaDB', json: 'JSON + files (a folder)' };
+  async function call(path, method = 'GET', body) {
+    const r = await fetch(API + path, { method, headers: { 'content-type': 'application/json', ...(login ? { 'x-craft-login': login } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    let j = null; try { j = await r.json(); } catch (e) { j = { error: `The server said ${r.status}.` }; }
+    return { status: r.status, ...j };
+  }
+  const setLogin = (user, pass) => { login = btoa(unescape(encodeURIComponent(`${user}:${pass}`))); try { sessionStorage.setItem('craft-clipart-login', login); } catch (e) { /* blocked */ } };
+
+  async function load() {
+    const r = await call('');
+    if (r.needAdmin) return makeAdmin();
+    if (r.status === 403) return askLogin(r.error && login ? r.error : '');
+    if (r.error) { $('#main').innerHTML = `<section><p class="no">${esc(r.error)}</p></section>`; return; }
+    S = r; render();
+  }
+  // ------------------------------------------------------------------ logging in
+  function makeAdmin() {
+    $('#main').innerHTML = `<section class="login"><h2>Make the admin login</h2><p class="hint">The first time: choose a user ID and password for this setup page. Only a scrambled copy of the password is kept.</p>
+      <label class="f">User ID<input id="u" autocomplete="username" value="admin"></label><label class="f">Password<input id="p" type="password" autocomplete="new-password"></label><label class="f">The password again<input id="p2" type="password" autocomplete="new-password"></label>
+      <div class="btns"><button class="primary" type="button" id="go">Make it</button></div><p class="msg" id="m"></p></section>`;
+    $('#go').onclick = async () => { const u = $('#u').value.trim(), p = $('#p').value; if (p !== $('#p2').value) return ($('#m').innerHTML = '<span class="no">The two passwords are not the same.</span>');
+      const r = await call('/admin', 'POST', { user: u, password: p }); if (r.error) return ($('#m').innerHTML = `<span class="no">${esc(r.error)}</span>`); setLogin(u, p); load(); };
+  }
+  function askLogin(err) {
+    $('#main').innerHTML = `<section class="login"><h2>Log in</h2><label class="f">User ID<input id="u" autocomplete="username"></label><label class="f">Password<input id="p" type="password" autocomplete="current-password"></label>
+      <div class="btns"><button class="primary" type="button" id="go">Log in</button></div><p class="msg" id="m">${err ? `<span class="no">${esc(err)}</span>` : ''}</p></section>`;
+    const go = () => { setLogin($('#u').value.trim(), $('#p').value); load(); };
+    $('#go').onclick = go; $('#p').onkeydown = (e) => { if (e.key === 'Enter') go(); }; $('#u').focus();
+  }
+  $('#logout').onclick = () => { login = ''; try { sessionStorage.removeItem('craft-clipart-login'); } catch (e) { /* blocked */ } $('#logout').hidden = true; $('#who').textContent = ''; load(); };
+
+  // ------------------------------------------------------------------ the settings
+  function connHtml(c, i) {
+    const opts = S.drivers.map((d) => `<option value="${d}" ${c.db === d ? 'selected' : ''}>${esc(DB[d])}</option>`).join('');
+    const f = (k, label, extra = '') => `<label class="f">${label}<input data-k="${k}" value="${esc(c[k] ?? '')}" ${extra}></label>`;
+    return `<div class="conn" data-i="${i}"><div class="top"><b>${esc(c.name || 'New library')}</b>${c.name === S.main ? '<span class="tag">main</span>' : ''}<span class="grow" style="flex:1"></span>
+        <label class="radio"><input type="radio" name="main" data-main ${c.name === S.main ? 'checked' : ''} style="width:auto;height:auto"> Main library</label></div>
+      <div class="row">${f('name', 'Library name')}<label class="f">Database<select data-k="db">${opts}</select></label></div>
+      ${c.db === 'mysql' ? `<div class="row">${f('host', 'Host (server address)', 'placeholder="127.0.0.1"')}${f('port', 'Port (MySQL 3306; the QNAP’s MariaDB 10: 3307)', 'placeholder="3306" inputmode="numeric"')}${f('database', 'Database name', 'placeholder="clipart"')}</div>
+        <div class="row">${f('user', 'User ID', 'autocomplete="off"')}<label class="f">Password<input data-k="password" type="password" autocomplete="new-password" placeholder="${c.hasPassword ? 'kept (type to change)' : ''}"></label>${f('files', 'Pictures folder (on the server)', `placeholder="libraries/${esc(c.name || 'name')}/files"`)}</div>
+        <p class="hint">The database is made the first time if it is not there (the login needs the right to create databases; root has it).</p>`
+      : `<div class="row">${f('path', c.db === 'json' ? 'Folder (library.json and the pictures)' : 'Folder (clipart.sqlite and the pictures)', `placeholder="libraries/${esc(c.name || 'name')}"`)}</div>`}
+      <div class="btns"><button type="button" data-test>Test</button><button type="button" class="danger" data-del>Remove</button><span class="msg" data-msg></span></div></div>`;
+  }
+  function render() {
+    $('#logout').hidden = !login; $('#who').textContent = S.admin ? `${S.server === 'php' ? 'PHP' : 'Node'} server · logged in as ${S.admin}` : `${S.server === 'php' ? 'PHP' : 'Node'} server`;
+    const names = S.connections.map((c) => c.name).filter(Boolean), sel = (id, v) => `<select id="${id}">${names.map((n) => `<option ${n === v ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>`;
+    $('#main').innerHTML = `
+      <section><h2>Libraries and their databases</h2><p class="hint">Each library is kept in its own database, with its pictures in a folder. The main library’s pictures have the shortest links (/clipart/Name.png); the others are /clipart/library/Name.png.</p>
+        <div id="conns" style="display:grid;gap:12px">${S.connections.map(connHtml).join('')}</div>
+        <div class="btns">${S.drivers.map((d) => `<button type="button" data-add="${d}">Add ${d === 'mysql' ? 'MySQL / MariaDB' : d === 'json' ? 'a JSON folder' : 'SQLite'}</button>`).join('')}<span class="grow" style="flex:1"></span><button type="button" class="primary" id="save">Save</button></div><p class="msg" id="saved"></p></section>
+      <section><h2>Copy a library (moving to another database)</h2><p class="hint">Every item and its pictures are copied. Save the libraries first. Copying into a library that already has items adds to it (the same names get _002…).</p>
+        <div class="row"><label class="f">From${sel('from', S.main)}</label><label class="f">To${sel('to', names.find((n) => n !== S.main) || S.main)}</label><div class="btns"><button type="button" id="copy">Copy</button></div></div><p class="msg" id="copied"></p></section>
+      ${S.server === 'node' ? `<section><h2>This server</h2><div class="row"><label class="f">Port<input id="port" value="${esc(S.port)}" inputmode="numeric"></label><label class="radio"><input type="checkbox" id="share" ${S.share ? 'checked' : ''} style="width:auto;height:auto"> Other computers on the network can use it</label></div><p class="hint">These take effect when the server is started again.</p></section>` : ''}
+      <section><h2>Key for apps</h2><p class="hint">Apps on other computers (ClipArtCraft’s Server tab) ask for this once, to add and change clip art. Anyone may look without it.</p><div class="btns"><code id="key">${esc(S.key || '')}</code><button type="button" id="copykey">Copy</button></div></section>
+      <section><h2>Admin login</h2><div class="row"><label class="f">User ID<input id="au" value="${esc(S.admin || '')}" autocomplete="username"></label><label class="f">New password<input id="ap" type="password" autocomplete="new-password"></label><div class="btns"><button type="button" id="admin">Change</button></div></div><p class="msg" id="am"></p></section>
+      <p class="hint">Settings file: <code>${esc(S.file || 'clipart-settings.php')}</code></p>`;
+  }
+  // what is typed goes straight into S (passwords only when typed)
+  document.addEventListener('input', (e) => { const k = e.target.dataset.k, box = e.target.closest('.conn'); if (!k || !box) return; const c = S.connections[+box.dataset.i]; c[k] = k === 'port' ? e.target.value.replace(/\D/g, '') : e.target.value; if (k === 'name') box.querySelector('.top b').textContent = c.name || 'New library'; });
+  document.addEventListener('change', (e) => {
+    const box = e.target.closest('.conn'); if (!box) return; const c = S.connections[+box.dataset.i];
+    if (e.target.dataset.k === 'db') { c.db = e.target.value; if (c.db === 'mysql') Object.assign(c, { host: c.host || '127.0.0.1', port: c.port || 3306, database: c.database || 'clipart' }); render(); }
+    if (e.target.dataset.main !== undefined) { S.main = c.name; render(); }
+  });
+  document.addEventListener('click', async (e) => {
+    const t = e.target, box = t.closest('.conn'), c = box && S.connections[+box.dataset.i], say = (el, ok, text) => { el.innerHTML = `<span class="${ok ? 'ok' : 'no'}">${esc(text)}</span>`; };
+    if (t.dataset.add) { const n = S.connections.length + 1; S.connections.push({ name: `library${n}`, db: t.dataset.add, ...(t.dataset.add === 'mysql' ? { host: '127.0.0.1', port: 3306, database: 'clipart', user: '' } : { path: '' }) }); render(); return; }
+    if (t.dataset.del !== undefined) { if (S.connections.length === 1) return say(box.querySelector('[data-msg]'), false, 'Keep at least one library.'); if (!confirm(`Take “${c.name}” off the list? (Its database and pictures are not deleted.)`)) return; S.connections.splice(+box.dataset.i, 1); if (S.main === c.name) S.main = S.connections[0].name; render(); return; }
+    if (t.dataset.test !== undefined) { const m = box.querySelector('[data-msg]'); m.textContent = 'Testing…'; const r = await call('/test', 'POST', { connection: c }); r.ok ? say(m, true, `Connected: ${r.items} item${r.items === 1 ? '' : 's'} (${r.where}).`) : say(m, false, r.error || 'It did not work.'); return; }
+    if (t.id === 'save') { const m = $('#saved'); m.textContent = 'Saving…'; const r = await call('', 'PUT', { main: S.main, connections: S.connections, ...(S.server === 'node' ? { port: $('#port').value, share: $('#share').checked } : {}) });
+      if (r.error) return say(m, false, r.error); S.connections = r.connections; S.main = r.main; render(); say($('#saved'), true, `Saved.${r.restart ? ' Start the server again for the port or sharing to change.' : ''}`); return; }
+    if (t.id === 'copy') { const from = $('#from').value, to = $('#to').value, m = $('#copied'); if (from === to) return say(m, false, 'Choose two different libraries.'); if (!confirm(`Copy everything in “${from}” into “${to}”?`)) return; m.textContent = 'Copying… (a big library takes a while)'; t.disabled = true;
+      const r = await call('/copy', 'POST', { from, to }); t.disabled = false; r.error ? say(m, false, r.error) : say(m, true, `Copied ${r.copied} item${r.copied === 1 ? '' : 's'} from “${from}” to “${to}”.`); return; }
+    if (t.id === 'copykey') { navigator.clipboard.writeText(S.key || '').then(() => say($('#key').parentElement.nextElementSibling || $('#key'), true, '')); t.textContent = 'Copied'; setTimeout(() => { t.textContent = 'Copy'; }, 1500); return; }
+    if (t.id === 'admin') { const u = $('#au').value.trim(), p = $('#ap').value, m = $('#am'); const r = await call('/admin', 'POST', { user: u, password: p }); if (r.error) return say(m, false, r.error); setLogin(u, p); S.admin = u; $('#ap').value = ''; say(m, true, 'Changed.'); return; }
+  });
+  load();
+})();
+</script>
+</body>
+</html>
