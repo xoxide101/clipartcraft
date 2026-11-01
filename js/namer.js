@@ -167,12 +167,16 @@
         out.description = caption;
         if (subject) {
           // the subject's category: the word on the lists nearest to it in meaning (and how near)
-          const sv = await embedText('a picture of a ' + subject), ws = W.words.map((v) => { let t = 0; for (let k2 = 0; k2 < v.length; k2++) t += v[k2] * sv[k2]; return t; });
+          const sv = await embedText('an illustration of a ' + subject), ws = W.words.map((v) => { let t = 0; for (let k2 = 0; k2 < v.length; k2++) t += v[k2] * sv[k2]; return t; });
           let bi = 0; for (let i = 1; i < ws.length; i++) if (ws[i] > ws[bi]) bi = i;
           const cat = ws[bi] > 0.78 ? CAT[bi] : best.category;
-          Object.assign(out, { name: cap(subject), category: cat, described: true });
+          // the name is what the describer saw (general or not, it is never wrong in a silly way); the matched words stay as guesses
+          Object.assign(out, { name: cap(subject), category: cat, described: true, seenAs: cap(subject) });
+          // words it read on the picture ("a sign that says freedom of the press") go into the tags, for searching
+          const said = (caption.match(/(?:says|reads|saying|reading|with the words?)\s+["“']?([^"”'.]+)/i) || [])[1];
+          if (said) out.saidText = said.trim();
           out.words = [{ word: subject, category: cat, score: +ws[bi].toFixed(3), described: true }, ...top.filter((w) => w.word !== subject)].slice(0, 6);
-          out.tags = [...new Set([...subject.split(' ').filter((w) => w.length > 2), ...out.tags])];
+          out.tags = [...new Set([...subject.split(' ').filter((w) => w.length > 2), ...(out.saidText ? [out.saidText.toLowerCase()] : []), ...out.tags])];
         }
       } catch (e) { console.warn('Describing failed; the matched word is used', e); }
     }

@@ -56,7 +56,7 @@
         const c = document.createElement('canvas'); c.width = src.width || 224; c.height = src.height || 224; c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
         const ai = await N.name(c, { lessons: await L.lessons(), describe: describeOn() }); it.ai = ai.words; it.vec = ai.vec; if (ai.description) it.description = ai.description;
         // the names side by side: the one it came with (kept for good), what the AI sees, and the nearest word on the lists
-        if (!it.original) it.original = it.name; if (ai.described) it.seen = ai.name; const mw = (ai.words || []).find((w) => !w.described && !w.learnt); if (mw) it.matched = mw.word.charAt(0).toUpperCase() + mw.word.slice(1);
+        if (!it.original) it.original = it.name; if (ai.described) it.seen = ai.seenAs || ai.name; const mw = (ai.words || []).find((w) => !w.described && !w.learnt); if (mw) it.matched = mw.word.charAt(0).toUpperCase() + mw.word.slice(1);
         if (!KNOWN().includes(it.category || '') || again) it.category = it.checked && !again ? it.category : ai.category;
         it.style = it.style || ai.style; it.form = it.form || ai.form; it.tags = [...new Set([...(it.tags || []), ...ai.tags])];
         if (placeholderName(it.name) || (again && !it.checked)) { taken.delete(it.name.toLowerCase()); let nm = ai.name; for (let k = 2; taken.has(nm.toLowerCase()); k++) nm = `${ai.name}_${String(k).padStart(3, '0')}`; it.name = nm; taken.add(nm.toLowerCase()); }
