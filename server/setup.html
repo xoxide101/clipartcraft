@@ -120,7 +120,7 @@
   // where ClipArtCraft (on this or another computer) can reach it, with Copy buttons
   async function showReach() {
     const box = document.getElementById('reach'); if (!box) return; let i;
-    try { i = await (await fetch(new URL('api/info', location.href.replace(/setup\/?(\?.*)?$/, ''))).json(); } catch (e) { box.querySelector('.hint').textContent = 'Could not ask the server for its addresses.'; return; }
+    try { i = await (await fetch(new URL('api/info', location.href.replace(/setup\/?(\?.*)?$/, '')))).json(); } catch (e) { box.querySelector('.hint').textContent = 'Could not ask the server for its addresses.'; return; }
     const r = i.reach || {}, local = (a) => /\/\/(localhost|127\.)/.test(a), lan = (a) => /\/\/(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(a);
     const row = (a, what) => `<div class="row reach-row"><code>${esc(a)}</code><span class="hint">${what}</span><button class="btn" type="button" data-copy="${esc(a)}">Copy</button></div>`;
     box.innerHTML = `<h2>Reach this server</h2><p class="hint">Paste one of these into ClipArtCraft (Server › Connect…).${r.host ? ` This computer is called <b>${esc(r.host)}</b>.` : ''}</p>

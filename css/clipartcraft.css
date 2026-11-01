@@ -284,3 +284,19 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 .sl-lasso { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 5; pointer-events: none; }
 .sl-lasso polygon { fill: rgba(34,197,94,.12); stroke: #16a34a; stroke-width: 2; stroke-dasharray: 5 3; }
 .sl-lasso[data-op=erase] polygon { fill: rgba(220,38,38,.12); stroke: #dc2626; }
+/* the clip-art server's places */
+.conn-in { width: min(860px, 100%); overflow: auto; }
+.cn-list { display: grid; gap: 8px; }
+.cn-row { display: grid; grid-template-columns: 1fr 1.6fr 1fr auto; gap: 6px; align-items: center; padding: 8px; border: 1px solid var(--line); border-radius: 8px; }
+.cn-row.on { border-color: var(--accent); background: var(--accent-soft); }
+.cn-row .input { min-width: 0; padding: 5px 8px; }
+.cn-tools { display: flex; gap: 4px; }
+.cn-stat { grid-column: 1 / -1; font-size: 12.5px; }
+.cn-st.good { color: #15803d; font-weight: 600; } .cn-st.bad { color: #c2410c; font-weight: 600; } .cn-st.wait { color: var(--muted); }
+:root:not([data-theme="light"]) .cn-st.good { color: #4ade80; } :root:not([data-theme="light"]) .cn-st.bad { color: #fb923c; }
+.cn-found { display: grid; gap: 6px; padding: 8px; border: 1px dashed var(--line); border-radius: 8px; }
+.cn-frow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 13px; }
+.cn-advice { padding: 8px 12px; border-radius: 8px; background: var(--panel-2); font-size: 13px; }
+.cn-advice ul, .cn-help ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 6px; }
+.cn-help { font-size: 13px; }
+@media (max-width: 700px) { .cn-row { grid-template-columns: 1fr; } }

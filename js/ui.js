@@ -177,7 +177,7 @@
       if (a === 'select-all') { sel = new Set(shown().map((it) => it.id)); render(); return; }
       if (a === 'delete' && cat === '#work') return act('work-del');
       if (a === 'delete') { const S = chosen(); if (!S.length) return toast('Choose something first.'); if (!confirm(`Delete ${S.length === 1 ? `“${S[0].name}”` : `${S.length} items`} from the library? (Export first if you might want ${S.length === 1 ? 'it' : 'them'} back.)`)) return; await L.remove(S.map((x) => x.id)); sel.clear(); await reload(); toast('Deleted.'); return; }
-      if (a === 'connect') { const u = prompt('The clip-art server’s address (start it with server/start-server.cmd; on a web host, the folder where clipart-server.php is):', serverUrl || 'http://localhost:8790'); if (u === null) return; await L.server(u); await checkServer(true); return; }
+      if (a === 'connect') return connectWindow();
       if (a === 'disconnect') { await L.server(''); await checkServer(); toast('Not using a server now (the pictures stay here).'); return; }
       if (a === 'push') { const S = sel.size ? chosen() : items; if (!S.length) return toast('The library is empty.'); await need(); const done = await L.push(S, (n, t) => busy(`Sending ${n} of ${t}…`)); busy(); await reload(); toast(`Sent ${done.length} item${done.length === 1 ? '' : 's'} to the server.`); return; }
       if (a === 'resume') { await need(); const left = await L.pending(); const d = await L.push(left, (n, t) => busy(`Sending ${n} of ${t}…`)); busy(); await reload(); await offerResume(); toast(`Finished sending: ${d.length} picture${d.length === 1 ? '' : 's'}.`); return; }
@@ -296,6 +296,95 @@
   document.addEventListener('click', (e) => { if (startOpen && e.target.closest('.start .tiles [data-act]')) { startOpen = false; $('start').hidden = true; } const c = e.target.closest('[data-copy]'); if (c) { navigator.clipboard.writeText(c.dataset.copy).then(() => toast('Link copied: paste it into any app or web page.')); return; } const b = e.target.closest('[data-act]'); if (b) act(b.dataset.act); });
   // the clip-art server (optional): is it there?
   const busy = (m) => { const t = $('toast'); if (m) { t.textContent = m; t.hidden = false; clearTimeout(toast.t); } else t.hidden = true; };
+  // ------------------------------------------------------------------ places: the clip-art servers this browser knows
+  // Saved places (Home, This PC, Work, Away…) each with an address and its key; ClipArtCraft can use the first one that
+  // answers when it opens, so the same copy works at home and at work. Kept in this browser (with the keys: typed by the user).
+  const PLACES = 'clipartcraft-places';
+  const places = () => { try { const v = JSON.parse(localStorage.getItem(PLACES) || 'null'); if (v && Array.isArray(v.list)) return v; } catch (e) { /* blocked */ } return { auto: true, list: [] }; };
+  const savePlaces = (v) => { try { localStorage.setItem(PLACES, JSON.stringify(v)); } catch (e) { /* blocked */ } };
+  const tidyUrl = (u) => { u = String(u || '').trim().replace(/\/+$/, ''); if (u && !/^https?:\/\//i.test(u)) u = 'http://' + u; return u; };
+  const kindOf = (u) => { try { const h = new URL(u).hostname; return /^(localhost|127\.|\[?::1\]?$)/.test(h) ? 'this' : /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)/.test(h) || /\.(local|lan|home)$/.test(h) || !h.includes('.') ? 'lan' : /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h) || /\.ts\.net$/.test(h) ? 'tailnet' : 'web'; } catch (e) { return 'web'; } };
+  const KIND = { this: 'this computer only', lan: 'its own network only (home or work)', tailnet: 'your Tailscale network', web: 'the internet' };
+  // ask a place who it is (a couple of seconds at most)
+  async function probe(url, key) {
+    url = tidyUrl(url); if (!url) return { ok: false, why: 'No address' };
+    if (location.protocol === 'https:' && url.startsWith('http:')) return { ok: false, why: 'blocked', note: 'This page is on https, so the browser will not let it talk to an http address.' };
+    try { const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 2500); const r = await fetch(url + '/api/info', { headers: key ? { 'x-craft-key': key } : {}, signal: ctl.signal }); clearTimeout(t);
+      const j = await r.json(); if (!j || !j.server) return { ok: false, why: 'Something answers, but it is not a clip-art server' }; return { ok: true, info: j }; }
+    catch (e) { return { ok: false, why: 'No answer' }; }
+  }
+  // when ClipArtCraft opens: if the server in use does not answer, the first saved place that does
+  async function autoPlace() {
+    const P = places(); if (!P.auto || !P.list.length || serverOk) return;
+    for (const pl of P.list) { const r = await probe(pl.url, pl.key); if (!r.ok) continue; await L.server(pl.url); await L.serverKey(pl.key || ''); await checkServer(); toast(`Connected to ${pl.name} (${pl.url}).`); return; }
+  }
+  function connectWindow() {
+    const P = places(); let found = [];
+    (async () => { const u = await L.server(); if (u && !P.list.some((pl) => tidyUrl(pl.url) === tidyUrl(u))) { P.list.push({ name: kindOf(u) === 'this' ? 'This computer' : kindOf(u) === 'lan' ? 'Home network' : 'My server', url: u, key: await L.serverKey() }); savePlaces(P); draw(); } })();
+    const box = document.createElement('div'); box.className = 'lists-dlg'; box.setAttribute('role', 'dialog'); box.setAttribute('aria-label', 'Clip-art server');
+    const state = new Map(); // url → probe result
+    const where = location.protocol === 'file:' ? 'opened from files on this computer: it can use a server on this computer, on your network, or on the internet' : `opened from ${location.host}${location.protocol === 'https:' ? ' (https: only https servers can be used from here)' : ''}`;
+    function stat(u) { const r = state.get(tidyUrl(u)); if (!r) return '<span class="cn-st wait">…</span>'; if (!r.ok) return `<span class="cn-st bad" title="${esc(r.note || '')}">✕ ${esc(r.why)}</span>`;
+      const i = r.info; return `<span class="cn-st good">✓ answers</span> <span class="hint">${esc((i.libraries || []).map((l) => `${l.name}: ${l.database}`).join(', '))}${i.writable ? '' : ' · <b>needs its key to change things</b>'}</span>`; }
+    // what to do, worked out from what answered
+    function advice() {
+      const out = [], rs = [...state.entries()], ok = rs.filter(([, r]) => r.ok), lanDown = P.list.filter((pl) => ['lan'].includes(kindOf(pl.url)) && state.get(tidyUrl(pl.url)) && !state.get(tidyUrl(pl.url)).ok);
+      if (!rs.length) return '<li>Press <b>Look for servers</b>, or add a place with its address.</li>';
+      if (!ok.length && !P.list.some((pl) => kindOf(pl.url) === 'this')) out.push('Nothing answers. To use this computer: start the server with <code>server/start-server.cmd</code> (it needs Node 22.5 or newer), then look again.');
+      if (P.list.some((pl) => kindOf(pl.url) === 'this' && !(state.get(tidyUrl(pl.url)) || {}).ok)) out.push('The server on this computer does not answer: is it started (<code>server/start-server.cmd</code>)? Its window must stay open.');
+      if (lanDown.length) out.push(`<b>${esc(lanDown.map((pl) => pl.name).join(', '))}</b> ${lanDown.length === 1 ? 'is' : 'are'} on a home or office network (an address like 192.168.x.x), which only works inside that network. Away from it (at work, travelling) use a way in: a VPN into it (your router’s, or the QNAP’s QVPN / WireGuard), <b>Tailscale</b> (free for personal use, nothing opened to the internet: then use the computer’s Tailscale address), or myQNAPcloud. Or keep working: the library stays in this browser, and <b>Sync</b> catches up when you are back.`);
+      for (const [u, r] of ok) { const i = r.info, rc = i.reach || {};
+        if (!i.writable) out.push(`<b>${esc(u)}</b> answers, but changing the library from here needs its key: it is on the server’s setup page (<a href="${esc(u)}/setup" target="_blank" rel="noopener">${esc(u)}/setup</a>, Key for apps). Paste it in the place’s Key.`);
+        if (rc.kind === 'node' && !rc.shared && kindOf(u) === 'this') out.push(`The server on this computer is only for this computer. To use it from your other computers too, choose <b>Shared on the network</b> on its <a href="${esc(u)}/setup" target="_blank" rel="noopener">setup page</a> and start it again.`);
+        const more = (rc.addresses || []).filter((a) => kindOf(a) !== 'this' && !P.list.some((pl) => tidyUrl(pl.url) === tidyUrl(a)));
+        if (more.length) out.push(`From your other computers on the same network, the same server is at ${more.map((a) => `<code>${esc(a)}</code>`).join(' or ')} (add it as a place there).`); }
+      if (location.protocol === 'https:' && P.list.some((pl) => pl.url.startsWith('http:'))) out.push('This page is on https, so it cannot use http servers: open ClipArtCraft from its files (or an http address), or give the server https.');
+      if (ok.length && !out.length) out.push(`All good: <b>${esc(ok[0][0])}</b> answers${ok[0][1].info.writable ? ' and can be changed from here' : ''}.`);
+      return out.map((x) => `<li>${x}</li>`).join('');
+    }
+    function draw() {
+      const cur = tidyUrl(serverUrl);
+      box.innerHTML = `<div class="lists-in conn-in"><div class="lists-head"><b>Clip-art server</b><span class="grow"></span><button class="btn outline" type="button" data-c="close">Close</button></div>
+        <p class="hint">This ClipArtCraft is ${esc(where)}. ${cur ? `Now using <b>${esc(cur)}</b> (${serverOk ? 'answering' : 'not answering'}).` : 'Not using a server now: the library is kept in this browser.'}</p>
+        <div class="cn-list">${P.list.map((pl, i) => `<div class="cn-row${tidyUrl(pl.url) === cur ? ' on' : ''}" data-i="${i}">
+          <input class="input cn-name" data-f="name" value="${esc(pl.name)}" aria-label="Name" placeholder="Name (Home, Work…)">
+          <input class="input cn-url" data-f="url" value="${esc(pl.url)}" aria-label="Address" placeholder="http://192.168.1.20:3370">
+          <input class="input cn-key" data-f="key" type="password" autocomplete="off" value="${esc(pl.key || '')}" aria-label="Key" placeholder="Key (to change things)">
+          <div class="cn-tools"><button class="btn ${tidyUrl(pl.url) === cur ? 'primary' : 'outline'} sm" type="button" data-c="use">${tidyUrl(pl.url) === cur ? 'In use' : 'Use'}</button><button class="btn ghost sm" type="button" data-c="up" ${i ? '' : 'disabled'} title="Try it earlier">↑</button><button class="btn ghost sm" type="button" data-c="del" title="Remove this place">✕</button></div>
+          <div class="cn-stat">${stat(pl.url)} <span class="hint">· reaches ${KIND[kindOf(pl.url)]}</span></div></div>`).join('') || '<p class="hint">No places yet.</p>'}</div>
+        <div class="btns"><button class="btn outline" type="button" data-c="add">+ Add a place</button><button class="btn outline" type="button" data-c="look">Look for servers</button><button class="btn ghost" type="button" data-c="none">Don’t use a server</button></div>
+        ${found.length ? `<div class="cn-found"><b>Found</b>${found.map((u, i) => `<div class="cn-frow"><code>${esc(u)}</code> ${stat(u)} <button class="btn outline sm" type="button" data-found="${i}">Add as a place</button></div>`).join('')}</div>` : ''}
+        <label class="check"><input type="checkbox" data-auto ${P.auto ? 'checked' : ''}> When ClipArtCraft opens, use the first place that answers (top to bottom): the same copy works at home and at work</label>
+        <div class="cn-advice"><b>What to do</b><ul>${advice()}</ul></div>
+        <details class="cn-help"><summary>Which server should the library live on?</summary><ul>
+          <li><b>This computer</b> (<code>server/start-server.cmd</code>, Node): the simplest; only while this computer is on. Share it on the network to use it from your other computers.</li>
+          <li><b>A NAS or web host</b> (like the QNAP: <code>clipart-server.php</code> with MariaDB or SQLite): always on; anyone on that network can use it, changes need the key.</li>
+          <li><b>A small always-on box</b> (a Proxmox container or a Raspberry Pi running the Node server): always on, without a web host.</li>
+          <li><b>From anywhere</b>: any of these behind a VPN or Tailscale (safest), or a web host on the internet with https (changes still need the key).</li>
+          <li><b>No server</b>: the library stays in this browser; Export and the folder buttons move it between computers.</li></ul></details></div>`;
+    }
+    async function probeAll(urls) { await Promise.all([...new Set(urls.map(tidyUrl).filter(Boolean))].map(async (u) => { state.set(u, await probe(u, (P.list.find((pl) => tidyUrl(pl.url) === u) || {}).key)); })); draw(); }
+    box.addEventListener('input', (e) => { const row = e.target.closest('[data-i]'), f = e.target.dataset.f; if (row && f) { P.list[+row.dataset.i][f] = e.target.value; savePlaces(P); } if (e.target.matches('[data-auto]')) { P.auto = e.target.checked; savePlaces(P); } });
+    box.addEventListener('change', (e) => { if (e.target.dataset.f === 'url' || e.target.dataset.f === 'key') { const pl = P.list[+e.target.closest('[data-i]').dataset.i]; pl.url = tidyUrl(pl.url); savePlaces(P); probeAll([pl.url]); } });
+    box.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-c], [data-found]'); if (!b) { if (e.target === box) box.remove(); return; }
+      if (b.dataset.found !== undefined) { const u = found[+b.dataset.found]; P.list.push({ name: kindOf(u) === 'this' ? 'This computer' : kindOf(u) === 'lan' ? 'Home network' : 'Server', url: u, key: '' }); found = found.filter((x) => x !== u); savePlaces(P); draw(); return; }
+      const c = b.dataset.c, i = +((b.closest('[data-i]') || {}).dataset || {}).i;
+      if (c === 'close') { box.remove(); return; }
+      if (c === 'add') { P.list.push({ name: '', url: '', key: '' }); savePlaces(P); draw(); box.querySelector('.cn-row:last-child .cn-name').focus(); return; }
+      if (c === 'del') { P.list.splice(i, 1); savePlaces(P); draw(); return; }
+      if (c === 'up') { const [x] = P.list.splice(i, 1); P.list.splice(i - 1, 0, x); savePlaces(P); draw(); return; }
+      if (c === 'none') { await L.server(''); await checkServer(); draw(); toast('Not using a server now (the pictures stay here).'); return; }
+      if (c === 'use') { const pl = P.list[i]; pl.url = tidyUrl(pl.url); if (!pl.url) return toast('Type its address first.'); savePlaces(P); await L.server(pl.url); await L.serverKey(pl.key || ''); await checkServer(true); await probeAll([pl.url]); return; }
+      if (c === 'look') { b.disabled = true; b.textContent = 'Looking…';
+        const cands = [...P.list.map((pl) => pl.url), 'http://localhost:3370', 'http://localhost:8790', ...(/^https?:$/.test(location.protocol) ? [location.origin, location.origin + '/clipartcraft/server/clipart-server.php', location.origin + '/server/clipart-server.php'] : [])];
+        await probeAll(cands);
+        // what answered can tell its other addresses
+        const more = []; for (const [, r] of state) if (r.ok) for (const a of (r.info.reach || {}).addresses || []) more.push(a); if (more.length) await probeAll(more);
+        found = [...state.entries()].filter(([u, r]) => r.ok && !P.list.some((pl) => tidyUrl(pl.url) === u)).map(([u]) => u); draw(); return; }
+    });
+    document.body.append(box); draw(); probeAll(P.list.map((pl) => pl.url));
+  }
   async function checkServer(say) { serverUrl = await L.server(); serverOk = false; if (serverUrl) { try { const i = await L.serverInfo(); serverOk = true; if (say) toast(`Connected to the clip-art server (${i.libraries.map((l) => `${l.name}: ${l.database}`).join(', ')}).${i.writable ? '' : ' It can only be read from here.'}`); } catch (e) { if (say) toast(e.message); } } status(); }
   async function need() { if (!serverUrl) { await act('connect'); if (!serverUrl) throw new Error('Connect to a server first.'); } if (!serverOk) await checkServer(); if (!serverOk) throw new Error(`The clip-art server at ${serverUrl} did not answer (is it running?).`); }
   $('cats').onclick = (e) => { const t = e.target.closest('[data-tree]'); if (t) { const k = t.dataset.tree; if (openTree.has(k)) openTree.delete(k); else openTree.add(k); keepTree(); render(); return; } const b = e.target.closest('[data-cat]'); if (!b) return; cat = b.dataset.cat; sel.clear(); render(); };
@@ -452,6 +541,6 @@
     });
     document.body.append(box); (box.querySelector('[data-key]:placeholder-shown') || box.querySelector('[data-key]')).focus();
   }
-  loadLists().then(reload).then(() => checkServer()).then(offerResume).catch(fail);
+  loadLists().then(reload).then(() => checkServer()).then(autoPlace).then(offerResume).catch(fail);
   window.ClipArtCraft = { reload, items: () => items };
 })();
