@@ -351,7 +351,9 @@ if (require.main === module) {
     const S = settings(), lib = (x) => { const c = S.connections.find((k) => k.name === x); return library(c ? c.name : 'copy', c ? specOf(c) : x); };
     (async () => { const from = lib(a[1]), to = lib(a[2]); console.log(`Copying ${from.db.kind} ${from.db.where} → ${to.db.kind} ${to.db.where}`); const n = await copyLibrary(from, to); await from.db.close(); await to.db.close(); console.log(`Done: ${n} item${n === 1 ? '' : 's'}.`); })().catch((e) => { console.error(e.message); process.exit(1); });
   } else {
-    const S = settings(); if (a.includes('--share')) S.share = true; const pi = a.indexOf('--port'); if (pi >= 0) S.port = +a[pi + 1];
+    // --port and --share are remembered, so the next start without them is the same
+    const S = settings(); if (a.includes('--share')) S.share = true; const pi = a.indexOf('--port'); if (pi >= 0 && +a[pi + 1] > 0) S.port = +a[pi + 1];
+    if (pi >= 0 || a.includes('--share')) saveSettings(S);
     const srv = serve(S); srv.listen(S.port, S.share ? '0.0.0.0' : '127.0.0.1', () => {
       console.log(`Craft clip-art server ${VERSION}: http://localhost:${S.port}/`);
       for (const c of S.connections) console.log(`  library “${c.name}”${c.name === S.main ? ' (main)' : ''}: ${c.db === 'mysql' ? `MySQL/MariaDB ${c.host}:${c.port}/${c.database}` : `${c.db} ${c.path}`}`);
