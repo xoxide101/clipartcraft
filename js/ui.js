@@ -64,9 +64,9 @@
   const chosen = () => items.filter((it) => sel.has(it.id));
   // the Montage Slicer (js/slicer.js): what it added is shown and chosen
   const slicer = (file) => window.ClipArtSlicer.open({ file, toast, categories: cats().map(([c]) => c).filter(Boolean), done: async (made, category, sheetFile) => {
-    await reload(); cat = category; sel = new Set(made.map((m) => m.id)); render(); toast(`${made.length} picture${made.length === 1 ? '' : 's'} added to “${category}”.`); } });
+    await reload(); offerResume(); cat = category; sel = new Set(made.map((m) => m.id)); render(); toast(`${made.length} picture${made.length === 1 ? '' : 's'} added to “${category}”.`); } });
   // Import pictures (js/importer.js): what it added is shown and chosen
-  const importer = (files) => window.ClipArtImporter.open({ files, toast, server: !!serverUrl && serverOk, categories: cats().map(([c]) => c).filter(Boolean), done: async (made) => { await reload(); cat = '*'; sel = new Set(made.map((m) => m.id)); render(); toast(`${made.length} picture${made.length === 1 ? '' : 's'} added to the library.`); } });
+  const importer = (files) => window.ClipArtImporter.open({ files, toast, server: !!serverUrl && serverOk, categories: cats().map(([c]) => c).filter(Boolean), done: async (made) => { await reload(); offerResume(); cat = '*'; sel = new Set(made.map((m) => m.id)); render(); toast(`${made.length} picture${made.length === 1 ? '' : 's'} added to the library.`); } });
   async function act(a) {
     try {
       if (a === 'start') { startOpen = true; render(); return; }
@@ -97,6 +97,9 @@
       if (a === 'push') { const S = sel.size ? chosen() : items; if (!S.length) return toast('The library is empty.'); await need(); const done = await L.push(S, (n, t) => busy(`Sending ${n} of ${t}…`)); busy(); await reload(); toast(`Sent ${done.length} item${done.length === 1 ? '' : 's'} to the server.`); return; }
       if (a === 'resume') { await need(); const left = await L.pending(); const d = await L.push(left, (n, t) => busy(`Sending ${n} of ${t}…`)); busy(); await reload(); await offerResume(); toast(`Finished sending: ${d.length} picture${d.length === 1 ? '' : 's'}.`); return; }
       if (a === 'resume-forget') { await L.forgetPending(); await offerResume(); return; }
+      if (a.startsWith('undone-go-')) { const w = undone[+a.slice(10)]; if (!w) return; return w.pending === 'slice' ? slicer(WA.fileOf(w)) : importer([WA.fileOf(w)]); }
+      if (a.startsWith('undone-cancel-')) { await dropUndone(undone[+a.slice(14)]); await reload(); await offerResume(); return; }
+      if (a === 'undone-flush') { if (!confirm('Clear the whole Still to do list? (Pictures waiting to be sent stay here, just not sent; files nothing was made from leave the working area.)')) return; await L.forgetPending(); for (const w of undone) await dropUndone(w); await reload(); await offerResume(); return; }
       if (a === 'pull') { await need(); const r = await L.pull((n, t) => busy(`Getting ${n} of ${t}…`)); busy(); await reload(); toast(r.made.length ? `Got ${r.made.length} new or changed item${r.made.length === 1 ? '' : 's'} from the server (it has ${r.total}).` : `Already up to date (the server has ${r.total}).`); return; }
       if (a === 'sync') { await need(); const r = await L.pull((n, t) => busy(`Getting ${n} of ${t}…`)); const fresh = (await L.all()).filter((it) => !it.serverId); const d = await L.push(fresh, (n, t) => busy(`Sending ${n} of ${t}…`)); busy(); await reload(); toast(`In step with the server: got ${r.made.length}, sent ${d.length}.`); return; }
       if (a === 'unserver') { const S = chosen().filter((it) => it.serverId); if (!S.length) return toast('Choose something that is on the server.'); if (!confirm(`Take ${S.length === 1 ? `“${S[0].name}”` : `${S.length} items`} off the server? (They stay in this library.)`)) return; await L.removeFromServer(S); await reload(); toast('Taken off the server.'); return; }
@@ -184,13 +187,21 @@
   const ic = document.createElement('link'); ic.rel = 'icon'; ic.href = 'data:image/svg+xml,' + encodeURIComponent(LOGO.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ')); document.head.append(ic);
   document.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') { e.preventDefault(); act('add'); } });
 
-  // a send cut short (the page was closed or refreshed): offer to finish it
+  // Still to do: everything not processed when the page was last closed or refreshed (pictures still to send, files
+  // opened in the importer or the slicer and not added), each to process or cancel, or all flushed at once
+  let undone = [];
   async function offerResume() {
-    const left = await L.pending(); let bar = $('resume');
-    if (!left.length) { if (bar) bar.remove(); return; }
+    const left = await L.pending(), files = WA ? (await WA.all()).filter((w) => w.pending) : []; let bar = $('resume');
+    undone = files;
+    if (!left.length && !files.length) { if (bar) bar.remove(); return; }
     if (!bar) { bar = document.createElement('div'); bar.id = 'resume'; bar.className = 'resume'; $('desk').prepend(bar); }
-    bar.innerHTML = `<span><b>${left.length}</b> picture${left.length === 1 ? ' was' : 's were'} still being sent to the server when the page closed.</span><button class="btn primary" type="button" data-act="resume">Finish sending</button><button class="btn outline" type="button" data-act="resume-forget">Forget it</button>`;
+    const row = (text, go, cancel, label = 'Process') => `<li><span>${text}</span><button class="btn primary sm" type="button" data-act="${go}">${label}</button><button class="btn outline sm" type="button" data-act="${cancel}">Cancel</button></li>`;
+    bar.innerHTML = `<div class="resume-head"><b>Still to do</b><span class="hint">not finished when the page was last closed</span><span class="grow"></span><button class="btn outline sm" type="button" data-act="undone-flush">Flush all</button></div><ul>
+      ${left.length ? row(`<b>${left.length}</b> picture${left.length === 1 ? '' : 's'} still to send to the server`, 'resume', 'resume-forget', 'Send') : ''}
+      ${files.map((w, i) => row(`<b>${esc(w.fileName)}</b>: ${w.pending === 'slice' ? 'a sheet loaded in the slicer' : 'opened to import'}, nothing added from it yet`, 'undone-go-' + i, 'undone-cancel-' + i)).join('')}</ul>`;
   }
+  // cancel a file: off the list (and out of the working area if nothing was ever made from it)
+  async function dropUndone(w) { if (!w) return; if (!w.used) await WA.remove(w.id); else { w.pending = ''; await WA.put(w); } }
   reload().then(() => checkServer()).then(offerResume).catch(fail);
   window.ClipArtCraft = { reload, items: () => items };
 })();

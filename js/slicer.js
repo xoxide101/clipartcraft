@@ -347,12 +347,13 @@
         const it = await L.makeItem({ name: r.name.trim() || 'Clip art', category, png, svg, source: 'Montage Slicer: ' + sheetName }); if (src) it.sheet = src.id;
         made.push(await L.put(it));
       }
-      if (src) await window.CraftWork.add(sheetFile, { used: made.length });
+      if (src) await window.CraftWork.add(sheetFile, { used: made.length, pending: '' });
       el.querySelector('.sl-review').hidden = true; review = []; close(); opts.done && opts.done(made, category, sheetFile);
     }); } catch (e) { console.error(e); opts.toast && opts.toast('Adding failed: ' + (e.message || e)); btn.disabled = false; }
   }
   async function load(file) {
     if (!file) return; try { sheet = await readSheet(file); } catch (e) { opts.toast && opts.toast('That picture could not be read.'); return; }
+    if (window.CraftWork) window.CraftWork.add(file, { used: 0, pending: 'slice' }).catch(() => {});
     sheetFile = file; sheetName = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim(); skip.clear(); S.names = ''; S.category = ''; el.querySelector('.sl-empty').hidden = true;
     try { const a = autoCut(sheet); Object.assign(S, a.settings); autoSaid = a.said; } catch (e) { console.warn('Working out the cut failed', e); autoSaid = ''; }
     renderPanel(); find();

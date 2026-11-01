@@ -173,3 +173,10 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 .room-side:hover { opacity: 1; filter: brightness(1.2); }
 .room-key { display: inline-block; width: 12px; height: 4px; border-radius: 2px; vertical-align: middle; margin: 0 2px 0 6px; }
 .room-key.auto { background: #eab308; } .room-key.on { background: #3b82f6; } .room-key.off { background: #6b7280; opacity: .5; }
+.resume { display: grid; gap: 6px; }
+.resume-head { display: flex; gap: 10px; align-items: center; }
+.resume-head .grow { flex: 1; }
+.resume ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.resume li { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.resume li span { flex: 1; min-width: 200px; }
+.btn.sm { height: 26px; padding: 0 10px; font-size: 12.5px; }

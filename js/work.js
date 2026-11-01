@@ -1,7 +1,8 @@
 /* The working area (window.CraftWork): the sheets and files clip art was imported from, kept until they are deleted, so
    a sheet can be sliced again, or its pictures imported again with other settings. Only ClipArtCraft uses it, so it
    is a browser store of its own ('craft-clipart-work'), apart from the shared library.
-   A source: { id, name, fileName, type, size, added, used (pictures made from it), file: Blob, thumb, width, height } */
+   A source: { id, name, fileName, type, size, added, used (pictures made from it), file: Blob, thumb, width, height,
+   pending: 'import' | 'slice' while it is open in the importer or slicer and nothing has been added from it yet } */
 (function () {
   'use strict';
   const DB = 'craft-clipart-work', VERSION = 1;
@@ -33,11 +34,12 @@
     return { thumb: c.toDataURL('image/png'), width: w, height: h };
   }
   // keep a file (the same file again, by name and size, is the same source); used = pictures made from it this time
-  async function add(file, { used = 0 } = {}) {
+  // pending: 'import' / 'slice' when a file is opened and not processed yet; '' when it is done (or given up)
+  async function add(file, { used = 0, pending } = {}) {
     const old = (await all()).find((s) => s.fileName === file.name && s.size === file.size);
-    if (old) { old.used = (old.used || 0) + used; old.lastUsed = new Date().toISOString(); return put(old); }
+    if (old) { old.used = (old.used || 0) + used; old.lastUsed = new Date().toISOString(); if (pending !== undefined) old.pending = pending; return put(old); }
     const t = await thumbOf(file);
-    return put({ id: 'w' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: file.name.replace(/\.[^.]+$/, ''), fileName: file.name, type: file.type, size: file.size, added: new Date().toISOString(), used, file, ...t });
+    return put({ id: 'w' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: file.name.replace(/\.[^.]+$/, ''), fileName: file.name, type: file.type, size: file.size, added: new Date().toISOString(), used, pending: pending || '', file, ...t });
   }
   // a source as a File again (to slice or import once more)
   const fileOf = (src) => new File([src.file], src.fileName, { type: src.type || src.file.type });

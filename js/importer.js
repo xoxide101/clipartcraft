@@ -87,6 +87,7 @@
     for (const file of list) {
       if (/\.zip$/i.test(file.name)) { opts.toast && opts.toast(`${file.name}: a library ZIP is added with Import a library.`); continue; }
       let got; try { got = await F().pages(file); } catch (e) { opts.toast && opts.toast(`${file.name}: ${/jxl|jp2|j2k|jpx/i.test(file.name) ? 'this browser cannot read JPEG XL or JPEG 2000 yet' : e.message || 'could not be read'}`); continue; }
+      if (S.keepSources && W()) W().add(file, { used: 0, pending: 'import' }).catch(() => {});
       const fi = files.push({ file, name: file.name, svgText: /\.svg$/i.test(file.name) || file.type === 'image/svg+xml' ? await file.text() : null }) - 1, base = N().fromFile(file.name);
       const list2 = got.animated && S.animKeep ? [{ ...got[0], label: `Animation · ${got.frames} frames`, anim: { blob: got.blob, frames: got.frames } }] : got;
       list2.forEach((g, k) => {
@@ -292,7 +293,7 @@
         made.push(await L.put(it)); perFile.set(p.file, (perFile.get(p.file) || 0) + 1);
       }
       // how many pictures each file gave (and the ones cut up with the slicer)
-      if (S.keepSources && W()) { for (const [fi, n] of perFile) await W().add(files[fi].file, { used: n }); for (const f of files) if (f.used && !perFile.has(files.indexOf(f))) await W().add(f.file, { used: f.used }); }
+      if (S.keepSources && W()) { for (const [fi, n] of perFile) await W().add(files[fi].file, { used: n, pending: '' }); for (const f of files) if (!perFile.has(files.indexOf(f))) await W().add(f.file, { used: f.used || 0, pending: '' }); }
       if (S.alsoServer && opts.server) { btn.textContent = 'Sending to the server…'; try { await L.push(made); } catch (e) { opts.toast && opts.toast('Added here, but the server said: ' + e.message); } }
       const all = [...madeBySlicer, ...made]; reset(); close(); opts.done && opts.done(all);
     } catch (e) { console.error(e); opts.toast && opts.toast('Importing failed: ' + (e.message || e)); }
