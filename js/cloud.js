@@ -72,7 +72,8 @@ Answer with JSON only, in this form: {"name": "...", "category": "...", "style":
 - text: any words written on the picture, or ""`;
 
   async function look(canvas, lists) {
-    const p = provider(); if (!p) throw new Error('No cloud AI key yet: add one in Cloud AI settings.');
+    const p = provider(); if (!p) throw new Error('No cloud AI key yet: add one in Cloud AI settings.'); const t0 = performance.now(), logIt = (o) => window.CraftKeys && CraftKeys.activity('cloud', { what: 'Name and sort a picture', model: `${o.m || ''} (${NAMES[p]})`, ms: Math.round(performance.now() - t0), sent: `a ${canvas.width} × ${canvas.height} picture (as a 768 px JPEG) and the lists`, ...o });
+    try {
     const k = cfg.keys[p].trim(), m = await model(p), b64 = jpeg(canvas), prompt = promptFor(lists); let text = '';
     if (p === 'anthropic') {
       const j = await call('https://api.anthropic.com/v1/messages', { method: 'POST', headers: anthHeaders(k, true), body: JSON.stringify({ model: m, max_tokens: 600, messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } }, { type: 'text', text: prompt }] }] }) }, p);
@@ -85,13 +86,14 @@ Answer with JSON only, in this form: {"name": "...", "category": "...", "style":
       const j = await call(url, { method: 'POST', headers, body: JSON.stringify({ model: m, response_format: { type: 'json_object' }, messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${b64}` } }, { type: 'text', text: prompt }] }] }) }, p);
       text = j.choices?.[0]?.message?.content || '';
     }
-    const js = text.match(/\{[\s\S]*\}/); if (!js) throw new Error(`${NAMES[p]} did not answer in the expected form.`);
+    const js = text.match(/\{[\s\S]*\}/); if (!js) throw new Error(`${NAMES[p]} did not answer in the expected form.`); logIt({ m, came: text.slice(0, 300) });
     let a; try { a = JSON.parse(js[0]); } catch (e) { throw new Error(`${NAMES[p]} did not answer in the expected form.`); }
     // only words from the lists count for category, style and form (matched without minding case)
     const fit = (v, list) => list.find((x) => x.toLowerCase() === String(v || '').trim().toLowerCase()) || '';
     const name = String(a.name || '').trim().replace(/\s+/g, ' ').slice(0, 60);
     return { name: name ? name.charAt(0).toUpperCase() + name.slice(1) : '', category: fit(a.category, lists.categories), style: fit(a.style, lists.styles), form: fit(a.form, lists.forms),
       tags: (Array.isArray(a.tags) ? a.tags : []).map((t) => String(t).trim().toLowerCase()).filter(Boolean).slice(0, 10), description: String(a.description || '').trim(), text: String(a.text || '').trim(), model: `${m} (${NAMES[p]})` };
+    } catch (e) { logIt({ ok: false, came: e.message }); throw e; }
   }
 
   window.CraftCloud = {
