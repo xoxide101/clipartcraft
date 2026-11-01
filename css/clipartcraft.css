@@ -141,3 +141,16 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 /* the working area (files clip art was imported from) */
 .cats .work-head { margin: 12px 8px 4px; font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .tile .used { position: absolute; top: 9px; left: 9px; font-style: normal; font-size: 9.5px; font-weight: 700; padding: 1px 5px; border-radius: 4px; background: #15803d; color: #fff; }
+
+/* the slicer's review: every picture as it will be added, before anything is added */
+.sl-review { position: absolute; inset: 0; z-index: 3; display: flex; flex-direction: column; background: var(--bg); }
+.sl-review .warn { color: #c2410c; }
+.rv-grid { flex: 1; min-height: 0; overflow: auto; padding: 16px; display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); align-content: start; }
+.rv-card { display: grid; gap: 6px; padding: 8px; border: 2px solid var(--line); border-radius: 10px; background: var(--panel); }
+.rv-card.doubt { border-color: #f59e0b; }
+.rv-card.off { opacity: .45; }
+.rv-pic { display: grid; place-items: center; aspect-ratio: 1; border-radius: 6px; background: repeating-conic-gradient(var(--check-a) 0 25%, var(--check-b) 0 50%) 0 0 / 14px 14px; overflow: hidden; }
+.rv-pic img { max-width: 100%; max-height: 100%; }
+.rv-keep { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+.rv-keep input { accent-color: var(--accent); }
+.rv-card .hint { font-size: 11.5px; }

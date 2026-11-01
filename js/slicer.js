@@ -87,13 +87,31 @@
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) { const x = Math.round(a.x + c * cw + inset), y = Math.round(a.y + r * ch + inset), x1 = Math.round(a.x + (c + 1) * cw - inset), y1 = Math.round(a.y + (r + 1) * ch - inset); if (x1 - x > 2 && y1 - y > 2) out.push({ x, y, w: x1 - x, h: y1 - y }); }
     return out;
   }
-  // one grid cell: as it is, or its picture found in it and cut out (everything in the cell kept together)
-  function gridItem(img, cell, { cut = true, pad = 6 } = {}) {
-    const c = cropOf(img, cell.x, cell.y, cell.w, cell.h); c.at = { ...cell }; if (!cut) return c;
+  // one grid cell: the whole cell (its background see-through or not), or its picture found in it and cut out
+  // (everything in the cell kept together)
+  function gridItem(img, cell, { cut = true, see = true, pad = 6, tol = 40 } = {}) {
+    const c = cropOf(img, cell.x, cell.y, cell.w, cell.h); c.at = { ...cell }; if (!cut) return see ? boxClear(c, tol) : c;
     const sh = splitSheet(c, { gap: Math.max(c.width, c.height), min: 0.002 }); if (!sh.items.length) return c;
     const keep = new Set(sh.items.map((i) => i.id)), x0 = Math.min(...sh.items.map((i) => i.x)), y0 = Math.min(...sh.items.map((i) => i.y)), x1 = Math.max(...sh.items.map((i) => i.x + i.w)), y1 = Math.max(...sh.items.map((i) => i.y + i.h));
     for (let p = 0; p < sh.lab.length; p++) if (keep.has(sh.lab[p])) sh.lab[p] = 1;
-    const o = sheetItem(c, sh, { id: 1, x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, { pad, see: true }); o.at = { x: cell.x + o.at.x, y: cell.y + o.at.y, w: o.at.w, h: o.at.h }; return o;
+    const o = sheetItem(c, sh, { id: 1, x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, { pad, see }); o.at = { x: cell.x + o.at.x, y: cell.y + o.at.y, w: o.at.w, h: o.at.h }; return o;
+  }
+  // a whole box, its background made see-through: the colour of its corners, reached from the edges (so the same colour
+  // inside the picture stays), then clean edges
+  function boxClear(src, tolerance = 40) {
+    const w = src.width, h = src.height, o = new ImageData(new Uint8ClampedArray(src.data), w, h), d = o.data, bg = cornerBg(src), out = new Uint8Array(w * h), st = new Int32Array(w * h); let top = 0;
+    const near = (k) => d[k * 4 + 3] < 16 || Math.abs(d[k * 4] - bg[0]) + Math.abs(d[k * 4 + 1] - bg[1]) + Math.abs(d[k * 4 + 2] - bg[2]) <= tolerance;
+    const push = (k) => { if (!out[k] && near(k)) { out[k] = 1; st[top++] = k; } };
+    for (let x = 0; x < w; x++) { push(x); push((h - 1) * w + x); } for (let y = 0; y < h; y++) { push(y * w); push(y * w + w - 1); }
+    while (top) { const k = st[--top], x = k % w, y = (k / w) | 0; if (x > 0) push(k - 1); if (x < w - 1) push(k + 1); if (y > 0) push(k - w); if (y < h - 1) push(k + w); }
+    for (let k = 0; k < w * h; k++) if (out[k]) d[k * 4 + 3] = 0;
+    const r = defringe(o, bg, { reach: 2 }); r.at = src.at; return r;
+  }
+  // one found picture: cut out of the sheet (see sheetItem), or its whole box (with room round it) as it is on the sheet
+  function findItem(img, sheet, item, { cut = true, see = true, pad = 6, tol = 40 } = {}) {
+    if (cut) return sheetItem(img, sheet, item, { pad, see });
+    const x0 = Math.max(0, item.x - pad), y0 = Math.max(0, item.y - pad), x1 = Math.min(img.width, item.x + item.w + pad), y1 = Math.min(img.height, item.y + item.h + pad);
+    const c = cropOf(img, x0, y0, x1 - x0, y1 - y0); c.at = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }; return see ? boxClear(c, tol) : c;
   }
   // An SVG sheet: each picture cut out of the drawing itself (exact, not traced). The SVG keeps only the shapes that
   // reach into the picture's box, leaves out the sheet's background (shapes covering half the sheet or more), and its
@@ -119,7 +137,7 @@
   }
 
   // ------------------------------------------------------------------ the slicer window
-  const S = { mode: 'find', gap: 0, min: 0.2, pad: 6, see: true, rows: 3, cols: 3, inset: 0, cut: true, names: '', category: '', svg: true };
+  const S = { mode: 'find', gap: 0, min: 0.2, pad: 6, see: true, rows: 3, cols: 3, inset: 0, cut: true, tol: 16, view: 'result', names: '', category: '', svg: true };
   try { Object.assign(S, JSON.parse(localStorage.getItem('clipartcraft-slicer') || '{}'), { names: '', category: '' }); } catch (e) { /* blocked storage */ }
   const keep = () => { try { const { names, category, ...rest } = S; localStorage.setItem('clipartcraft-slicer', JSON.stringify(rest)); } catch (e) { /* blocked */ } };
   let sheetFile = null, sheet = null, sheetName = '', found = null, boxes = [], skip = new Set(), el = null, timer = 0, opts = {};
@@ -148,17 +166,20 @@
     return `<div class="props-head">Montage Slicer</div><div class="sec">
       ${sheet ? '' : '<p class="hint">Choose a sheet of clip art (a montage) to slice.</p>'}
       <button class="btn outline" type="button" data-sl="open">${sheet ? 'Another sheet…' : 'Choose a sheet…'}</button>
+      <div class="field"><span>Show</span><div class="seg" role="group"><button class="btn" type="button" data-view="result" aria-pressed="${S.view === 'result'}">The result (live)</button><button class="btn" type="button" data-view="boxes" aria-pressed="${S.view === 'boxes'}">The boxes</button></div></div>
       <div class="field"><span>How to cut</span><div class="seg" role="group"><button class="btn" type="button" data-mode="find" aria-pressed="${S.mode === 'find'}">Find the pictures</button><button class="btn" type="button" data-mode="grid" aria-pressed="${S.mode === 'grid'}">Grid</button></div></div>
       ${S.mode === 'find' ? `<p class="hint">For pictures with space round them on a plain or old-paper background.</p>
         ${field('Join parts closer than (pixels; 0 = automatic)', num('gap', 0, 200))}
         ${field('Smallest picture (% of the sheet)', num('min', 0, 10, 0.05))}
-        ${field('Room round each (pixels)', num('pad', 0, 80))}
-        ${chk('see', 'See-through background, clean edges')}`
+        ${field('Room round each (pixels)', num('pad', 0, 80))}`
       : `<p class="hint">For montages whose pictures sit in equal cells, even touching.</p>
         <div class="two">${field('Rows', num('rows', 1, 30))}${field('Columns', num('cols', 1, 30))}</div>
         ${field('Trim off each cell’s edge (pixels: borders, gutters)', num('inset', 0, 200))}
-        ${chk('cut', 'Cut each picture out of its cell (see-through)')}
         ${S.cut ? field('Room round each (pixels)', num('pad', 0, 80)) : ''}`}
+      ${chk('cut', S.mode === 'find' ? 'Cut each picture out (off: its whole box)' : 'Cut each picture out of its cell (off: the whole cell)')}
+      ${chk('see', 'See-through background')}
+      ${S.see && !S.cut ? field('How close to the background counts as background <small class="hint">(lower keeps light parts, like a white tile)</small>', num('tol', 1, 120)) : ''}
+      <p class="hint">${S.cut ? (S.see ? 'Each picture cut out, the background see-through.' : 'Each picture cut out, the background colour kept.') : (S.see ? 'Each picture is its whole box (a tile keeps its own shape and colour); only the page round it is see-through.' : 'Each picture is its whole box, exactly as on the sheet.')}</p>
       <div class="field"><span>Names, in order <small class="hint">(one per line or with commas)</small></span><textarea class="input" rows="4" data-k="names" placeholder="Barn, Bible, Buffalo…">${esc(S.names)}</textarea></div>
       ${field('Category', `<input class="input" data-k="category" list="sl-cats" value="${esc(S.category)}" placeholder="${esc(sheetName || 'Americana, Buildings…')}"><datalist id="sl-cats">${cats}</datalist>`)}
       <p class="hint">Each picture is added as PNG and SVG: ${svgSheet ? 'this sheet is an SVG, so each is cut out of the drawing itself' : 'the SVG is traced from the picture'}.</p>
@@ -174,18 +195,38 @@
     else { found = null; boxes = gridCells(sheet, { rows: Math.max(1, +S.rows | 0), cols: Math.max(1, +S.cols | 0), inset: +S.inset }); }
     skip = new Set([...skip].filter((i) => i < boxes.length)); draw(); count();
   }
-  function draw() {
-    const c = el.querySelector('canvas'); if (!sheet) { c.hidden = true; return; } c.hidden = false; c.width = sheet.width; c.height = sheet.height;
-    const x = c.getContext('2d'), names = nameList(), big = Math.max(sheet.width, sheet.height), lw = Math.max(2, Math.round(big / 400)), fs = Math.max(12, Math.round(big / 60)), pad = S.mode === 'find' || S.cut ? +S.pad : 0;
-    x.putImageData(sheet, 0, 0); x.lineWidth = lw; x.font = `700 ${fs}px system-ui, sans-serif`; x.textBaseline = 'top';
+  // one picture as it will be added (the same cutting as Add uses)
+  const cutOne = (b) => { const o = { cut: S.cut, see: S.see, pad: +S.pad, tol: +S.tol || 16 }; return S.mode === 'find' ? findItem(sheet, found, b.item, o) : gridItem(sheet, b, o); };
+  let drawRun = 0;
+  async function draw() {
+    const c = el.querySelector('canvas'); if (!sheet) { c.hidden = true; return; } c.hidden = false;
+    const run = ++drawRun, live = S.view === 'result';
+    // the result is worked out off-screen and shown when ready, so the sheet never flickers while settings change
+    const off = document.createElement('canvas'); off.width = sheet.width; off.height = sheet.height;
+    const x = off.getContext('2d'), names = nameList(), big = Math.max(sheet.width, sheet.height), lw = Math.max(2, Math.round(big / 400)), fs = Math.max(12, Math.round(big / 60)), pad = S.mode === 'find' || S.cut ? +S.pad : 0;
+    if (live) { const k = Math.max(8, Math.round(big / 80)); for (let yy = 0; yy < off.height; yy += k) for (let xx = 0; xx < off.width; xx += k) { x.fillStyle = ((xx + yy) / k) % 2 ? '#c9ccd6' : '#f4f5f8'; x.fillRect(xx, yy, k, k); } }
+    else x.putImageData(sheet, 0, 0);
+    if (live) {
+      const t0 = performance.now();
+      for (let i = 0; i < boxes.length; i++) {
+        if (run !== drawRun) return; // the settings changed again: this picture is out of date
+        const b = boxes[i];
+        if (skip.has(i)) { const pp = S.mode === 'find' ? pad : 0, part = cropOf(sheet, b.x - pp, b.y - pp, b.w + pp * 2, b.h + pp * 2); x.globalAlpha = 0.25; x.drawImage(canvasOf(part), b.x - pp, b.y - pp); x.globalAlpha = 1; continue; }
+        const img = cutOne(b); x.drawImage(canvasOf(img), img.at.x, img.at.y);
+        if (performance.now() - t0 > 40) { await wait(0); } // a big sheet: let the page breathe between pictures
+      }
+      if (run !== drawRun) return;
+    }
+    x.lineWidth = Math.max(1, Math.round(lw / (live ? 2 : 1))); x.font = `700 ${fs}px system-ui, sans-serif`; x.textBaseline = 'top';
     let n = 0;
     boxes.forEach((b, i) => {
-      const off = skip.has(i), p = S.mode === 'find' ? pad : 0, bx = b.x - p, by = b.y - p, bw = b.w + p * 2, bh = b.h + p * 2;
-      if (off) { x.fillStyle = 'rgba(30,30,40,.55)'; x.fillRect(bx, by, bw, bh); }
-      x.strokeStyle = off ? '#8a8fa3' : '#e63946'; x.setLineDash(off ? [lw * 3, lw * 2] : []); x.strokeRect(bx, by, bw, bh); x.setLineDash([]);
-      const label = off ? '✕' : `${++n}${names[n - 1] ? ' ' + names[n - 1] : ''}`, tw = x.measureText(label).width, ly = by - fs - 6 >= 0 ? by - fs - 6 : by;
-      x.fillStyle = off ? '#8a8fa3' : '#e63946'; x.fillRect(bx, ly, tw + 10, fs + 6); x.fillStyle = '#fff'; x.fillText(label, bx + 5, ly + 3);
+      const skipped = skip.has(i), p = S.mode === 'find' ? pad : 0, bx = b.x - p, by = b.y - p, bw = b.w + p * 2, bh = b.h + p * 2;
+      if (skipped && !live) { x.fillStyle = 'rgba(30,30,40,.55)'; x.fillRect(bx, by, bw, bh); }
+      x.strokeStyle = skipped ? '#8a8fa3' : live ? 'rgba(230,57,70,.45)' : '#e63946'; x.setLineDash(skipped || live ? [lw * 3, lw * 2] : []); x.strokeRect(bx, by, bw, bh); x.setLineDash([]);
+      const label = skipped ? '✕' : `${++n}${names[n - 1] ? ' ' + names[n - 1] : ''}`, tw = x.measureText(label).width, ly = by - fs - 6 >= 0 ? by - fs - 6 : by;
+      x.fillStyle = skipped ? '#8a8fa3' : '#e63946'; x.fillRect(bx, ly, tw + 10, fs + 6); x.fillStyle = '#fff'; x.fillText(label, bx + 5, ly + 3);
     });
+    c.width = sheet.width; c.height = sheet.height; c.getContext('2d').drawImage(off, 0, 0);
   }
   const later = (ms = 200) => { clearTimeout(timer); timer = setTimeout(find, ms); };
   async function cuts(onStep) {
@@ -194,22 +235,70 @@
       if (skip.has(i)) continue; const b = boxes[i]; n++;
       let nm = safe(names[n - 1] || `${base} – ${n}`) || `${base} – ${n}`; seen[nm] = (seen[nm] || 0) + 1; if (seen[nm] > 1) nm += ` ${seen[nm]}`;
       onStep(n, nm); await wait(0);
-      const img = S.mode === 'find' ? sheetItem(sheet, found, b.item, { pad: +S.pad, see: S.see }) : gridItem(sheet, b, { cut: S.cut, pad: +S.pad });
-      const png = await new Promise((r) => canvasOf(img).toBlob(r, 'image/png')); let svg = null;
-      if (svgSheet && img.at) { try { svg = svgCut(svgSheet, img.at); } catch (e) { console.warn('Cutting the SVG failed', nm, e); } }
-      if (!svg && window.CRAFT_RASTERTRACE) { try { svg = CRAFT_RASTERTRACE.traceImage(img, { profile: 'icon' }).svg; } catch (e) { console.warn('Tracing failed', nm, e); } }
-      out.push({ name: nm, png, svg, img });
+      out.push({ name: nm, img: cutOne(b), keep: true });
     }
     return out;
   }
+  // what might be wrong with a picture, in plain words (shown in the review before anything is added)
+  function doubts(img) {
+    const d = img.data, W = img.width, H = img.height, out = []; let clear = 0;
+    for (let i = 3; i < d.length; i += 4) if (d[i] < 16) clear++;
+    const share = clear / (W * H);
+    if (share > 0.9) out.push('Almost nothing is left: lower “how close”, or turn off See-through.');
+    if (S.see && share < 0.005) out.push('Nothing is see-through: the background was not found.');
+    if (S.see && S.cut) { let edge = 0; const at = (x, y) => d[(y * W + x) * 4 + 3] > 128; for (let x = 0; x < W; x++) { if (at(x, 0)) edge++; if (at(x, H - 1)) edge++; } for (let y = 0; y < H; y++) { if (at(0, y)) edge++; if (at(W - 1, y)) edge++; } if (edge > (W + H) * 0.25) out.push('It touches the edge of its box: part of it may be cut off (more room round it, or another grid?).'); }
+    // cut out: compared with only the page round its box made see-through (strictly), did it lose parts of the picture?
+    // (a white tile on white paper, light parts at the edge)
+    if (S.see && S.cut && img.at) {
+      const strict = boxClear(cropOf(sheet, img.at.x, img.at.y, img.at.w, img.at.h), 8), sd = strict.data; let lost = 0;
+      for (let i = 3; i < d.length && i < sd.length; i += 4) if (sd[i] > 128 && d[i] < 16) lost++;
+      if (lost > W * H * 0.02) out.push('Light parts of the picture may have gone with the background (a white tile?): try Cut out off with See-through on.');
+    }
+    if (W < 24 || H < 24) out.push(`Very small (${W} × ${H} pixels).`);
+    return out;
+  }
+  // the review: every picture as it will be added, to name, keep or leave out, before anything is added
+  let review = [];
   async function addAll() {
-    const btn = el.querySelector('[data-sl=add]'), total = boxes.length - skip.size, category = String(S.category || '').trim() || sheetName;
+    const btn = el.querySelector('[data-sl=add]'), total = boxes.length - skip.size;
     btn.disabled = true;
     try {
-      const made = [];
-      for (const c of await cuts((n, nm) => { btn.textContent = `Adding ${n} of ${total}: ${nm}…`; })) made.push(await L.put(await L.makeItem({ name: c.name, category, png: c.png, svg: c.svg, source: 'Montage Slicer: ' + sheetName })));
-      close(); opts.done && opts.done(made, category, sheetFile);
-    } catch (e) { console.error(e); opts.toast && opts.toast('Slicing failed: ' + (e.message || e)); count(); btn.disabled = false; }
+      review = await cuts((n) => { btn.textContent = `Getting ${n} of ${total} ready…`; }); review.forEach((r) => { r.doubts = doubts(r.img); });
+      // on a sheet of like pictures, one clearly smaller than the rest has probably lost a part (a white tile on white paper)
+      if (review.length >= 4) { const med = (a) => a.slice().sort((p, q) => p - q)[a.length >> 1], mw = med(review.map((r) => r.img.width)), mh = med(review.map((r) => r.img.height));
+        for (const r of review) if (r.img.width < mw * 0.92 || r.img.height < mh * 0.92) r.doubts.push(`Smaller than the others (${r.img.width} × ${r.img.height}, most are about ${mw} × ${mh}): part of it may have gone with the background. Try Cut out off with See-through on.`); }
+      showReview();
+    }
+    catch (e) { console.error(e); opts.toast && opts.toast('Slicing failed: ' + (e.message || e)); }
+    count(); btn.disabled = false;
+  }
+  function showReview() {
+    let box = el.querySelector('.sl-review'); if (!box) { box = document.createElement('div'); box.className = 'sl-review'; el.append(box); }
+    const n = review.filter((r) => r.keep).length, flagged = review.filter((r) => r.doubts.length).length;
+    box.hidden = false;
+    box.innerHTML = `<div class="sl-bar"><b>Are these what you want?</b><span class="hint">${review.length} picture${review.length === 1 ? '' : 's'}${flagged ? ` · <span class="warn">${flagged} to look at</span>` : ' · nothing looks wrong'} · untick any to leave out, change any name</span><span class="grow"></span>
+        <button class="btn outline" type="button" data-rv="back">Back to the sheet</button><button class="btn primary" type="button" data-rv="add" ${n ? '' : 'disabled'}>Add ${n} to the library</button></div>
+      <div class="rv-grid">${review.map((r, i) => `<div class="rv-card${r.keep ? '' : ' off'}${r.doubts.length ? ' doubt' : ''}" data-i="${i}">
+        <div class="rv-pic"><img src="${canvasOf(r.img).toDataURL('image/png')}" alt=""></div>
+        <label class="rv-keep"><input type="checkbox" data-keep ${r.keep ? 'checked' : ''}> Add</label>
+        <input class="input" data-name value="${esc(r.name)}" aria-label="Name">
+        <span class="hint">${r.img.width} × ${r.img.height}</span>
+        ${r.doubts.map((d) => `<span class="hint warn">⚠ ${esc(d)}</span>`).join('')}</div>`).join('')}</div>`;
+  }
+  async function addReviewed(btn) {
+    const keep = review.filter((r) => r.keep), category = String(S.category || '').trim() || sheetName; if (!keep.length) return;
+    btn.disabled = true;
+    try {
+      const made = []; let k = 0;
+      for (const r of keep) {
+        btn.textContent = `Adding ${++k} of ${keep.length}: ${r.name}…`; await wait(0);
+        const png = await new Promise((ok) => canvasOf(r.img).toBlob(ok, 'image/png')); let svg = null;
+        if (svgSheet && r.img.at) { try { svg = svgCut(svgSheet, r.img.at); } catch (e) { console.warn('Cutting the SVG failed', r.name, e); } }
+        if (!svg && window.CRAFT_RASTERTRACE) { try { svg = CRAFT_RASTERTRACE.traceImage(r.img, { profile: 'icon' }).svg; } catch (e) { console.warn('Tracing failed', r.name, e); } }
+        made.push(await L.put(await L.makeItem({ name: r.name.trim() || 'Clip art', category, png, svg, source: 'Montage Slicer: ' + sheetName })));
+      }
+      el.querySelector('.sl-review').hidden = true; review = []; close(); opts.done && opts.done(made, category, sheetFile);
+    } catch (e) { console.error(e); opts.toast && opts.toast('Adding failed: ' + (e.message || e)); btn.disabled = false; }
   }
   async function load(file) {
     if (!file) return; try { sheet = await readSheet(file); } catch (e) { opts.toast && opts.toast('That picture could not be read.'); return; }
@@ -221,16 +310,21 @@
     el.innerHTML = `<div class="sl-bar"><b>Montage Slicer</b><span class="hint">Cut a sheet of clip art into separate pictures for the library</span><span class="grow"></span><button class="btn outline" type="button" data-sl="close">Close</button></div>
       <div class="sl-main"><div class="sl-desk"><canvas hidden></canvas><div class="sl-empty"><button class="btn primary" type="button" data-sl="open">Choose a sheet…</button><p class="hint">or drop a picture here</p></div></div><aside class="sl-side side right"></aside></div>`;
     el.addEventListener('click', async (e) => {
+      const rv = e.target.closest('[data-rv]');
+      if (rv && rv.dataset.rv === 'back') { el.querySelector('.sl-review').hidden = true; return; }
+      if (rv && rv.dataset.rv === 'add') return addReviewed(rv);
+      if (e.target.matches('[data-keep]')) { const i = +e.target.closest('[data-i]').dataset.i; review[i].keep = e.target.checked; const y = el.querySelector('.rv-grid').scrollTop; showReview(); el.querySelector('.rv-grid').scrollTop = y; return; }
       const a = e.target.closest('[data-sl]'), m = e.target.closest('[data-mode]');
       if (a && a.dataset.sl === 'close') return close();
       if (a && a.dataset.sl === 'open') return load(await pickSheet());
       if (a && a.dataset.sl === 'add') return addAll();
       if (m) { S.mode = m.dataset.mode; keep(); skip.clear(); renderPanel(); find(); return; }
+      const v = e.target.closest('[data-view]'); if (v) { S.view = v.dataset.view; keep(); renderPanel(); draw(); return; }
       if (e.target.tagName === 'CANVAS') { const r = e.target.getBoundingClientRect(), k = sheet.width / r.width, px = (e.clientX - r.left) * k, py = (e.clientY - r.top) * k, p = S.mode === 'find' ? +S.pad : 0;
         const i = boxes.findIndex((b) => px >= b.x - p && px <= b.x + b.w + p && py >= b.y - p && py <= b.y + b.h + p); if (i >= 0) { if (skip.has(i)) skip.delete(i); else skip.add(i); draw(); count(); } }
     });
-    el.addEventListener('input', (e) => { const k = e.target.dataset.k; if (!k) return; S[k] = e.target.type === 'checkbox' ? e.target.checked : e.target.type === 'number' ? +e.target.value : e.target.value; keep();
-      if (k === 'names') draw(); else if (k === 'cut') { renderPanel(); later(0); } else if (k !== 'category' && k !== 'svg') later(); });
+    el.addEventListener('input', (e) => { if (e.target.matches('[data-name]')) { review[+e.target.closest('[data-i]').dataset.i].name = e.target.value; return; } const k = e.target.dataset.k; if (!k) return; S[k] = e.target.type === 'checkbox' ? e.target.checked : e.target.type === 'number' ? +e.target.value : e.target.value; keep();
+      if (k === 'names') draw(); else if (k === 'cut' || k === 'see') { renderPanel(); later(0); } else if (k === 'tol') { clearTimeout(timer); timer = setTimeout(draw, 150); } else if (k !== 'category' && k !== 'svg') later(); });
     el.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); });
     el.addEventListener('drop', (e) => { e.preventDefault(); e.stopPropagation(); const f = [...e.dataTransfer.files].find((x) => /^image\//.test(x.type)); if (f) load(f); });
     el.addEventListener('dragenter', (e) => e.stopPropagation()); el.addEventListener('dragleave', (e) => e.stopPropagation());
@@ -240,6 +334,6 @@
   function open(o = {}) {
     opts = o; if (!el) { build(); document.addEventListener('keydown', onKey); } el.hidden = false; renderPanel(); el.querySelector('.sl-empty').hidden = !!sheet; if (o.file) load(o.file); else if (sheet) find();
   }
-  function close() { if (el) el.hidden = true; }
-  window.ClipArtSlicer = { open, close, splitSheet, sheetItem, gridCells, gridItem, svgCut, readSheet, state: () => ({ mode: S.mode, boxes: boxes.length, skipped: skip.size }) };
+  function close() { if (el) { el.hidden = true; const r = el.querySelector('.sl-review'); if (r) r.hidden = true; } }
+  window.ClipArtSlicer = { open, close, splitSheet, sheetItem, findItem, boxClear, gridCells, gridItem, svgCut, readSheet, state: () => ({ mode: S.mode, boxes: boxes.length, skipped: skip.size }) };
 })();
