@@ -54,6 +54,15 @@ function checkLogin(a, user, password) {
   const h = crypto.pbkdf2Sync(password, a.salt, a.rounds || 100000, 32, 'sha256'), want = Buffer.from(a.hash, 'hex');
   return h.length === want.length && crypto.timingSafeEqual(h, want);
 }
+// ------------------------------------------------------------------ the debug log: debug.log beside this file, and /debug
+// Every request, error, database test and copy, so problems can be looked at afterwards. Never passwords, keys or logins.
+const DEBUG_FILE = path.join(HERE, 'debug.log'), LOG = [];
+function dlog(kind, text, extra) {
+  const e = { t: new Date().toISOString(), kind, text: String(text), ...(extra ? { extra } : {}) }; LOG.push(e); if (LOG.length > 600) LOG.shift();
+  try { if (fs.existsSync(DEBUG_FILE) && fs.statSync(DEBUG_FILE).size > 2e6) fs.renameSync(DEBUG_FILE, DEBUG_FILE + '.old'); fs.appendFileSync(DEBUG_FILE, `${e.t} [${kind}] ${e.text}${extra ? ' ' + JSON.stringify(extra) : ''}\n`); } catch (err) { /* read-only folder */ }
+}
+process.on('uncaughtException', (e) => { dlog('crash', e.stack || e); console.error(e); });
+process.on('unhandledRejection', (e) => dlog('crash', (e && e.stack) || e));
 function saveSettings(s) { try { fs.writeFileSync(SETTINGS, GUARD + JSON.stringify(s, null, 2)); return true; } catch (e) { return false; } }
 
 // ------------------------------------------------------------------ the item: what every database keeps
@@ -256,16 +265,40 @@ function serve(S) {
     for (const k of Object.keys(it.files || {})) links[k] = `${base(req)}/clipart/${L}${nm}${k === 'png' || k === 'svg' ? '' : '.' + k}.${extOf(it.files[k])}`;
     return { ...it, files: undefined, links, library: lib.name }; };
   const body = (req) => new Promise((ok, no) => { const c = []; let n = 0; req.on('data', (d) => { n += d.length; if (n > 200e6) { no(Object.assign(new Error('Too big.'), { code: 413 })); req.destroy(); } else c.push(d); }); req.on('end', () => ok(Buffer.concat(c))); req.on('error', no); });
-  const send = (res, code, data, type = 'application/json; charset=utf-8', extra = {}) => { res.writeHead(code, { 'Content-Type': type, 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'GET,POST,PATCH,PUT,DELETE,OPTIONS', 'Access-Control-Allow-Private-Network': 'true', ...extra }); res.end(Buffer.isBuffer(data) || typeof data === 'string' ? data : JSON.stringify(data)); };
+  const send = (res, code, data, type = 'application/json; charset=utf-8', extra = {}) => { if (data && typeof data === 'object' && !Buffer.isBuffer(data) && (data.error || data.ok === false)) res.craftError = data.error; res.writeHead(code, { 'Content-Type': type, 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'GET,POST,PATCH,PUT,DELETE,OPTIONS', 'Access-Control-Allow-Private-Network': 'true', ...extra }); res.end(Buffer.isBuffer(data) || typeof data === 'string' ? data : JSON.stringify(data)); };
   const local = (req) => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
   // the admin's login, sent with each setup call as x-craft-login: base64("user:password")
   const loginOk = (req) => { if (!S.admin || !req.headers['x-craft-login']) return false; const t = Buffer.from(String(req.headers['x-craft-login']), 'base64').toString('utf8'), i = t.indexOf(':'); return i > 0 && checkLogin(S.admin, t.slice(0, i), t.slice(i + 1)); };
   const mayWrite = (req) => local(req) || req.headers['x-craft-key'] === S.key || loginOk(req);
 
+  // what the server and its databases are, for the debug page (no passwords)
+  const env = () => {
+    let mysql2 = 'not installed (npm install mysql2)'; try { mysql2 = require('mysql2/package.json').version; } catch (e) { /* none */ }
+    let sqlite = '?'; try { const { DatabaseSync } = require('node:sqlite'); const d = new DatabaseSync(':memory:'); sqlite = d.prepare('select sqlite_version() v').get().v; d.close(); } catch (e) { sqlite = 'not available: ' + e.message; }
+    let writable = true; try { fs.accessSync(HERE, fs.constants.W_OK); } catch (e) { writable = false; }
+    return { server: 'node', version: VERSION, node: process.version, platform: `${process.platform} ${os.release()}`, host: os.hostname(), folder: HERE, writable, settings: SETTINGS, mysql2, sqlite,
+      port: S.port, share: S.share, main: S.main, admin: S.admin ? S.admin.user : '(not made yet)', started: STARTED, memoryMB: Math.round(process.memoryUsage().rss / 1048576),
+      connections: S.connections.map((c) => ({ ...c, password: undefined, hasPassword: !!c.password, open: libs.has(c.name) })) };
+  };
+  const STARTED = new Date().toISOString();
+  dlog('start', `server ${VERSION} on port ${S.port}${S.share ? ' (shared)' : ''}`, { node: process.version, libraries: S.connections.map((c) => `${c.name}: ${c.db}`) });
+
   return http.createServer(async (req, res) => {
-    const u = new URL(req.url, 'http://x'), p = decodeURIComponent(u.pathname).split('/').filter(Boolean), Q = Object.fromEntries(u.searchParams);
+    const u = new URL(req.url, 'http://x'), p = decodeURIComponent(u.pathname).split('/').filter(Boolean), Q = Object.fromEntries(u.searchParams), t0 = Date.now();
+    if (p[1] !== 'debug') res.on('finish', () => dlog('http', `${req.method} ${u.pathname} → ${res.statusCode} (${Date.now() - t0} ms)`, { from: req.socket.remoteAddress, ...(res.craftError ? { error: res.craftError } : {}) }));
     try {
       if (req.method === 'OPTIONS') return send(res, 204, '');
+      // the debug page and its log: the same people as the setup (this computer, or the admin login)
+      if (p[0] === 'debug' && p.length === 1) return send(res, 200, fs.readFileSync(path.join(HERE, 'debug.html')), 'text/html; charset=utf-8', { 'Cache-Control': 'no-cache' });
+      if (p[0] === 'api' && p[1] === 'debug') {
+        if (!local(req) && !loginOk(req)) return send(res, 403, { error: 'The debug page needs the admin login.', login: true });
+        if (req.method === 'GET') return send(res, 200, { env: env(), log: LOG.slice(-(+Q.n || 300)) });
+        const j = JSON.parse((await body(req)).toString('utf8') || '{}');
+        if (p[2] === 'clear') { LOG.length = 0; try { fs.writeFileSync(DEBUG_FILE, ''); } catch (e) { /* read-only */ } dlog('debug', 'log cleared'); return send(res, 200, { cleared: true }); }
+        if (p[2] === 'note') { dlog('note', String(j.text || '').slice(0, 4000)); return send(res, 200, { noted: true }); }
+        if (p[2] === 'client') { dlog('client', String(j.text || '').slice(0, 4000), j.extra); return send(res, 200, { noted: true }); }
+        return send(res, 404, { error: 'Not found.' });
+      }
       // the setup has its own login (below); everything else that changes the library needs this computer, the key or that login
       if (req.method !== 'GET' && req.method !== 'HEAD' && !(p[0] === 'api' && p[1] === 'setup') && !mayWrite(req)) return send(res, 403, { error: 'Only this computer, or a program with the key, can change the library.' });
       // pictures: /clipart/[library/]Name.png | Name.svg | Name.thumb.png | Name.anim.gif
@@ -300,17 +333,19 @@ function serve(S) {
           Object.assign(S, { connections: list, main: list.some((c) => c.name === j.main) ? j.main : list[0].name, port: +j.port || S.port, share: j.share !== undefined ? !!j.share : S.share });
           if (j.key) S.key = String(j.key);
           await closeAll(); if (!saveSettings(S)) return send(res, 500, { error: 'The settings could not be saved (is the server folder read-only?).' });
+          dlog('setup', `saved: main ${S.main}`, { libraries: S.connections.map((c) => `${c.name}: ${c.db}${c.db === 'mysql' ? ` ${c.socket || `${c.host}:${c.port}`}/${c.database} as ${c.user}` : ` ${c.path || ''}`}`) });
           return send(res, 200, { saved: true, restart, main: S.main, connections: S.connections.map(hide) });
         }
         if (p[2] === 'test' && req.method === 'POST') {
           const c = withPassword(j.connection || {}); let l = null;
-          try { l = library(c.name || 'test', specOf(c)); const r = await l.db.list({ limit: 1 }); return send(res, 200, { ok: true, items: r.total, where: l.db.where, database: l.db.kind }); }
-          catch (e) { return send(res, 200, { ok: false, error: String(e.message || e) }); } finally { if (l) try { await l.db.close(); } catch (e) { /* gone */ } }
+          const what = { name: c.name, db: c.db, host: c.host, port: c.port, database: c.database, user: c.user, socket: c.socket, path: c.path, hasPassword: !!c.password };
+          try { l = library(c.name || 'test', specOf(c)); const r = await l.db.list({ limit: 1 }); dlog('test', `${c.name}: connected, ${r.total} items (${l.db.where})`, what); return send(res, 200, { ok: true, items: r.total, where: l.db.where, database: l.db.kind }); }
+          catch (e) { dlog('test', `${c.name}: FAILED ${e.message || e}`, { ...what, code: e.code, errno: e.errno }); return send(res, 200, { ok: false, error: String(e.message || e) }); } finally { if (l) try { await l.db.close(); } catch (e) { /* gone */ } }
         }
         if (p[2] === 'copy' && req.method === 'POST') {
           if (j.from === j.to) return send(res, 400, { error: 'Choose two different libraries.' });
           for (const w of ['from', 'to']) if (!S.connections.some((c) => c.name === j[w])) return send(res, 400, { error: `There is no library called “${j[w] || ''}” (save the libraries first).` });
-          const n = await copyLibrary(libOf(j.from), libOf(j.to), () => {}); return send(res, 200, { copied: n, from: j.from, to: j.to });
+          dlog('copy', `${j.from} → ${j.to}: starting`); const n = await copyLibrary(libOf(j.from), libOf(j.to), (m) => dlog('copy', m.trim())); dlog('copy', `${j.from} → ${j.to}: ${n} items copied`); return send(res, 200, { copied: n, from: j.from, to: j.to });
         }
         return send(res, 404, { error: 'Not found.' });
       }
@@ -338,7 +373,7 @@ function serve(S) {
         if (id && req.method === 'DELETE') return (await lib.remove(id)) ? send(res, 200, { deleted: id }) : send(res, 404, { error: 'No such item.' });
       }
       send(res, 404, { error: 'Not found.' });
-    } catch (e) { send(res, e.code >= 400 && e.code < 600 ? e.code : 500, { error: String(e.message || e) }); }
+    } catch (e) { dlog('error', `${req.method} ${u.pathname}: ${(e && e.stack) || e}`); send(res, e.code >= 400 && e.code < 600 ? e.code : 500, { error: String(e.message || e) }); }
   });
 }
 

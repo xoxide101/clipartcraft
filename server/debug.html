@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clip-art server debug</title>
+<style>
+  :root { --bg: #f1f2f6; --panel: #fff; --panel-2: #eef0f6; --line: #d8dbe6; --fg: #1d1f29; --muted: #626779; --accent: #0f766e; --accent-ink: #fff; --bad: #b91c1c; --warn: #b45309; --good: #15803d; color-scheme: light; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #17181e; --panel: #1f2028; --panel-2: #282a34; --line: #393c4a; --fg: #eceef6; --muted: #a3a8ba; --accent: #2dd4bf; --accent-ink: #0b1f1c; --bad: #f87171; --warn: #fbbf24; --good: #4ade80; color-scheme: dark; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2; }
+  header h1 { font-size: 16px; margin: 0 8px 0 0; }
+  header .grow { flex: 1; }
+  main { max-width: 1200px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 8px; }
+  h2 { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0; }
+  button, select { font: inherit; height: 30px; padding: 0 12px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); cursor: pointer; }
+  button:hover { background: var(--panel-2); }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  label { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+  textarea, input { font: inherit; color: var(--fg); background: var(--panel-2); border: 1px solid var(--line); border-radius: 7px; padding: 6px 9px; width: 100%; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  td { padding: 3px 8px 3px 0; vertical-align: top; border-bottom: 1px solid var(--line); }
+  td:first-child { color: var(--muted); white-space: nowrap; width: 1%; }
+  .log { font: 12px/1.5 ui-monospace, Consolas, monospace; max-height: 60vh; overflow: auto; background: var(--panel-2); border-radius: 8px; padding: 8px; white-space: pre-wrap; word-break: break-word; }
+  .log .l { padding: 1px 0; border-bottom: 1px dashed transparent; }
+  .log .t { color: var(--muted); }
+  .k-error, .k-crash { color: var(--bad); font-weight: 600; }
+  .k-test, .k-copy, .k-setup, .k-start { color: var(--accent); }
+  .k-note, .k-client { color: var(--warn); }
+  .s4, .s5 { color: var(--bad); }
+  .hint { color: var(--muted); font-size: 12.5px; margin: 0; }
+  .ok { color: var(--good); } .no { color: var(--bad); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header><h1>Clip-art server debug</h1><button class="primary" type="button" id="copy">Copy for Claude</button><button type="button" id="refresh">Refresh</button>
+  <label><input type="checkbox" id="auto" checked style="width:auto"> Live</label><label><input type="checkbox" id="quiet" style="width:auto"> Only problems</label>
+  <span class="grow"></span><a href="setup">Setup</a><button type="button" id="clear">Clear the log</button></header>
+<main id="main"><p class="hint">Loading…</p></main>
+<script>
+/* The debug page of the Craft clip-art server: what the server is (versions, databases, no passwords) and its log
+   (requests, errors, database tests, copies, and notes written here). "Copy for Claude" puts all of it on the
+   clipboard to paste into the chat; the same log is in debug.log beside the server. */
+(function () {
+  'use strict';
+  const $ = (s) => document.querySelector(s), esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  const API = location.pathname.replace(/\/debug\/?$/, '') + '/api/debug';
+  let login = ''; try { login = sessionStorage.getItem('craft-clipart-login') || ''; } catch (e) { /* blocked */ }
+  let data = null, timer = 0;
+  const H = () => ({ 'content-type': 'application/json', ...(login ? { 'x-craft-login': login } : {}) });
+  async function load() {
+    let r; try { r = await fetch(API + '?n=400', { headers: H() }); } catch (e) { $('#main').innerHTML = `<section><p class="no">The server did not answer (${esc(e.message)}). Is it running?</p></section>`; return; }
+    const j = await r.json().catch(() => ({ error: `The server said ${r.status}.` }));
+    if (r.status === 403) { $('#main').innerHTML = `<section><p class="no">${esc(j.error)}</p><p class="hint">Log in on the <a href="setup">setup page</a> first (in this browser tab), then come back.</p></section>`; $('#auto').checked = false; return; }
+    data = j; render();
+  }
+  const isProblem = (e) => /error|crash/.test(e.kind) || / → [45]\d\d /.test(e.text) || /FAILED/.test(e.text) || (e.extra && e.extra.error);
+  function render() {
+    const e = data.env, list = $('#quiet').checked ? data.log.filter(isProblem) : data.log;
+    const row = (k, v) => `<tr><td>${esc(k)}</td><td>${v}</td></tr>`;
+    const conns = (e.connections || []).map((c) => `<b>${esc(c.name)}</b>${c.name === e.main ? ' (main)' : ''}: ${esc(c.db)} ${c.db === 'mysql' ? esc(`${c.socket ? 'socket ' + c.socket : `${c.host}:${c.port}`} / ${c.database} as ${c.user || '?'}${c.hasPassword ? ' (password saved)' : ' (no password)'}`) : esc(c.path || '')}${c.open ? ' · open' : ''}`).join('<br>');
+    const scroll = $('.log'), atEnd = !scroll || scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 20;
+    $('#main').innerHTML = `
+      <section><h2>This server</h2><table>
+        ${row('Server', esc(`${e.server} ${e.version} · ${e.node || e.php || ''} · ${e.platform || ''}`))}
+        ${row('Folder', `${esc(e.folder)} ${e.writable ? '<span class="ok">(can write)</span>' : '<span class="no">(cannot write!)</span>'}`)}
+        ${row('Port', esc(`${e.port ?? '(the web server’s)'}${e.share ? ' · shared on the network' : ''}`))}
+        ${row('Databases', esc(e.server === 'node' ? `SQLite ${e.sqlite} · mysql2 ${e.mysql2}` : `PDO drivers: ${(e.pdo || []).join(', ')}`))}
+        ${row('Libraries', conns || '—')}
+        ${row('Admin', esc(e.admin))}${row('Started', esc(e.started || ''))}</table></section>
+      <section><h2>Tell Claude what you did</h2><div style="display:flex;gap:8px"><input id="note" placeholder="e.g. I clicked Test on qnap and it said…"><button type="button" id="addnote">Add to the log</button></div></section>
+      <section><h2>Log ${$('#quiet').checked ? '(only problems)' : ''} · ${list.length} lines</h2><div class="log">${list.map((l) => `<div class="l"><span class="t">${esc(l.t.slice(11, 19))}</span> <span class="k-${esc(l.kind)}">[${esc(l.kind)}]</span> <span class="${/ → 5\d\d /.test(l.text) ? 's5' : / → 4\d\d /.test(l.text) ? 's4' : ''}">${esc(l.text)}</span>${l.extra ? ` <span class="t">${esc(JSON.stringify(l.extra))}</span>` : ''}</div>`).join('') || '<span class="t">Nothing yet.</span>'}</div></section>`;
+    const lg = $('.log'); if (atEnd) lg.scrollTop = lg.scrollHeight;
+    $('#addnote').onclick = note; $('#note').onkeydown = (ev) => { if (ev.key === 'Enter') note(); };
+  }
+  async function note() { const t = $('#note').value.trim(); if (!t) return; await fetch(API + '/note', { method: 'POST', headers: H(), body: JSON.stringify({ text: t }) }); $('#note').value = ''; load(); }
+  // everything as plain text, ready to paste into the chat (no passwords are in it)
+  function asText() {
+    const e = data.env, lines = [`Clip-art server debug, ${new Date().toISOString()}`, '', 'Server: ' + JSON.stringify({ ...e, connections: undefined }, null, 1), 'Libraries:'];
+    for (const c of e.connections || []) lines.push(`  ${c.name}${c.name === e.main ? ' (main)' : ''}: ${JSON.stringify(c)}`);
+    lines.push('', `Log (last ${data.log.length}):`); for (const l of data.log) lines.push(`${l.t} [${l.kind}] ${l.text}${l.extra ? ' ' + JSON.stringify(l.extra) : ''}`);
+    return lines.join('\n');
+  }
+  $('#copy').onclick = async () => { if (!data) return; try { await navigator.clipboard.writeText(asText()); $('#copy').textContent = 'Copied: paste it to Claude'; } catch (e) { const w = window.open('', '_blank'); if (w) { w.document.body.innerText = asText(); } } setTimeout(() => { $('#copy').textContent = 'Copy for Claude'; }, 2500); };
+  $('#refresh').onclick = load; $('#quiet').onchange = () => data && render();
+  $('#clear').onclick = async () => { if (!confirm('Clear the log?')) return; await fetch(API + '/clear', { method: 'POST', headers: H(), body: '{}' }); load(); };
+  const tick = () => { clearInterval(timer); if ($('#auto').checked) timer = setInterval(() => { if (document.activeElement && document.activeElement.id === 'note') return; load(); }, 2000); };
+  $('#auto').onchange = tick;
+  load(); tick();
+})();
+</script>
+</body>
+</html>
