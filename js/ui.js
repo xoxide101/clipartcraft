@@ -300,7 +300,10 @@
   // Saved places (Home, This PC, Work, Away…) each with an address and its key; ClipArtCraft can use the first one that
   // answers when it opens, so the same copy works at home and at work. Kept in this browser (with the keys: typed by the user).
   const PLACES = 'clipartcraft-places';
-  const places = () => { try { const v = JSON.parse(localStorage.getItem(PLACES) || 'null'); if (v && Array.isArray(v.list)) return v; } catch (e) { /* blocked */ } return { auto: true, list: [] }; };
+  // (a browser that has none yet starts from config.js beside index.html: the user's own places, saved from this window)
+  const places = () => { try { const v = JSON.parse(localStorage.getItem(PLACES) || 'null'); if (v && Array.isArray(v.list)) return v; } catch (e) { /* blocked */ }
+    const c = window.CLIPARTCRAFT_CONFIG; if (c && Array.isArray(c.places)) { const v = { auto: c.auto !== false, list: c.places.map((pl) => ({ name: String(pl.name || ''), url: String(pl.url || ''), key: String(pl.key || '') })) }; savePlaces(v); return v; }
+    return { auto: true, list: [] }; };
   const savePlaces = (v) => { try { localStorage.setItem(PLACES, JSON.stringify(v)); } catch (e) { /* blocked */ } };
   const tidyUrl = (u) => { u = String(u || '').trim().replace(/\/+$/, ''); if (u && !/^https?:\/\//i.test(u)) u = 'http://' + u; return u; };
   const kindOf = (u) => { try { const h = new URL(u).hostname; return /^(localhost|127\.|\[?::1\]?$)/.test(h) ? 'this' : /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)/.test(h) || /\.(local|lan|home)$/.test(h) || !h.includes('.') ? 'lan' : /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h) || /\.ts\.net$/.test(h) ? 'tailnet' : 'web'; } catch (e) { return 'web'; } };
@@ -314,8 +317,13 @@
     catch (e) { return { ok: false, why: 'No answer' }; }
   }
   // when ClipArtCraft opens: if the server in use does not answer, the first saved place that does
+  // the server that sits beside a hosted ClipArtCraft (…/clipartcraft/server/clipart-server.php)
+  const besideUs = () => (/^https?:$/.test(location.protocol) ? [new URL('server/clipart-server.php', location.href).href, new URL('server', location.href).href].map(tidyUrl) : []);
   async function autoPlace() {
-    const P = places(); if (!P.auto || !P.list.length || serverOk) return;
+    const P = places(); if (serverOk) return;
+    // opened from a website with no places yet: the server beside it, if it answers
+    if (!P.list.length) { for (const u of besideUs()) { const r = await probe(u); if (!r.ok) continue; P.list.push({ name: 'This website', url: u, key: '' }); savePlaces(P); await L.server(u); await checkServer(); toast(`Connected to the clip-art server beside this page (${u}).`); return; } return; }
+    if (!P.auto) return;
     for (const pl of P.list) { const r = await probe(pl.url, pl.key); if (!r.ok) continue; await L.server(pl.url); await L.serverKey(pl.key || ''); await checkServer(); toast(`Connected to ${pl.name} (${pl.url}).`); return; }
   }
   function connectWindow() {
@@ -353,6 +361,8 @@
           <div class="cn-tools"><button class="btn ${tidyUrl(pl.url) === cur ? 'primary' : 'outline'} sm" type="button" data-c="use">${tidyUrl(pl.url) === cur ? 'In use' : 'Use'}</button><button class="btn ghost sm" type="button" data-c="up" ${i ? '' : 'disabled'} title="Try it earlier">↑</button><button class="btn ghost sm" type="button" data-c="del" title="Remove this place">✕</button></div>
           <div class="cn-stat">${stat(pl.url)} <span class="hint">· reaches ${KIND[kindOf(pl.url)]}</span></div></div>`).join('') || '<p class="hint">No places yet.</p>'}</div>
         <div class="btns"><button class="btn outline" type="button" data-c="add">+ Add a place</button><button class="btn outline" type="button" data-c="look">Look for servers</button><button class="btn ghost" type="button" data-c="none">Don’t use a server</button></div>
+        <div class="cn-save"><button class="btn outline sm" type="button" data-c="save" ${P.list.length ? '' : 'disabled'} title="A config.js to put beside ClipArtCraft’s index.html: every browser that opens that copy starts with these places">Save my places to a file (config.js)</button>
+          <label class="check"><input type="checkbox" data-withkeys> with the keys <small class="hint">(only for a copy on your own computer: on a website anyone could read them)</small></label></div>
         ${found.length ? `<div class="cn-found"><b>Found</b>${found.map((u, i) => `<div class="cn-frow"><code>${esc(u)}</code> ${stat(u)} <button class="btn outline sm" type="button" data-found="${i}">Add as a place</button></div>`).join('')}</div>` : ''}
         <label class="check"><input type="checkbox" data-auto ${P.auto ? 'checked' : ''}> When ClipArtCraft opens, use the first place that answers (top to bottom): the same copy works at home and at work</label>
         <div class="cn-advice"><b>What to do</b><ul>${advice()}</ul></div>
@@ -375,10 +385,17 @@
       if (c === 'add') { P.list.push({ name: '', url: '', key: '' }); savePlaces(P); draw(); box.querySelector('.cn-row:last-child .cn-name').focus(); return; }
       if (c === 'del') { P.list.splice(i, 1); savePlaces(P); draw(); return; }
       if (c === 'up') { const [x] = P.list.splice(i, 1); P.list.splice(i - 1, 0, x); savePlaces(P); draw(); return; }
+      if (c === 'save') {
+        const withKeys = box.querySelector('[data-withkeys]').checked, cfg = { auto: P.auto, places: P.list.filter((pl) => pl.url).map((pl) => ({ name: pl.name, url: tidyUrl(pl.url), ...(withKeys && pl.key ? { key: pl.key } : {}) })) };
+        const text = `/* ClipArtCraft: your own settings. Put this file beside index.html; a browser that has no places yet starts with these.
+   Made by Server › Connect › Save my places to a file. Not part of ClipArtCraft itself (git-ignored).${withKeys ? '\n   It has your keys in it: keep it off public websites.' : ''} */
+window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
+`;
+        download(new Blob([text], { type: 'text/javascript' }), 'config.js'); toast('Saved config.js: put it beside ClipArtCraft’s index.html.'); return; }
       if (c === 'none') { await L.server(''); await checkServer(); draw(); toast('Not using a server now (the pictures stay here).'); return; }
       if (c === 'use') { const pl = P.list[i]; pl.url = tidyUrl(pl.url); if (!pl.url) return toast('Type its address first.'); savePlaces(P); await L.server(pl.url); await L.serverKey(pl.key || ''); await checkServer(true); await probeAll([pl.url]); return; }
       if (c === 'look') { b.disabled = true; b.textContent = 'Looking…';
-        const cands = [...P.list.map((pl) => pl.url), 'http://localhost:3370', 'http://localhost:8790', ...(/^https?:$/.test(location.protocol) ? [location.origin, location.origin + '/clipartcraft/server/clipart-server.php', location.origin + '/server/clipart-server.php'] : [])];
+        const cands = [...P.list.map((pl) => pl.url), 'http://localhost:3370', 'http://localhost:8790', ...besideUs()];
         await probeAll(cands);
         // what answered can tell its other addresses
         const more = []; for (const [, r] of state) if (r.ok) for (const a of (r.info.reach || {}).addresses || []) more.push(a); if (more.length) await probeAll(more);

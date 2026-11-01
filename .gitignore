@@ -6,3 +6,4 @@ server/clipart-config.php
 server/node_modules/
 server/debug.log
 server/debug.log.old
+config.js
