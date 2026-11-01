@@ -47,6 +47,17 @@ An item in the browser store: `{ id, name, category, tags, width, height, added,
 
 Firefox keeps each page opened from disk separate, so there the library is per app; use the folder, ZIPs or the server to move it.
 
+## How this was made
+
+This app is **vibe coded**: its author designed and directed it in plain conversation, feature by feature, and an AI coding assistant (Claude, by Anthropic) wrote the code.
+
+It is a **genuine clean-room build**, not a decompiled or AI-rebuilt copy of anything:
+- Nothing was decompiled, disassembled or reverse-engineered, in whole or in part.
+- No code, artwork, fonts, icons or data files from any other clip-art program were used, and none were given to the AI to work from.
+- The picture file formats are read from their publicly documented layouts; the ideas (finding pictures on a sheet, sorting by category) are the general, well-known ones. Every line of ClipArtCraft's own code was made new.
+
+This is an **alpha**: it works and is tested, but it is young and still changing.
+
 ## Credits
 
-SVG tracing uses RasterTrace by bradsec (MIT) with VTracer by VisionCortex (MIT), bundled in `lib/craft-rastertrace.js`. Naming by what is in a picture uses CLIP ViT-B/32 (OpenAI, MIT; the Xenova ONNX copy) through Transformers.js (Hugging Face, Apache-2.0), bundled in `lib/craft-ai-libs.js` (`lib/ai-build` builds it). The slicer's finding and cutting is ClipArtCraft's own copy of ImageCraft's Split a sheet, and the file formats are its own copy of ImageCraft's readers.
+SVG tracing uses RasterTrace by bradsec (MIT) with VTracer by VisionCortex (MIT), bundled in `lib/craft-rastertrace.js`. Naming by what is in a picture uses CLIP ViT-B/32 (OpenAI, MIT; the Xenova ONNX copy) and Florence-2 base (Microsoft, MIT; the onnx-community copy) through Transformers.js (Hugging Face, Apache-2.0), bundled in `lib/craft-ai-libs.js` (`lib/ai-build` builds it). The slicer's finding and cutting is ClipArtCraft's own copy of ImageCraft's Split a sheet, and the file formats are its own copy of ImageCraft's readers.
