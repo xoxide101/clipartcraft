@@ -214,7 +214,7 @@
   // rows and columns left out, their names (row labels, column headings), captions read, and boxes moved by hand
   // (keyed by where the box was found). `work` is the main area with ruled-out parts and left-out text painted over as
   // page: everything is found and cut from it; (wx, wy) is where it sits on the sheet.
-  let area = null, outs = [], table = null, offRows = new Set(), offCols = new Set(), rowNames = [], colNames = [], captions = [], readText = new Map(), moved = new Map(), prefs = new Map(), splits = new Map(), zones = [], sheetTitle = '', tool = 'pick', work = null, wx = 0, wy = 0;
+  let area = null, outs = [], table = null, offRows = new Set(), offCols = new Set(), rowNames = [], colNames = [], captions = [], readText = new Map(), moved = new Map(), prefs = new Map(), splits = new Map(), zones = [], solids = [], sheetTitle = '', tool = 'pick', work = null, wx = 0, wy = 0;
   const keyOf = (b) => `${Math.round(b.x + wx)},${Math.round(b.y + wy)},${Math.round(b.w)},${Math.round(b.h)}`;
   function prep() {
     const a = area || { x: 0, y: 0, w: sheet.width, h: sheet.height }; wx = a.x; wy = a.y; work = cropOf(sheet, a.x, a.y, a.w, a.h); pagePlain = null;
@@ -292,14 +292,14 @@
       <p class="hint">Click a box on the sheet to leave that picture out (or put it back); drag its edges to make it bigger or smaller.</p></div>`;
   }
   // the main area, ruled-out parts and text: what a drag on the sheet does, and the margins as numbers
-  const TOOLS = { pick: 'Click a box to leave it out; drag a box’s edge to move it (to trim off a name, or take in a bit that was missed).', area: 'Drag a box round the part to cut: everything outside it is left out. Drag its edges to move them.', out: 'Drag a box over anything to leave out (a title, a label, a watermark, a picture). Click one to take it away again.', grid: 'Drag a box over a row or a part that came out wrong, then say how many pictures across and down: it is cut as that grid. Right-click one of its pictures to change or remove it.' };
+  const TOOLS = { pick: 'Click a box to leave it out; drag a box’s edge to move it (to trim off a name, or take in a bit that was missed).', area: 'Drag a box round the part to cut: everything outside it is left out. Drag its edges to move them.', out: 'Drag a box over anything to leave out (a title, a label, a watermark, a picture). Click one to take it away again.', solid: 'Drag a box over part of a picture that went see-through by mistake (a face the colour of the page): it is kept exactly as on the sheet. Click one to take it away again.', grid: 'Drag a box over a row or a part that came out wrong, then say how many pictures across and down: it is cut as that grid. Right-click one of its pictures to change or remove it.' };
   function areaHtml() {
     if (!sheet) return '';
     const a = area || { x: 0, y: 0, w: sheet.width, h: sheet.height }, m = { t: a.y, l: a.x, b: sheet.height - a.y - a.h, r: sheet.width - a.x - a.w };
-    return `<div class="field"><span>On the sheet</span><div class="seg" role="group"><button class="btn" type="button" data-tool="pick" aria-pressed="${tool === 'pick'}">Pick</button><button class="btn" type="button" data-tool="area" aria-pressed="${tool === 'area'}">Main area</button><button class="btn" type="button" data-tool="out" aria-pressed="${tool === 'out'}">Rule out</button><button class="btn" type="button" data-tool="grid" aria-pressed="${tool === 'grid'}">Grid here</button></div></div>
+    return `<div class="field"><span>On the sheet</span><div class="seg" role="group"><button class="btn" type="button" data-tool="pick" aria-pressed="${tool === 'pick'}">Pick</button><button class="btn" type="button" data-tool="area" aria-pressed="${tool === 'area'}">Main area</button><button class="btn" type="button" data-tool="out" aria-pressed="${tool === 'out'}">Rule out</button><button class="btn" type="button" data-tool="grid" aria-pressed="${tool === 'grid'}">Grid here</button><button class="btn" type="button" data-tool="solid" aria-pressed="${tool === 'solid'}">Keep solid</button></div></div>
       <p class="hint">${TOOLS[tool]}</p>
       <div class="field"><span>Main area: margins <small class="hint">(pixels left off each side)</small></span><div class="four">${[['t', 'Top'], ['b', 'Bottom'], ['l', 'Left'], ['r', 'Right']].map(([k, w]) => `<label><small>${w}</small><input class="input" type="number" min="0" step="1" data-m="${k}" value="${Math.round(m[k])}"></label>`).join('')}</div></div>
-      <div class="btns"><button class="btn outline sm" type="button" data-sl="whole" ${area ? '' : 'disabled'}>Whole sheet</button><button class="btn outline sm" type="button" data-sl="clear-outs" ${outs.length ? '' : 'disabled'}>Clear ${outs.length || ''} ruled out</button>${zones.length ? `<button class="btn outline sm" type="button" data-sl="unzone">Remove ${zones.length} grid${zones.length === 1 ? '' : 's'} set by hand</button>` : ''}${moved.size || prefs.size || splits.size ? `<button class="btn outline sm" type="button" data-sl="unmove">Undo ${moved.size + splits.size + [...prefs.keys()].filter((k) => !moved.has(k)).length} changed box${moved.size + prefs.size + splits.size === 1 ? '' : 'es'}</button>` : ''}</div>
+      <div class="btns"><button class="btn outline sm" type="button" data-sl="whole" ${area ? '' : 'disabled'}>Whole sheet</button><button class="btn outline sm" type="button" data-sl="clear-outs" ${outs.length ? '' : 'disabled'}>Clear ${outs.length || ''} ruled out</button>${solids.length ? `<button class="btn outline sm" type="button" data-sl="unsolid">Clear ${solids.length} kept solid</button>` : ''}${zones.length ? `<button class="btn outline sm" type="button" data-sl="unzone">Remove ${zones.length} grid${zones.length === 1 ? '' : 's'} set by hand</button>` : ''}${moved.size || prefs.size || splits.size ? `<button class="btn outline sm" type="button" data-sl="unmove">Undo ${moved.size + splits.size + [...prefs.keys()].filter((k) => !moved.has(k)).length} changed box${moved.size + prefs.size + splits.size === 1 ? '' : 'es'}</button>` : ''}</div>
       ${chk('notext', 'Leave out text: labels and captions (they can become names)')}`;
   }
   // a table's (or grid's) rows and columns: untick to leave one out; row labels name the pictures, column headings
@@ -404,7 +404,18 @@
     }
     if (b.fillShape) img = fillShape(img);
     if (b.noShadow) img = dropShadow(img, pageOf(b));
-    return b.wand && b.wand.length ? wandApply(img, b.wand) : img;
+    if (b.wand && b.wand.length) img = wandApply(img, b.wand);
+    return solids.length ? keepSolid(img) : img;
+  }
+  // Parts marked "keep solid" (sheet pixels) are put back exactly as on the sheet, whatever was taken as background
+  function keepSolid(img) {
+    const at = img.at || { x: 0, y: 0 }, W = img.width, H = img.height, src = work.data, SW = work.width; let o = null;
+    for (const r of solids) {
+      const x0 = Math.max(0, Math.round(r.x - wx - at.x)), y0 = Math.max(0, Math.round(r.y - wy - at.y)), x1 = Math.min(W, Math.round(r.x + r.w - wx - at.x)), y1 = Math.min(H, Math.round(r.y + r.h - wy - at.y)); if (x1 <= x0 || y1 <= y0) continue;
+      if (!o) o = new ImageData(new Uint8ClampedArray(img.data), W, H);
+      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const sx = at.x + x, sy = at.y + y; if (sx >= SW || sy >= work.height) continue; const q = (sy * SW + sx) * 4, k = (y * W + x) * 4; o.data[k] = src[q]; o.data[k + 1] = src[q + 1]; o.data[k + 2] = src[q + 2]; o.data[k + 3] = src[q + 3]; }
+    }
+    if (!o) return img; o.at = img.at; return o;
   }
   // Everything inside the outline of what was kept, brought back as it is on the sheet: for a solid thing whose face is
   // the colour of the page (a silver drive on light grey). The outline is the convex hull of the kept pixels.
@@ -486,7 +497,7 @@
     const i = boxes.findIndex((b) => { const sb = sheetBox(b); return p.x >= sb.x && p.x <= sb.x + sb.w && p.y >= sb.y && p.y <= sb.y + sb.h; });
     const setPref = (b, o) => { prefs.set(b.key, { ...(prefs.get(b.key) || {}), ...o }); find(); };
     const snap = (b, keepShadow) => () => { const r = snapBox(b, keepShadow); if (!r) return opts.toast && opts.toast('Nothing in that box but page.'); moved.set(b.key, r); if (!keepShadow) prefs.set(b.key, { ...(prefs.get(b.key) || {}), noShadow: true }); renderPanel(); find(); };
-    const tools = [{ label: 'Grid here', checked: tool === 'grid', run: () => { tool = 'grid'; renderPanel(); } }, { label: 'Pick', checked: tool === 'pick', run: () => { tool = 'pick'; renderPanel(); } }, { label: 'Main area', checked: tool === 'area', run: () => { tool = 'area'; renderPanel(); } }, { label: 'Rule out', checked: tool === 'out', run: () => { tool = 'out'; renderPanel(); } }];
+    const tools = [{ label: 'Keep solid', checked: tool === 'solid', run: () => { tool = 'solid'; renderPanel(); } }, { label: 'Grid here', checked: tool === 'grid', run: () => { tool = 'grid'; renderPanel(); } }, { label: 'Pick', checked: tool === 'pick', run: () => { tool = 'pick'; renderPanel(); } }, { label: 'Main area', checked: tool === 'area', run: () => { tool = 'area'; renderPanel(); } }, { label: 'Rule out', checked: tool === 'out', run: () => { tool = 'out'; renderPanel(); } }];
     if (i < 0) {
       const o = outs.findIndex((r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h);
       return CraftMenu.show(e.clientX, e.clientY, [...(o >= 0 ? [{ label: 'Take this ruled-out box away', run: () => { outs.splice(o, 1); renderPanel(); find(); } }, '-'] : []), ...tools, '-',
@@ -503,6 +514,8 @@
       { label: off ? 'Put this picture back' : 'Leave this picture out', run: () => { if (off) skip.delete(i); else skip.add(i); draw(); count(); } },
       '-', { label: 'Snap the box to the picture', run: snap(b, true) }, { label: 'Snap to the picture, leaving out its shadow', run: snap(b, false) },
       '-', { label: 'How much background to take', disabled: off, sub: [[12, 'Much less (keeps light parts)'], [24, 'Less'], [0, 'Normal'], [60, 'More']].map(([v, l]) => ({ label: l, checked: (b.ctol || 0) === v, run: () => setPref(b, { ctol: v || undefined }) })) },
+      { label: 'Keep part of it solid: drag a box over it…', disabled: off, run: () => { tool = 'solid'; renderPanel(); opts.toast && opts.toast('Drag a box over the part to keep as it is on the sheet.'); } },
+      ...(solids.some((r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h) ? [{ label: 'Take away the "keep solid" box here', run: () => { solids = solids.filter((r) => !(p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h)); renderPanel(); draw(); } }] : []),
       { label: 'Fill its shape: keep everything inside its outline', checked: !!b.fillShape, disabled: off, run: () => setPref(b, { fillShape: !b.fillShape }) },
       { label: 'Magic wand: erase from here', disabled: off, run: () => setPref(b, { wand: [...(b.wand || []), { x: p.x, y: p.y }] }) }, { label: 'Magic wand: keep from here', disabled: off, run: () => setPref(b, { wand: [...(b.wand || []), { x: p.x, y: p.y, keep: true }] }) },
       ...(b.wand && b.wand.length ? [{ label: `Undo the last wand (${b.wand.length})`, run: () => setPref(b, { wand: b.wand.slice(0, -1) }) }] : []),
@@ -585,6 +598,7 @@
     if (area) { x.strokeStyle = '#2563eb'; x.lineWidth = lw; x.setLineDash([lw * 4, lw * 2]); x.strokeRect(wx, wy, work.width, work.height); x.setLineDash([]);
       // its handles: drag one in any tool to move that edge
       x.fillStyle = '#2563eb'; const hs = lw * 4; for (const [hx, hy] of areaHandles()) { x.fillRect(hx - hs, hy - hs, hs * 2, hs * 2); x.strokeStyle = '#fff'; x.lineWidth = Math.max(1, lw / 2); x.strokeRect(hx - hs, hy - hs, hs * 2, hs * 2); } }
+    for (const r of solids) { x.fillStyle = 'rgba(34,197,94,.18)'; x.fillRect(r.x, r.y, r.w, r.h); x.strokeStyle = '#16a34a'; x.lineWidth = lw; x.setLineDash([lw * 2, lw]); x.strokeRect(r.x, r.y, r.w, r.h); x.setLineDash([]); }
     for (const z of zones) { x.strokeStyle = '#f97316'; x.lineWidth = lw; x.setLineDash([lw * 2, lw]); x.strokeRect(z.x, z.y, z.w, z.h); x.setLineDash([]); x.fillStyle = '#f97316'; const t = `${z.cols} × ${z.rows}`; x.fillRect(z.x + z.w - x.measureText(t).width - 10, z.y + z.h - fs - 6, x.measureText(t).width + 10, fs + 6); x.fillStyle = '#fff'; x.fillText(t, z.x + z.w - x.measureText(t).width - 5, z.y + z.h - fs - 3); }
     for (const o of outs) { x.fillStyle = 'rgba(70,75,90,.55)'; x.fillRect(o.x, o.y, o.w, o.h); x.strokeStyle = '#fff'; x.lineWidth = lw; x.strokeRect(o.x, o.y, o.w, o.h); x.beginPath(); x.moveTo(o.x, o.y); x.lineTo(o.x + o.w, o.y + o.h); x.moveTo(o.x + o.w, o.y); x.lineTo(o.x, o.y + o.h); x.stroke(); }
     // a table's rows and columns left out: their label and heading cells crossed
@@ -706,7 +720,7 @@
     if (window.CraftWork) window.CraftWork.add(file, { used: 0, pending: 'slice' }).catch(() => {});
     pagePlain = null; sheetFile = file; sheetName = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim(); skip.clear(); S.names = ''; S.category = ''; el.querySelector('.sl-empty').hidden = true;
     original = sheet; zoom = 1;
-    area = null; outs = []; table = null; offRows.clear(); offCols.clear(); rowNames = []; colNames = []; captions = []; readText.clear(); moved.clear(); prefs.clear(); splits.clear(); zones = []; sheetTitle = ''; tool = 'pick';
+    area = null; outs = []; table = null; offRows.clear(); offCols.clear(); rowNames = []; colNames = []; captions = []; readText.clear(); moved.clear(); prefs.clear(); splits.clear(); zones = []; solids = []; sheetTitle = ''; tool = 'pick';
     try { const a = autoCut(sheet); Object.assign(S, a.settings); autoSaid = a.said; table = a.table || null; area = a.area || null; S.notext = !!a.notext; } catch (e) { console.warn('Working out the cut failed', e); autoSaid = ''; S.notext = false; }
     renderPanel(); find(); applyZoom(); const d = desk(); d.scrollLeft = d.scrollTop = 0;
     if (S.autoread !== false && ((S.mode === 'table' && table) || captions.some((t) => t.own))) readLabels(null, true);
@@ -998,6 +1012,7 @@
     if (!drag) return; const d = drag, p = ptOf(e); drag = null; showDrag(null);
     if (!d.moved) { // a click
       if (tool === 'out') { const i = outs.findIndex((o) => p.x >= o.x && p.x <= o.x + o.w && p.y >= o.y && p.y <= o.y + o.h); if (i >= 0) { outs.splice(i, 1); renderPanel(); find(); } return; }
+      if (tool === 'solid') { const i = solids.findIndex((o) => p.x >= o.x && p.x <= o.x + o.w && p.y >= o.y && p.y <= o.y + o.h); if (i >= 0) { solids.splice(i, 1); renderPanel(); draw(); } return; }
       if (tool !== 'pick') return;
       const i = boxes.findIndex((b) => { const sb = sheetBox(b); return p.x >= sb.x && p.x <= sb.x + sb.w && p.y >= sb.y && p.y <= sb.y + sb.h; });
       if (i >= 0) { if (skip.has(i)) skip.delete(i); else skip.add(i); draw(); count(); return; }
@@ -1011,6 +1026,7 @@
     const b = clampBox(dragBox(d, p)); if (b.w < 6 || b.h < 6) return;
     if (d.areaDrag || tool === 'area') { area = b.x === 0 && b.y === 0 && b.w === sheet.width && b.h === sheet.height ? null : b; skip.clear(); }
     else if (tool === 'out') outs.push(b);
+    else if (tool === 'solid') solids.push(b);
     else if (tool === 'grid') { const n = askGrid(b); if (!n) return; zones.push({ ...b, ...n }); skip.clear(); }
     else if (d.target) moved.set(d.target.key, b); // a box moved by hand: cut from just that box from now on
     renderPanel(); find();
@@ -1051,7 +1067,7 @@
       x.translate(c.width / 2, c.height / 2); if (kind === 'flipx') x.scale(-1, 1); else if (kind === 'flipy') x.scale(1, -1); else x.rotate(a); x.imageSmoothingQuality = 'high'; x.drawImage(src, -W / 2, -H / 2);
       sheet = x.getImageData(0, 0, c.width, c.height);
     }
-    svgSheet = null; area = null; outs = []; zones = []; table = null; offRows.clear(); offCols.clear(); rowNames = []; colNames = []; captions = []; readText.clear(); moved.clear(); prefs.clear(); splits.clear(); skip.clear(); pagePlain = null;
+    svgSheet = null; area = null; outs = []; zones = []; solids = []; table = null; offRows.clear(); offCols.clear(); rowNames = []; colNames = []; captions = []; readText.clear(); moved.clear(); prefs.clear(); splits.clear(); skip.clear(); pagePlain = null;
     try { const a = autoCut(sheet); Object.assign(S, a.settings); autoSaid = a.said; table = a.table || null; area = a.area || null; S.notext = !!a.notext; } catch (e) { autoSaid = ''; }
     zoom = 1; renderPanel(); find(); applyZoom();
   }
@@ -1104,6 +1120,7 @@
       const tl = e.target.closest('[data-tool]'); if (tl) { tool = tl.dataset.tool; renderPanel(); return; }
       if (a && a.dataset.sl === 'whole') { area = null; skip.clear(); renderPanel(); find(); return; }
       if (a && a.dataset.sl === 'clear-outs') { outs = []; renderPanel(); find(); return; }
+      if (a && a.dataset.sl === 'unsolid') { solids = []; renderPanel(); draw(); return; }
       if (a && a.dataset.sl === 'unzone') { zones = []; skip.clear(); renderPanel(); find(); return; }
       if (a && a.dataset.sl === 'unmove') { moved.clear(); prefs.clear(); splits.clear(); renderPanel(); find(); return; }
       if (a && a.dataset.sl === 'read') return readLabels(a);
@@ -1132,5 +1149,5 @@
     opts = o; if (!el) { build(); document.addEventListener('keydown', onKey); } el.hidden = false; renderPanel(); el.querySelector('.sl-empty').hidden = !!sheet; if (o.files && o.files.length) loadMany(o.files); else if (o.file) loadMany([o.file]); else if (sheet) find();
   }
   function close() { if (el) { el.hidden = true; const r = el.querySelector('.sl-review'); if (r) r.hidden = true; } }
-  window.ClipArtSlicer = { fixSpelling, pngText, styleFor, _cut: (i) => baseCut(boxes[i]), _boxes: () => boxes.map(sheetBox), _table: () => table, open, close, autoCut, combine, splitJoined, edgeRoom, splitSheet, sheetItem, findItem, boxClear, gridCells, gridItem, svgCut, readSheet, tableOf, state: () => ({ mode: S.mode, boxes: boxes.length, skipped: skip.size, area, outs: outs.length, notext: S.notext, captions: captions.length, owned: captions.filter((t) => t.own).length, said: autoSaid, rows: rowCount(), cols: colCount(), moved: moved.size, whole: boxes.filter((b) => b.whole).map((b) => b.r + ':' + b.c).join(' ') }) };
+  window.ClipArtSlicer = { fixSpelling, pngText, styleFor, _cut: (i) => baseCut(boxes[i]), _boxes: () => boxes.map(sheetBox), _table: () => table, open, close, autoCut, combine, splitJoined, edgeRoom, splitSheet, sheetItem, findItem, boxClear, gridCells, gridItem, svgCut, readSheet, tableOf, state: () => ({ mode: S.mode, boxes: boxes.length, skipped: skip.size, area, outs: outs.length, notext: S.notext, captions: captions.length, owned: captions.filter((t) => t.own).length, said: autoSaid, rows: rowCount(), cols: colCount(), moved: moved.size, solids: solids.length, whole: boxes.filter((b) => b.whole).map((b) => b.r + ':' + b.c).join(' ') }) };
 })();
