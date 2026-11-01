@@ -31,7 +31,7 @@ function connOf(name, spec) {
 }
 // a connection as the spec openDb() takes
 function specOf(c) {
-  if (c.db === 'mysql') return `mysql://${encodeURIComponent(c.user || '')}:${encodeURIComponent(c.password || '')}@${c.host || '127.0.0.1'}:${+c.port || 3306}/${encodeURIComponent(c.database || 'clipart')}?files=${encodeURIComponent(c.files || path.join('libraries', c.name, 'files'))}`;
+  if (c.db === 'mysql') return `mysql://${encodeURIComponent(c.user || '')}:${encodeURIComponent(c.password || '')}@${c.host || '127.0.0.1'}:${+c.port || 3306}/${encodeURIComponent(c.database || 'clipart')}?files=${encodeURIComponent(c.files || path.join('libraries', c.name, 'files'))}${c.socket ? '&socket=' + encodeURIComponent(c.socket) : ''}`;
   return `${c.db === 'json' ? 'json' : 'sqlite'}:${c.path || path.join('libraries', c.name)}`;
 }
 function settings() {
@@ -111,17 +111,19 @@ function filter(text, category, type) {
 // MySQL / MariaDB: the same table. Needs the mysql2 package (npm install mysql2), only when this database is chosen.
 function mysqlDb(url) {
   let mysql; try { mysql = require('mysql2/promise'); } catch (e) { throw new Error('MySQL/MariaDB needs the mysql2 package: run "npm install mysql2" in the server folder.'); }
-  const u = new URL(url), files = u.searchParams.get('files') || path.join('libraries', decodeURIComponent(u.pathname.slice(1)) || 'mysql', 'files'); u.search = '';
+  const u = new URL(url), files = u.searchParams.get('files') || path.join('libraries', decodeURIComponent(u.pathname.slice(1)) || 'mysql', 'files'), socket = u.searchParams.get('socket'); u.search = '';
   const filesDir = path.resolve(HERE, files); fs.mkdirSync(filesDir, { recursive: true });
+  // through a socket file the login is user@localhost (on a QNAP only root@localhost may do everything)
+  const how = (db) => socket ? { socketPath: socket, user: decodeURIComponent(u.username), password: decodeURIComponent(u.password), database: db || undefined, charset: 'utf8mb4' } : { uri: (() => { const x = new URL(u.toString()); x.pathname = '/' + (db ? encodeURIComponent(db) : ''); return x.toString(); })(), charset: 'utf8mb4' };
   // the first time the database may not be there yet: it is made (if this login may), then the table in it
   const dbName = decodeURIComponent(u.pathname.slice(1)), made = (async () => {
     if (!dbName) throw new Error('The MySQL/MariaDB address needs a database name: mysql://user:pass@host:port/clipart');
-    const s = new URL(u.toString()); s.pathname = '/'; const c = await mysql.createConnection({ uri: s.toString(), charset: 'utf8mb4' });
+    const c = await mysql.createConnection(how(''));
     try { await c.query(`CREATE DATABASE IF NOT EXISTS \`${dbName.replace(/`/g, '``')}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`); }
     catch (e) { const [rows] = await c.query('SHOW DATABASES LIKE ?', [dbName]); if (!rows.length) throw new Error(`The database “${dbName}” does not exist yet, and this login may not make it (${e.message}). Make it in phpMyAdmin, or use a login that may create databases.`); }
     finally { await c.end(); }
   })();
-  const pool = mysql.createPool({ uri: u.toString(), charset: 'utf8mb4' }), ready = made.then(() => pool.query(SCHEMA('MEDIUMTEXT'))).then(() => Promise.all(ADDED.map((c) => pool.query(`ALTER TABLE items ADD COLUMN ${c}`).catch(() => {})))).catch((e) => { throw new Error('The MySQL/MariaDB database could not be opened: ' + e.message); });
+  const pool = mysql.createPool(how(dbName)), ready = made.then(() => pool.query(SCHEMA('MEDIUMTEXT'))).then(() => Promise.all(ADDED.map((c) => pool.query(`ALTER TABLE items ADD COLUMN ${c}`).catch(() => {})))).catch((e) => { throw new Error('The MySQL/MariaDB database could not be opened: ' + e.message); });
   const q = async (sql, a = []) => { await ready; return (await pool.query(sql, a))[0]; };
   return {
     kind: 'mysql', where: `${u.host}${u.pathname}`, filesDir,

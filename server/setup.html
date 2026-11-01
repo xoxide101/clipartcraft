@@ -92,7 +92,8 @@
       <div class="row">${f('name', 'Library name')}<label class="f">Database<select data-k="db">${opts}</select></label></div>
       ${c.db === 'mysql' ? `<div class="row">${f('host', 'Host (server address)', 'placeholder="127.0.0.1"')}${f('port', 'Port (MySQL 3306; the QNAP’s MariaDB 10: 3307)', 'placeholder="3306" inputmode="numeric"')}${f('database', 'Database name', 'placeholder="clipart"')}</div>
         <div class="row">${f('user', 'User ID', 'autocomplete="off"')}<label class="f">Password<input data-k="password" type="password" autocomplete="new-password" placeholder="${c.hasPassword ? 'kept (type to change)' : ''}"></label>${f('files', 'Pictures folder (on the server)', `placeholder="libraries/${esc(c.name || 'name')}/files"`)}</div>
-        <p class="hint">The database is made the first time if it is not there (the login needs the right to create databases; root has it).</p>`
+        <div class="row">${f('socket', 'Socket (instead of host and port)', 'placeholder="e.g. /var/run/mariadb10.sock"')}</div>
+        <p class="hint">The database is made the first time if it is not there (the login needs the right to create databases). On a QNAP, root has every right only as root@localhost: give the socket to log in that way.</p>`
       : `<div class="row">${f('path', c.db === 'json' ? 'Folder (library.json and the pictures)' : 'Folder (clipart.sqlite and the pictures)', `placeholder="libraries/${esc(c.name || 'name')}"`)}</div>`}
       <div class="btns"><button type="button" data-test>Test</button><button type="button" class="danger" data-del>Remove</button><span class="msg" data-msg></span></div></div>`;
   }

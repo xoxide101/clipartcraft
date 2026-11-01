@@ -70,7 +70,10 @@ class Library {
     if ($db === 'json') throw new RuntimeException('The PHP server keeps libraries in SQLite or MySQL/MariaDB (a JSON folder is for export and import).');
     if ($this->mysql) {
       $dbname = trim((string) ($c['database'] ?? '')) ?: 'clipart'; $host = trim((string) ($c['host'] ?? '')) ?: '127.0.0.1'; $port = (int) ($c['port'] ?? 3306) ?: 3306;
-      $dsn = "mysql:host=$host;port=$port;dbname=$dbname;charset=utf8mb4"; $files = $abs(trim((string) ($c['files'] ?? '')) ?: "libraries/$name/files"); $this->where = "$host:$port/$dbname";
+      // through the socket file the login is user@localhost (on a QNAP only root@localhost may do everything)
+      $socket = trim((string) ($c['socket'] ?? ''));
+      $dsn = $socket !== '' ? "mysql:unix_socket=$socket;dbname=$dbname;charset=utf8mb4" : "mysql:host=$host;port=$port;dbname=$dbname;charset=utf8mb4";
+      $files = $abs(trim((string) ($c['files'] ?? '')) ?: "libraries/$name/files"); $this->where = $socket !== '' ? "$socket/$dbname" : "$host:$port/$dbname";
     } else {
       if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) throw new RuntimeException('This PHP has no SQLite (pdo_sqlite); use MySQL/MariaDB.');
       $dir = $abs(trim((string) ($c['path'] ?? '')) ?: "libraries/$name"); @mkdir($dir, 0775, true); $dsn = "sqlite:$dir/clipart.sqlite"; $files = "$dir/files"; $this->where = $dir;
@@ -85,7 +88,7 @@ class Library {
       $code = (int) ($e->errorInfo[1] ?? 0);
       if ($this->mysql && $code === 1044) throw new RuntimeException("This login may not use the database “{$dbname}” (it may not exist yet, and this login may not make it). Make it in phpMyAdmin and give this login all rights on it, or use a login that may create databases.");
       if ($this->mysql && $code === 1045) throw new RuntimeException('MySQL/MariaDB did not accept that user ID and password.');
-      if ($this->mysql && $code === 2002) throw new RuntimeException("Nothing answered at {$this->where} (is the host and port right? the QNAP's MariaDB 10 is usually port 3307).");
+      if ($this->mysql && $code === 2002) throw new RuntimeException($socket !== '' ? "There is no MariaDB socket at {$socket} (over SSH, ls /var/run/*.sock /tmp/*.sock shows where it is)." : "Nothing answered at {$this->where} (is the host and port right? the QNAP's MariaDB 10 is usually port 3307).");
       if (!$this->mysql || $code !== 1049) throw new RuntimeException('The library database could not be opened: ' . $e->getMessage());
       try {
         $server = new PDO(preg_replace('/dbname=[^;]*;?/i', '', $dsn), $user, $pass, $o);
