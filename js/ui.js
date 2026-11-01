@@ -64,7 +64,6 @@
   const chosen = () => items.filter((it) => sel.has(it.id));
   // the Montage Slicer (js/slicer.js): what it added is shown and chosen
   const slicer = (file) => window.ClipArtSlicer.open({ file, toast, categories: cats().map(([c]) => c).filter(Boolean), done: async (made, category, sheetFile) => {
-    if (sheetFile && WA) { const src = await WA.add(sheetFile, { used: made.length }); for (const it of made) { it.sheet = src.id; await L.put(it); } }
     await reload(); cat = category; sel = new Set(made.map((m) => m.id)); render(); toast(`${made.length} picture${made.length === 1 ? '' : 's'} added to “${category}”.`); } });
   // Import pictures (js/importer.js): what it added is shown and chosen
   const importer = (files) => window.ClipArtImporter.open({ files, toast, server: !!serverUrl && serverOk, categories: cats().map(([c]) => c).filter(Boolean), done: async (made) => { await reload(); cat = '*'; sel = new Set(made.map((m) => m.id)); render(); toast(`${made.length} picture${made.length === 1 ? '' : 's'} added to the library.`); } });
@@ -94,6 +93,8 @@
       if (a === 'connect') { const u = prompt('The clip-art server’s address (start it with server/start-server.cmd; on a web host, the folder where clipart-server.php is):', serverUrl || 'http://localhost:8790'); if (u === null) return; await L.server(u); await checkServer(true); return; }
       if (a === 'disconnect') { await L.server(''); await checkServer(); toast('Not using a server now (the pictures stay here).'); return; }
       if (a === 'push') { const S = sel.size ? chosen() : items; if (!S.length) return toast('The library is empty.'); await need(); const done = await L.push(S, (n, t) => busy(`Sending ${n} of ${t}…`)); busy(); await reload(); toast(`Sent ${done.length} item${done.length === 1 ? '' : 's'} to the server.`); return; }
+      if (a === 'resume') { await need(); const left = await L.pending(); const d = await L.push(left, (n, t) => busy(`Sending ${n} of ${t}…`)); busy(); await reload(); await offerResume(); toast(`Finished sending: ${d.length} picture${d.length === 1 ? '' : 's'}.`); return; }
+      if (a === 'resume-forget') { await L.forgetPending(); await offerResume(); return; }
       if (a === 'pull') { await need(); const r = await L.pull((n, t) => busy(`Getting ${n} of ${t}…`)); busy(); await reload(); toast(r.made.length ? `Got ${r.made.length} new or changed item${r.made.length === 1 ? '' : 's'} from the server (it has ${r.total}).` : `Already up to date (the server has ${r.total}).`); return; }
       if (a === 'sync') { await need(); const r = await L.pull((n, t) => busy(`Getting ${n} of ${t}…`)); const fresh = (await L.all()).filter((it) => !it.serverId); const d = await L.push(fresh, (n, t) => busy(`Sending ${n} of ${t}…`)); busy(); await reload(); toast(`In step with the server: got ${r.made.length}, sent ${d.length}.`); return; }
       if (a === 'unserver') { const S = chosen().filter((it) => it.serverId); if (!S.length) return toast('Choose something that is on the server.'); if (!confirm(`Take ${S.length === 1 ? `“${S[0].name}”` : `${S.length} items`} off the server? (They stay in this library.)`)) return; await L.removeFromServer(S); await reload(); toast('Taken off the server.'); return; }
@@ -180,6 +181,13 @@
   const ic = document.createElement('link'); ic.rel = 'icon'; ic.href = 'data:image/svg+xml,' + encodeURIComponent(LOGO.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ')); document.head.append(ic);
   document.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') { e.preventDefault(); act('add'); } });
 
-  reload().then(() => checkServer()).catch(fail);
+  // a send cut short (the page was closed or refreshed): offer to finish it
+  async function offerResume() {
+    const left = await L.pending(); let bar = $('resume');
+    if (!left.length) { if (bar) bar.remove(); return; }
+    if (!bar) { bar = document.createElement('div'); bar.id = 'resume'; bar.className = 'resume'; $('desk').prepend(bar); }
+    bar.innerHTML = `<span><b>${left.length}</b> picture${left.length === 1 ? ' was' : 's were'} still being sent to the server when the page closed.</span><button class="btn primary" type="button" data-act="resume">Finish sending</button><button class="btn outline" type="button" data-act="resume-forget">Forget it</button>`;
+  }
+  reload().then(() => checkServer()).then(offerResume).catch(fail);
   window.ClipArtCraft = { reload, items: () => items };
 })();

@@ -288,17 +288,21 @@
   async function addReviewed(btn) {
     const keep = review.filter((r) => r.keep), category = String(S.category || '').trim() || sheetName; if (!keep.length) return;
     btn.disabled = true;
-    try {
+    try { await L.guard(async () => {
+      // the sheet first (to the working area), so if the page is closed half way it can simply be sliced again
+      const src = sheetFile && window.CraftWork ? await window.CraftWork.add(sheetFile, { used: 0 }) : null;
       const made = []; let k = 0;
       for (const r of keep) {
         btn.textContent = `Adding ${++k} of ${keep.length}: ${r.name}…`; await wait(0);
         const png = await new Promise((ok) => canvasOf(r.img).toBlob(ok, 'image/png')); let svg = null;
         if (svgSheet && r.img.at) { try { svg = svgCut(svgSheet, r.img.at); } catch (e) { console.warn('Cutting the SVG failed', r.name, e); } }
         if (!svg && window.CRAFT_RASTERTRACE) { try { svg = CRAFT_RASTERTRACE.traceImage(r.img, { profile: 'icon' }).svg; } catch (e) { console.warn('Tracing failed', r.name, e); } }
-        made.push(await L.put(await L.makeItem({ name: r.name.trim() || 'Clip art', category, png, svg, source: 'Montage Slicer: ' + sheetName })));
+        const it = await L.makeItem({ name: r.name.trim() || 'Clip art', category, png, svg, source: 'Montage Slicer: ' + sheetName }); if (src) it.sheet = src.id;
+        made.push(await L.put(it));
       }
+      if (src) await window.CraftWork.add(sheetFile, { used: made.length });
       el.querySelector('.sl-review').hidden = true; review = []; close(); opts.done && opts.done(made, category, sheetFile);
-    } catch (e) { console.error(e); opts.toast && opts.toast('Adding failed: ' + (e.message || e)); btn.disabled = false; }
+    }); } catch (e) { console.error(e); opts.toast && opts.toast('Adding failed: ' + (e.message || e)); btn.disabled = false; }
   }
   async function load(file) {
     if (!file) return; try { sheet = await readSheet(file); } catch (e) { opts.toast && opts.toast('That picture could not be read.'); return; }

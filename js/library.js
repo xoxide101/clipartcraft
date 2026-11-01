@@ -117,9 +117,17 @@
   async function serverKey(k) { if (k !== undefined) await meta('serverKey', k || ''); return (await meta('serverKey')) || ''; }
   async function call(path, opts = {}) { const u = await server(); if (!u) throw new Error('No clip-art server is connected.'); const k = await serverKey(); if (k) opts = { ...opts, headers: { ...(opts.headers || {}), 'x-craft-key': k } }; let r; try { r = await fetch(u + path, opts); } catch (e) { throw new Error(`The clip-art server at ${u} did not answer (is it running?).`); } const j = r.headers.get('content-type')?.includes('json') ? await r.json() : null; if (!r.ok) throw Object.assign(new Error((j && j.error) || `The server said ${r.status}.`), { status: r.status }); return j; }
   const serverInfo = () => call('/api/info');
+  // a long job (importing, slicing, sending): while it runs, closing or refreshing the page asks first
+  let jobs = 0; const leaving = (e) => { e.preventDefault(); e.returnValue = ''; return ''; };
+  async function guard(fn) { if (jobs++ === 0) window.addEventListener('beforeunload', leaving); try { return await fn(); } finally { if (--jobs === 0) window.removeEventListener('beforeunload', leaving); } }
+  // what is still to be sent (kept in the store, so a send cut short by a refresh can be finished afterwards)
+  async function forgetPending() { await meta('pushQueue', []); }
+  async function pending() { const ids = (await meta('pushQueue')) || []; if (!ids.length) return []; const all = await tx('items', 'readonly', (s) => req(s.getAll())); return all.filter((it) => ids.includes(it.id)); }
   // send items to the server (new ones are added, ones it has are updated); the server may number a name (Cat_002)
-  async function push(items, progress = () => {}) {
-    const out = []; let n = 0;
+  async function push(items, progress = () => {}) { return guard(() => pushNow(items, progress)); }
+  async function pushNow(items, progress) {
+    const out = []; let n = 0, left = new Set([...((await meta('pushQueue')) || []), ...items.map((it) => it.id)]);
+    await meta('pushQueue', [...left]);
     for (const it of items) {
       const j = Object.fromEntries(META.filter((k) => it[k] !== undefined).map((k) => [k, it[k]]));
       if (it.png) { j.png = await b64(it.png); j.pngExt = it.png.type === 'image/jpeg' ? 'jpg' : 'png'; }
@@ -127,11 +135,13 @@
       if (it.thumb) { j.thumb = it.thumb.replace(/^data:[^,]*,/, ''); j.thumbExt = 'png'; }
       let s; try { s = await call(it.serverId ? '/api/items/' + it.serverId : '/api/items', { method: it.serverId ? 'PATCH' : 'POST', body: JSON.stringify(j) }); } catch (e) { if (!it.serverId || !/No such item/.test(e.message)) throw e; delete it.serverId; s = await call('/api/items', { method: 'POST', body: JSON.stringify(j) }); }
       it.serverId = s.id; it.links = s.links; it.name = s.name; await tx('items', 'readwrite', (st) => req(st.put(it))); out.push(it); progress(++n, items.length);
+      left.delete(it.id); await meta('pushQueue', [...left]);
     }
     changed(); return out;
   }
   // bring the server's items into this browser (ones already here are updated if the server's copy is newer)
-  async function pull(progress = () => {}, { q = '', category } = {}) {
+  async function pull(progress = () => {}, opts = {}) { return guard(() => pullNow(progress, opts)); }
+  async function pullNow(progress, { q = '', category } = {}) {
     const here = new Map((await all()).filter((it) => it.serverId).map((it) => [it.serverId, it])), made = []; let n = 0, total = 0;
     for (let off = 0; ; off += 500) {
       const r = await call(`/api/items?limit=500&offset=${off}&q=${encodeURIComponent(q)}${category !== undefined ? '&category=' + encodeURIComponent(category) : ''}`); total = r.total; if (!r.items.length) break;
@@ -148,5 +158,5 @@
   }
   async function removeFromServer(items) { for (const it of items) if (it.serverId) { try { await call('/api/items/' + it.serverId, { method: 'DELETE' }); } catch (e) { if (!/No such item/.test(e.message)) throw e; } delete it.serverId; delete it.links; await tx('items', 'readwrite', (st) => req(st.put(it))); } changed(); }
 
-  window.CraftClipart = { DB, server, serverKey, serverInfo, push, pull, removeFromServer, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip };
+  window.CraftClipart = { DB, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip };
 })();

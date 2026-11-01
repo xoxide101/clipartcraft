@@ -154,3 +154,7 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 .rv-keep { display: flex; gap: 6px; align-items: center; font-size: 13px; }
 .rv-keep input { accent-color: var(--accent); }
 .rv-card .hint { font-size: 11.5px; }
+
+/* a send cut short by a refresh: finish it */
+.resume { position: sticky; top: 0; z-index: 4; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 10px 10px 0; padding: 10px 12px; border: 1px solid #f59e0b; border-radius: 10px; background: var(--panel); }
+.resume span { flex: 1; min-width: 200px; }

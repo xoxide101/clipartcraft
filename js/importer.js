@@ -272,7 +272,13 @@
   async function addAll(btn) {
     const todo = pages.filter((p) => p.include); if (!todo.length) return;
     btn.dataset.running = '1'; btn.disabled = true;
+    try { await L.guard(() => addNow(btn, todo)); } finally { delete btn.dataset.running; status(); }
+  }
+  async function addNow(btn, todo) {
     try {
+      // the files first (to the working area), so if the page is closed half way they can simply be imported again
+      const srcOf = new Map();
+      if (S.keepSources && W()) { btn.textContent = 'Keeping the files in the working area…'; for (const fi of new Set(todo.map((p) => p.file))) srcOf.set(fi, await W().add(files[fi].file, { used: 0 })); }
       const names = await uniqueNames(todo.map(nameFor)), made = [], perFile = new Map();
       for (let i = 0; i < todo.length; i++) {
         const p = todo[i]; btn.textContent = `Adding ${i + 1} of ${todo.length}: ${names[i]}…`; await wait(0);
@@ -282,13 +288,14 @@
         const it = await L.makeItem({ name: names[i], category: S.category.trim() || p.category || '', tags: p.tags, png, svg, source: files[p.file].name });
         Object.assign(it, { type: 'clipart', style: p.style || '', form: p.form || '', kind: /^ink/.test(modeName(p)) ? 'bw' : p.kind, hash: p.hash || hashOf(img) });
         if (p.anim) { it.anim = p.anim.blob; it.frames = p.anim.frames; }
+        if (srcOf.has(p.file)) it.sheet = srcOf.get(p.file).id;
         made.push(await L.put(it)); perFile.set(p.file, (perFile.get(p.file) || 0) + 1);
       }
-      if (S.keepSources && W()) { btn.textContent = 'Keeping the files in the working area…'; for (const [fi, n] of perFile) { const src = await W().add(files[fi].file, { used: n }); for (const it of made) if (it.source === files[fi].name && !it.sheet) { it.sheet = src.id; await L.put(it); } }
-        for (const f of files) if (f.used && !perFile.has(files.indexOf(f))) await W().add(f.file, { used: f.used }); }
+      // how many pictures each file gave (and the ones cut up with the slicer)
+      if (S.keepSources && W()) { for (const [fi, n] of perFile) await W().add(files[fi].file, { used: n }); for (const f of files) if (f.used && !perFile.has(files.indexOf(f))) await W().add(f.file, { used: f.used }); }
       if (S.alsoServer && opts.server) { btn.textContent = 'Sending to the server…'; try { await L.push(made); } catch (e) { opts.toast && opts.toast('Added here, but the server said: ' + e.message); } }
       const all = [...madeBySlicer, ...made]; reset(); close(); opts.done && opts.done(all);
-    } catch (e) { console.error(e); opts.toast && opts.toast('Importing failed: ' + (e.message || e)); } finally { delete btn.dataset.running; status(); }
+    } catch (e) { console.error(e); opts.toast && opts.toast('Importing failed: ' + (e.message || e)); }
   }
   function reset() { pages = []; files = []; cur = -1; madeBySlicer = []; libHashes = null; if (aiState !== 'done') aiState = ''; }
   function open(o = {}) {
