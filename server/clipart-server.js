@@ -354,7 +354,10 @@ function serve(S) {
         return send(res, 404, { error: 'Not found.' });
       }
       const lib = libOf(Q.library), db = lib.db;
-      if (p[1] === 'info') return send(res, 200, { server: 'Craft clip-art server', version: VERSION, api: 1, writable: mayWrite(req), main: S.main, libraries: S.connections.map((c) => ({ name: c.name, database: c.db })) });
+      // where it can be reached from: this computer, and (when shared) the other computers on the network
+      if (p[1] === 'info') { const ips = S.share ? Object.values(os.networkInterfaces()).flat().filter((i) => i && i.family === 'IPv4' && !i.internal).map((i) => i.address) : [];
+        return send(res, 200, { server: 'Craft clip-art server', version: VERSION, api: 1, writable: mayWrite(req), main: S.main, libraries: S.connections.map((c) => ({ name: c.name, database: c.db })),
+          reach: { kind: 'node', host: os.hostname(), port: S.port, shared: !!S.share, here: base(req), addresses: [`http://localhost:${S.port}`, ...ips.map((ip) => `http://${ip}:${S.port}`)] } }); }
       if (p[1] === 'categories') return send(res, 200, await db.categories());
       if (p[1] === 'export.zip') return send(res, 200, await exportZip(lib, { q: Q.q, category: Q.category, type: Q.type }), 'application/zip', { 'Content-Disposition': `attachment; filename="${slug(lib.name)} clip art.zip"` });
       if (p[1] === 'import' && req.method === 'POST') { const made = await importEntries(lib, unzip(await body(req)), { category: Q.category }); return send(res, 200, { added: made.length, items: made.map((it) => shown(req, lib, it)) }); }

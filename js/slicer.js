@@ -222,6 +222,20 @@
     work.page = clear ? null : cornerBg(work);
     for (const o of outs) paint(work, { x: o.x - wx, y: o.y - wy, w: o.w, h: o.h }, work.page);
   }
+  // The main area moved by hand over rows or columns the table does not have (a row of faint pictures taken for part of
+  // the headings): the table is carried on into it at its own row height (or column width) and line spacing, as many
+  // as fit; whatever was there before (the wrong kind of row) gives way.
+  function fitTable() {
+    if (S.mode !== 'table' || !table || !area) return;
+    const grow = (list, kinds, lo, hi) => {
+      const pics = list.map((r, i) => i).filter((i) => kinds[i] === 'pic'); if (!pics.length) return;
+      const size = median(pics.map((i) => list[i][1] - list[i][0] + 1)), gaps = pics.slice(1).map((i, k) => list[i][0] - list[pics[k]][1] - 1), gap = gaps.length ? Math.max(1, median(gaps)) : 4;
+      const add = (span) => { for (let i = list.length - 1; i >= 0; i--) if (list[i][1] >= span[0] && list[i][0] <= span[1]) { list.splice(i, 1); kinds.splice(i, 1); } let at = list.findIndex((r) => r[0] > span[0]); if (at < 0) at = list.length; list.splice(at, 0, span); kinds.splice(at, 0, 'pic'); };
+      for (let n = 0; n < 30; n++) { const f = list[list.findIndex((r, i) => kinds[i] === 'pic')], span = [f[0] - gap - size, f[0] - gap - 1]; if (span[0] < lo - size * 0.35) break; add([Math.max(0, span[0]), span[1]]); }
+      for (let n = 0; n < 30; n++) { const ps = list.map((r, i) => i).filter((i) => kinds[i] === 'pic'), l = list[ps[ps.length - 1]], span = [l[1] + gap + 1, l[1] + gap + size]; if (span[1] > hi + size * 0.35) break; add(span); }
+    };
+    grow(table.rows, table.rowKind, area.y, area.y + area.h); grow(table.cols, table.colKind, area.x, area.x + area.w);
+  }
   // the table's picture cells in the work's pixels, each with its row and column (counted over picture rows and columns);
   // a cell whose edge is not plain (a photo) is kept whole
   function tableCells() {
@@ -756,7 +770,7 @@
       }
       if (src) await window.CraftWork.add(sheetFile, { used: made.length, pending: '' });
       const rv = el.querySelector('.sl-review'); if (rv) rv.hidden = true; review = []; const doneFile = sheetFile;
-      if (!next()) close(); else opts.toast && opts.toast(`${made.length} added. Next sheet: ${sheetFile.name}`);
+      if (!next()) { forget(); close(); } else opts.toast && opts.toast(`${made.length} added. Next sheet: ${sheetFile.name}`);
       opts.done && opts.done(made, category, doneFile, { more: queueN > 0 });
     }); } catch (e) { console.error(e); opts.toast && opts.toast('Adding failed: ' + (e.message || e)); btn.disabled = false; }
   }
@@ -1103,7 +1117,7 @@
       return;
     }
     const b = clampBox(dragBox(d, p)); if (b.w < 6 || b.h < 6) return;
-    if (d.areaDrag || tool === 'area') { area = b.x === 0 && b.y === 0 && b.w === sheet.width && b.h === sheet.height ? null : b; skip.clear(); }
+    if (d.areaDrag || tool === 'area') { area = b.x === 0 && b.y === 0 && b.w === sheet.width && b.h === sheet.height ? null : b; skip.clear(); fitTable(); }
     else if (tool === 'out') outs.push(b);
     else if (tool === 'solid') { const t = S.touch || {}; marks.push({ pts: shapeOf(b).map(([x, y]) => [Math.round(x), Math.round(y)]), op: e.altKey ? 'erase' : t.op || 'keep', side: t.side || 'in' }); renderPanel(); draw(); return; }
     else if (tool === 'grid') { const n = askGrid(b); if (!n) return; zones.push({ ...b, ...n }); skip.clear(); }
@@ -1188,7 +1202,7 @@
       const a = e.target.closest('[data-sl]'), m = e.target.closest('[data-mode]');
       if (a && a.dataset.sl === 'close') return close();
       if (a && a.dataset.sl === 'open') return loadMany(await pickSheet());
-      if (a && a.dataset.sl === 'skip') { if (!next()) close(); return; }
+      if (a && a.dataset.sl === 'skip') { if (!next()) { forget(); close(); } return; }
       if (a && a.dataset.sl === 'add') return addAll();
       if (m) { S.mode = m.dataset.mode; autoSaid = ''; keep(); skip.clear(); offRows.clear(); offCols.clear(); rowNames = []; colNames = [];
         if (S.mode === 'table') { table = tableOf(sheet); if (table) { area = tableArea(table) || area; S.notext = true; } }
@@ -1217,7 +1231,7 @@
       if (e.target.dataset.title !== undefined) { sheetTitle = e.target.value; return; }
       if (e.target.dataset.m) { // the main area's margins typed in
         const a = area || { x: 0, y: 0, w: sheet.width, h: sheet.height }, m = { t: a.y, l: a.x, b: sheet.height - a.y - a.h, r: sheet.width - a.x - a.w }; m[e.target.dataset.m] = Math.max(0, +e.target.value || 0);
-        const w = sheet.width - m.l - m.r, h = sheet.height - m.t - m.b; if (w < 8 || h < 8) return; area = m.t || m.l || m.b || m.r ? { x: m.l, y: m.t, w, h } : null; skip.clear(); later(); return; }
+        const w = sheet.width - m.l - m.r, h = sheet.height - m.t - m.b; if (w < 8 || h < 8) return; area = m.t || m.l || m.b || m.r ? { x: m.l, y: m.t, w, h } : null; skip.clear(); fitTable(); later(); return; }
       const k = e.target.dataset.k; if (!k) return; S[k] = e.target.type === 'checkbox' ? e.target.checked : e.target.type === 'number' ? +e.target.value : e.target.value; keep();
       if (k === 'names') draw(); else if (k === 'cut' || k === 'see' || k === 'notext') { renderPanel(); later(0); } else if (k === 'tol' || k === 'roomPx') { clearTimeout(timer); timer = setTimeout(draw, 150); } else if (k !== 'category' && k !== 'svg') later(); });
     el.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); });
@@ -1234,6 +1248,13 @@
   }
   function open(o = {}) {
     opts = o; if (!el) { build(); document.addEventListener('keydown', onKey); } el.hidden = false; renderPanel(); el.querySelector('.sl-empty').hidden = !!sheet; if (o.files && o.files.length) loadMany(o.files); else if (o.file) loadMany([o.file]); else if (sheet) find();
+  }
+  // a sheet that has been added is let go, so the slicer opens empty for the next one (it stays in the working area:
+  // Slice the sheet again on the left brings it back)
+  function forget() {
+    sheet = null; sheetFile = null; sheetName = ''; work = null; found = null; boxes = []; skip.clear(); area = null; outs = []; zones = []; marks = []; table = null; offRows.clear(); offCols.clear();
+    rowNames = []; colNames = []; captions = []; readText.clear(); moved.clear(); prefs.clear(); splits.clear(); sheetTitle = ''; autoSaid = ''; past = []; future = []; now = ''; poly = null; tool = 'pick'; queueN = 0; queue = [];
+    if (el) { const c = el.querySelector('.sl-desk canvas'); c.hidden = true; el.querySelector('.sl-empty').hidden = false; const st = el.querySelector('.sl-status'); if (st) st.innerHTML = ''; renderPanel(); }
   }
   function close() { if (el) { el.hidden = true; const r = el.querySelector('.sl-review'); if (r) r.hidden = true; } }
   window.ClipArtSlicer = { fixSpelling, pngText, styleFor, _cut: (i) => baseCut(boxes[i]), _boxes: () => boxes.map(sheetBox), _table: () => table, open, close, autoCut, combine, splitJoined, edgeRoom, splitSheet, sheetItem, findItem, boxClear, gridCells, gridItem, svgCut, readSheet, tableOf, state: () => ({ mode: S.mode, boxes: boxes.length, skipped: skip.size, area, outs: outs.length, notext: S.notext, captions: captions.length, owned: captions.filter((t) => t.own).length, said: autoSaid, rows: rowCount(), cols: colCount(), moved: moved.size, marks: marks.length, whole: boxes.filter((b) => b.whole).map((b) => b.r + ':' + b.c).join(' ') }) };

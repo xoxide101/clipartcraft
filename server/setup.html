@@ -36,6 +36,7 @@
   code { background: var(--panel-2); padding: 1px 6px; border-radius: 5px; word-break: break-all; }
   .radio { display: flex; gap: 6px; align-items: center; font-size: 13px; color: var(--fg); }
   [hidden] { display: none !important; }
+  .reach-row { align-items: center; gap: 10px; } .reach-row code { font-size: 14px; padding: 3px 6px; border-radius: 5px; background: rgba(127,127,127,.15); }
 </style>
 </head>
 <body>
@@ -108,12 +109,26 @@
         <div class="btns">${S.drivers.map((d) => `<button type="button" data-add="${d}">Add ${d === 'mysql' ? 'MySQL / MariaDB' : d === 'json' ? 'a JSON folder' : 'SQLite'}</button>`).join('')}<span class="grow" style="flex:1"></span><button type="button" class="primary" id="save">Save</button></div><p class="msg" id="saved"></p></section>
       <section><h2>Copy a library (moving to another database)</h2><p class="hint">Every item and its pictures are copied. Save the libraries first. Copying into a library that already has items adds to it (the same names get _002…).</p>
         <div class="row"><label class="f">From${sel('from', S.main)}</label><label class="f">To${sel('to', names.find((n) => n !== S.main) || S.main)}</label><div class="btns"><button type="button" id="copy">Copy</button></div></div><p class="msg" id="copied"></p></section>
+      <section id="reach"><h2>Reach this server</h2><p class="hint">Finding its addresses…</p></section>
       ${S.server === 'node' ? `<section><h2>This server</h2><div class="row"><label class="f">Port<input id="port" value="${esc(S.port)}" inputmode="numeric"></label><label class="radio"><input type="checkbox" id="share" ${S.share ? 'checked' : ''} style="width:auto;height:auto"> Other computers on the network can use it</label></div><p class="hint">These take effect when the server is started again.</p></section>` : ''}
       <section><h2>Key for apps</h2><p class="hint">Apps on other computers (ClipArtCraft’s Server tab) ask for this once, to add and change clip art. Anyone may look without it.</p><div class="btns"><code id="key">${esc(S.key || '')}</code><button type="button" id="copykey">Copy</button></div></section>
       <section><h2>Admin login</h2><div class="row"><label class="f">User ID<input id="au" value="${esc(S.admin || '')}" autocomplete="username"></label><label class="f">New password<input id="ap" type="password" autocomplete="new-password"></label><div class="btns"><button type="button" id="admin">Change</button></div></div><p class="msg" id="am"></p></section>
       <p class="hint">Settings file: <code>${esc(S.file || 'clipart-settings.php')}</code></p>`;
+    showReach();
   }
   // what is typed goes straight into S (passwords only when typed)
+  // where ClipArtCraft (on this or another computer) can reach it, with Copy buttons
+  async function showReach() {
+    const box = document.getElementById('reach'); if (!box) return; let i;
+    try { i = await (await fetch(new URL('api/info', location.href.replace(/setup\/?(\?.*)?$/, ''))).json(); } catch (e) { box.querySelector('.hint').textContent = 'Could not ask the server for its addresses.'; return; }
+    const r = i.reach || {}, local = (a) => /\/\/(localhost|127\.)/.test(a), lan = (a) => /\/\/(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(a);
+    const row = (a, what) => `<div class="row reach-row"><code>${esc(a)}</code><span class="hint">${what}</span><button class="btn" type="button" data-copy="${esc(a)}">Copy</button></div>`;
+    box.innerHTML = `<h2>Reach this server</h2><p class="hint">Paste one of these into ClipArtCraft (Server › Connect…).${r.host ? ` This computer is called <b>${esc(r.host)}</b>.` : ''}</p>
+      ${(r.addresses || []).map((a) => row(a, local(a) ? 'from this computer only' : lan(a) ? 'from other computers on the same network (at home, at work…)' : 'from anywhere this address can be reached')).join('')}
+      ${r.kind === 'node' && !r.shared ? '<p class="hint">Only this computer can use it now. To use it from other computers on the network, choose “Shared on the network” below and start the server again.</p>' : ''}
+      <p class="hint">Away from that network (at work, travelling), these addresses do not work by themselves: reach the network with a VPN (your router’s, or the QNAP’s QVPN / WireGuard), Tailscale, or myQNAPcloud, then use the same address. Changing the library from another computer needs the key below.</p>`;
+  }
+  document.addEventListener('click', (e) => { const c = e.target.closest('[data-copy]'); if (!c) return; navigator.clipboard.writeText(c.dataset.copy); c.textContent = 'Copied'; setTimeout(() => { c.textContent = 'Copy'; }, 1200); });
   document.addEventListener('input', (e) => { const k = e.target.dataset.k, box = e.target.closest('.conn'); if (!k || !box) return; const c = S.connections[+box.dataset.i]; c[k] = k === 'port' ? e.target.value.replace(/\D/g, '') : e.target.value; if (k === 'name') box.querySelector('.top b').textContent = c.name || 'New library'; });
   document.addEventListener('change', (e) => {
     const box = e.target.closest('.conn'); if (!box) return; const c = S.connections[+box.dataset.i];
