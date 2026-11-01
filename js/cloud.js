@@ -12,6 +12,11 @@
   let cfg = { keys: { anthropic: '', gemini: '', openai: '', openrouter: '' }, provider: '', model: '' };
   try { const s = JSON.parse(localStorage.getItem(KEY) || 'null'); if (s) cfg = { keys: { ...cfg.keys, ...(s.keys || {}) }, provider: s.provider || '', model: s.model || '' }; } catch (e) { /* blocked storage */ }
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) { /* blocked storage */ } };
+  // the keys every Craft app shares (AI settings in the title bar): they fill in what this one has not got, and keys
+  // typed here are shared with the others
+  const K = () => window.CraftKeys;
+  const fromShared = () => { if (!K()) return; const s = K().shared(); for (const p of Object.keys(cfg.keys)) if (s.keys[p]) cfg.keys[p] = s.keys[p]; };
+  fromShared(); window.addEventListener('craft-keys', (e) => { if (e.detail && e.detail.forget) { for (const p of Object.keys(cfg.keys)) cfg.keys[p] = ''; save(); return; } fromShared(); });
   const has = (p) => !!(cfg.keys[p] || '').trim();
   // the provider in use: the one chosen, or the first with a key
   const provider = () => (has(cfg.provider) ? cfg.provider : PROVIDERS.find(has) || '');
@@ -93,6 +98,8 @@ Answer with JSON only, in this form: {"name": "...", "category": "...", "style":
     NAMES, PROVIDERS, has, provider, models, look, imageCraftKeys,
     ready: () => !!provider(),
     settings: () => ({ keys: { ...cfg.keys }, provider: cfg.provider, model: cfg.model }),
-    set(o) { cfg = { keys: { ...cfg.keys, ...(o.keys || {}) }, provider: o.provider ?? cfg.provider, model: o.model ?? cfg.model }; save(); },
+    set(o) { cfg = { keys: { ...cfg.keys, ...(o.keys || {}) }, provider: o.provider ?? cfg.provider, model: o.model ?? cfg.model }; save(); if (K() && o.keys) K().share({ keys: o.keys }); },
+    // where AI runs (the title bar's switch): local only, both, or cloud
+    mode: () => (K() ? K().mode() : 'both'),
   };
 })();

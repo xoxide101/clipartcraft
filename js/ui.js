@@ -165,8 +165,10 @@
       if (a === 'ai-again') { const S = chosen(); if (!S.length) return; if (!(await aiOk())) return; await sortWithAI(S, { again: true }); await reload(); return; }
       if (a === 'edit-lists') return editLists();
       if (a === 'cloud-settings') return cloudSettings();
-      if (a === 'cloud-ask') { const S = chosen(); if (!S.length) return toast('Choose the pictures to ask about first.'); if (!window.CraftCloud.ready()) return cloudSettings(() => act('cloud-ask')); if (S.length > 1 && !confirm(`Send ${S.length} pictures to ${CraftCloud.NAMES[CraftCloud.provider()]}? Each one costs a little on your account.`)) return; await askCloud(S); await reload(); return; }
-      if (a === 'sort-ai') { const S = sel.size ? chosen() : items.filter(needsSort); if (!S.length) return toast('Everything is sorted already.'); if (!(await aiOk())) return; await sortWithAI(S); await reload(); return; }
+      if (a === 'cloud-ask') { const S = chosen(); if (!S.length) return toast('Choose the pictures to ask about first.'); if (window.CraftCloud.mode() === 'local') return toast('AI is set to this computer only (the switch in the title bar): choose computer + cloud, or cloud, to ask a cloud AI.'); if (!window.CraftCloud.ready()) return cloudSettings(() => act('cloud-ask')); if (S.length > 1 && !confirm(`Send ${S.length} pictures to ${CraftCloud.NAMES[CraftCloud.provider()]}? Each one costs a little on your account.`)) return; await askCloud(S); await reload(); return; }
+      if (a === 'sort-ai') { const S = sel.size ? chosen() : items.filter(needsSort); if (!S.length) return toast('Everything is sorted already.');
+        // the switch on cloud: the cloud AI sorts them (with the AI here when there is no key)
+        if (window.CraftCloud.mode() === 'cloud' && window.CraftCloud.ready()) { if (S.length > 1 && !confirm(`Send ${S.length} pictures to ${CraftCloud.NAMES[CraftCloud.provider()]}? Each one costs a little on your account.`)) return; await askCloud(S); await reload(); return; } if (!(await aiOk())) return; await sortWithAI(S); await reload(); return; }
       if (a === 'start') { startOpen = true; render(); return; }
       if (a === 'start-close') { startOpen = false; render(); return; }
       if (a === 'add') return importer([]);
@@ -559,12 +561,15 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
       ${C.PROVIDERS.map((p) => `<label class="field"><span><input type="radio" name="cloud-p" value="${p}" ${C.provider() === p || (!C.provider() && p === 'anthropic') ? 'checked' : ''}> ${C.NAMES[p]}</span><input class="input" type="password" autocomplete="off" spellcheck="false" data-key="${p}" value="${esc(s.keys[p] || '')}" placeholder="${C.has(p) ? '' : 'Paste your key here'}"></label>`).join('')}
       ${Object.keys(fromIC).length ? `<button class="btn ghost sm" type="button" data-c="ic">Use the keys ImageCraft has (${Object.keys(fromIC).map((p) => C.NAMES[p].split(' ')[0]).join(', ')})</button>` : ''}
       <label class="field"><span>Model <small class="hint">(a quick, cheap one is picked if you leave it)</small></span><div class="cloud-model"><select class="input" data-model><option value="">Pick for me</option>${s.model ? `<option value="${esc(s.model)}" selected>${esc(s.model)}</option>` : ''}</select><button class="btn outline sm" type="button" data-c="models">List the models</button></div></label>
-      <div class="lists-foot"><span class="grow"></span><button class="btn primary" type="button" data-c="save">Save</button></div></div>`;
+      <div class="lists-foot"><button class="btn outline sm" type="button" data-c="kfile">Save keys to a file…</button><button class="btn outline sm" type="button" data-c="kload">Load keys from a file…</button><button class="btn ghost sm" type="button" data-c="kall" title="Where AI runs (this computer, both, cloud) and the keys every Craft app shares">All AI settings…</button><span class="grow"></span><button class="btn primary" type="button" data-c="save">Save</button></div></div>`;
     const read = () => { const keys = {}; box.querySelectorAll('[data-key]').forEach((i) => { keys[i.dataset.key] = i.value.trim(); }); const p = (box.querySelector('[name=cloud-p]:checked') || {}).value || ''; return { keys, provider: p, model: box.querySelector('[data-model]').value }; };
     box.addEventListener('change', (e) => { if (e.target.name === 'cloud-p') box.querySelector('[data-model]').innerHTML = '<option value="">Pick for me</option>'; });
     box.addEventListener('click', async (e) => {
       const b = e.target.closest('[data-c]'); if (!b) return;
       if (b.dataset.c === 'close') { box.remove(); return; }
+      if (b.dataset.c === 'kfile' && window.CraftKeys) { const v = read(); C.set({ keys: v.keys }); await CraftKeys.save({ keys: C.settings().keys }, { app: 'ClipArtCraft' }); return; }
+      if (b.dataset.c === 'kload' && window.CraftKeys) { const got = await CraftKeys.load(); if (!got) return; CraftKeys.share(got); C.set({ keys: got.keys }); box.remove(); cloudSettings(then); toast(`Loaded ${Object.keys(got.keys).length} key${Object.keys(got.keys).length === 1 ? '' : 's'}.`); return; }
+      if (b.dataset.c === 'kall' && window.CraftKeys) { box.remove(); CraftKeys.open({ app: 'ClipArtCraft' }); return; }
       if (b.dataset.c === 'ic') { Object.entries(fromIC).forEach(([p, k]) => { box.querySelector(`[data-key="${p}"]`).value = k; }); toast('Keys copied from ImageCraft: Save to keep them.'); return; }
       if (b.dataset.c === 'models') {
         const v = read(); C.set({ keys: v.keys, provider: v.provider }); if (!C.has(v.provider)) return toast('Paste a key for that one first.'); b.disabled = true; b.textContent = 'Asking…';
