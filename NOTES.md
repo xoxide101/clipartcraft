@@ -57,3 +57,8 @@
 
 - Headings remembered (localStorage clipartcraft-headings { all, last, sets }): suggestions while typing a column heading, The last sheet's headings, and named lists (Headings from a list: Use; Save these headings as a list; Remove) with Classic to modern (7 styles) to start.
 - Bottom bar in cells (server with a coloured dot and how many are on it, pictures and categories, shown, chosen) and the picture size as a percentage (− slider + and the ack to 100%; 100% = 140 px). Working lights in the AI switch: a data light left of the computer (local AI) and right of the cloud (cloud AI), lit and pulsing while working (CraftKeys.working / track / setWorking); ClipArtCraft's sorting, label reading and cloud calls, and ImageCraft's local jobs and cloud calls, light them.
+
+
+## Clip art (shared picker)
+
+- js/clipart-picker.js (window.CraftClipartPicker, the same file in every Craft app; LabelCraft has it inline): a window showing the clip-art server (the one ClipArtCraft uses, or one beside this app on its website: browsed from its thumbnails, only the picture inserted is fetched) and this browser's library (IndexedDB craft-clipart); search, categories, Same DNA / style; Insert or double-click hands the app a File (SVG when it takes SVG, else PNG). Its window and the AI windows are pinned to the visible window (fixed top/left 100vw x 100vh) with a height that fits it (a picker as tall as its contents was centred off-screen in SiteCraft).
