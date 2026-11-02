@@ -1071,7 +1071,10 @@
     const ALIKE = ['ao', 'ec', 'ce', 'il', 'li', 'mn', 'nm', 'uv', 'vu', 'rn', 'hn', 'nh', 'oe', 'eo', 'ae', 'ea', 'yv', 'tf', 'ft', 'oa', 'ij', 'ji', 'gq', 'qg', 'bh', 'hb', 'cl'];
     const looksAlike = (a, b) => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return ALIKE.includes(a[i] + b[i]); return false; };
     const one = (a, b) => { if (Math.abs(a.length - b.length) > 1) return false; let i = 0, j = 0, d = 0; while (i < a.length && j < b.length) { if (a[i] === b[j]) { i++; j++; continue; } if (++d > 1) return false; if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; } } return d + (a.length - i) + (b.length - j) <= 1; };
-    return String(text).replace(/[A-Za-z]{4,}/g, (w) => { const lw = w.toLowerCase(); if (vocab.has(lw)) return w; const near = [...vocab].filter((v) => v.length >= 4 && v.length === lw.length && one(lw, v) && looksAlike(lw, v)), hit = near.length === 1 ? near[0] : ''; if (!hit) return w;
+    return String(text).replace(/[A-Za-z]{4,}/g, (w) => { const lw = w.toLowerCase(); if (vocab.has(lw)) return w; let near = [...vocab].filter((v) => v.length >= 4 && v.length === lw.length && one(lw, v) && looksAlike(lw, v));
+      // a long word with one letter dropped or doubled (Dimesional for Dimensional)
+      if (!near.length && lw.length >= 7) near = [...vocab].filter((v) => Math.abs(v.length - lw.length) === 1 && one(lw, v));
+      const hit = near.length === 1 ? near[0] : ''; if (!hit) return w;
       return w === w.toUpperCase() ? hit.toUpperCase() : w[0] === w[0].toUpperCase() ? hit[0].toUpperCase() + hit.slice(1) : hit; });
   }
   // the reader squeezes what it reads into a square: a long strip (a title, a heading) is put on a square of its own page
