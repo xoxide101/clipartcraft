@@ -1,0 +1,16 @@
+# ClipArtCraft on a web server (Apache): browsers check for a newer version of the app's own files every time,
+# so an update shows at once (nothing changed: they get "304 Not Modified" and use what they have).
+<IfModule mod_headers.c>
+  <FilesMatch "\.(html|js|css|json)$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+</IfModule>
+<IfModule !mod_headers.c>
+  <IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType text/html "access plus 0 seconds"
+    ExpiresByType application/javascript "access plus 0 seconds"
+    ExpiresByType text/javascript "access plus 0 seconds"
+    ExpiresByType text/css "access plus 0 seconds"
+  </IfModule>
+</IfModule>

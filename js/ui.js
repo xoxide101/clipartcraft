@@ -414,7 +414,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
 `;
         download(new Blob([text], { type: 'text/javascript' }), 'config.js'); toast('Saved config.js: put it beside ClipArtCraft’s index.html.'); return; }
       if (c === 'none') { await L.server(''); await checkServer(); draw(); toast('Not using a server now (the pictures stay here).'); return; }
-      if (c === 'use') { const pl = P.list[i]; pl.url = tidyUrl(pl.url); if (!pl.url) return toast('Type its address first.'); savePlaces(P); await L.server(pl.url); await L.serverKey(pl.key || ''); await checkServer(true); await probeAll([pl.url]); return; }
+      if (c === 'use') { const pl = P.list[i]; pl.url = tidyUrl(pl.url); if (!pl.url) return toast('Type its address first.'); savePlaces(P); await L.server(pl.url); await L.serverKey(pl.key || ''); await checkServer(true); await probeAll([pl.url]); fillFromServer(); return; }
       if (c === 'look') { b.disabled = true; b.textContent = 'Looking…';
         const cands = [...P.list.map((pl) => pl.url), 'http://localhost:3370', 'http://localhost:8790', ...besideUs()];
         await probeAll(cands);
@@ -583,6 +583,13 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     });
     document.body.append(box); (box.querySelector('[data-key]:placeholder-shown') || box.querySelector('[data-key]')).focus();
   }
-  loadLists().then(reload).then(() => checkServer()).then(autoPlace).then(offerResume).catch(fail);
+  // a browser whose library is still empty, connected to a server: its pictures are fetched straight away (otherwise a new
+  // browser looks as if it could not read the server)
+  async function fillFromServer() {
+    if (!serverOk || items.length) return;
+    try { const r = await L.pull((n, t) => busy(`Getting the server’s pictures: ${n} of ${t}…`)); busy(); await reload(); if (r.made.length) toast(`Got ${r.made.length} pictures from the server.`); }
+    catch (e) { busy(); console.warn('Getting the server’s pictures failed', e); }
+  }
+  loadLists().then(reload).then(() => checkServer()).then(autoPlace).then(fillFromServer).then(offerResume).catch(fail);
   window.ClipArtCraft = { reload, items: () => items };
 })();
