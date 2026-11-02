@@ -119,6 +119,18 @@
     if (a.dataset.sa === 'show') { const it = keptOf(s2); if (it) { cat = '*'; sel = new Set([it.id]); render(); } return; }
     if (a.dataset.sa === 'touchup') { const it = await keepFromServer(s2); if (it && window.ClipArtEditor) ClipArtEditor.open(it, { toast, done: async () => { await reload(); } }); }
   });
+  // Find copies (js/dupes.js): in this browser's library, or on the server (all of it, read from its list)
+  async function findCopies(onSrv) {
+    if (!window.ClipArtDupes) return;
+    if (onSrv) {
+      if (!serverUrl || !serverOk) return toast('Connect to a server first.'); busy('Reading the server’s list…');
+      let all = []; try { for (let off = 0; ; off += 500) { const r = await (await fetch(`${serverUrl}/api/items?limit=500&offset=${off}`)).json(); all = all.concat(r.items); if (all.length >= r.total || !r.items.length) break; } } catch (e) { busy(); return fail(e); } busy();
+      return ClipArtDupes.open({ where: 'server', toast, list: all.map((x) => ({ id: x.id, name: x.name, thumb: (x.links || {}).thumb, width: x.width, height: x.height, svg: !!(x.links || {}).svg })),
+        remove: async (ids) => { const key = await L.serverKey(); for (const id of ids) { const r = await fetch(`${serverUrl}/api/items/${encodeURIComponent(id)}`, { method: 'DELETE', headers: key ? { 'x-craft-key': key } : {} }); if (r.status === 403) throw new Error('the server needs its key to remove pictures (Server › Connect…, the place’s Key)'); if (!r.ok && r.status !== 404) throw new Error(`the server said ${r.status}`); } srv.items = []; srv.at = ''; srv.total = 0; },
+        done: () => loadServer() });
+    }
+    return ClipArtDupes.open({ where: 'local', toast, list: items.map((it) => ({ id: it.id, name: it.name, thumb: it.thumb, width: it.width, height: it.height, svg: !!it.svg, hash: it.hash })), remove: (ids) => L.remove(ids), done: () => reload() });
+  }
   function render() {
     const C = cats(); const catBtn = ([k, l, n]) => `<button type="button" class="cat" data-cat="${esc(k)}" aria-current="${cat === k}"><span>${esc(l)}</span><b>${n}</b></button>`;
     const branch = (key, label, n, kids, dim) => { const open = openTree.has(key) && kids.length; return `<div class="tree-row">${kids.length ? `<button type="button" class="tw" data-tree="${esc(key)}" aria-expanded="${!!open}" aria-label="${open ? 'Close' : 'Open'} ${esc(label)}">${open ? '▾' : '▸'}</button>` : '<span class="tw"></span>'}${catBtn([key, label, n]).replace('class="cat"', `class="cat${dim ? ' empty' : ''}"`)}</div>${open ? `<div class="tree-kids">${kids.map(([k, l, c]) => `<div class="tree-row"><span class="tw"></span>${catBtn([k, l, c])}</div>`).join('')}</div>` : ''}`; };
@@ -233,6 +245,7 @@
       if (a === 'sort-ai') { const S = sel.size ? chosen() : items.filter(needsSort); if (!S.length) return toast('Everything is sorted already.');
         // the switch on cloud: the cloud AI sorts them (with the AI here when there is no key)
         if (window.CraftCloud.mode() === 'cloud' && window.CraftCloud.ready()) { if (S.length > 1 && !confirm(`Send ${S.length} pictures to ${CraftCloud.NAMES[CraftCloud.provider()]}? Each one costs a little on your account.`)) return; await askCloud(S); await reload(); return; } if (!(await aiOk())) return; await sortWithAI(S); await reload(); return; }
+      if (a === 'dupes' || a === 'dupes-server' || a === 'dupes-local') return findCopies(a === 'dupes-server' || (a === 'dupes' && onServer()));
       if (a === 'start') { startOpen = true; render(); return; }
       if (a === 'start-close') { startOpen = false; render(); return; }
       if (a === 'add') return importer([]);
@@ -343,6 +356,7 @@
   // right-click a category, a sheet or file, or a branch under one on the left: the same for all the pictures in it
   $('cats').addEventListener('contextmenu', (e) => {
     const b = e.target.closest('[data-cat]'); if (!b || !window.CraftMenu) return; e.preventDefault(); const key = b.dataset.cat, label = b.querySelector('span')?.textContent || key;
+    if (key === '#server') return CraftMenu.show(e.clientX, e.clientY, [{ label: 'Show the server’s pictures', run: () => { cat = '#server'; render(); loadServer(); } }, { label: 'Find copies on the server…', run: () => findCopies(true) }]);
     if (key === '#work') return CraftMenu.show(e.clientX, e.clientY, [{ label: 'Show the working area', run: () => { cat = key; sel.clear(); render(); } }, { label: 'Delete the used files…', disabled: !work.some((w) => w.used), run: () => act('work-del-used') }]);
     const keepCat = cat, keepQ = query; cat = key; query = ''; const list = shown(); cat = keepCat; query = keepQ; const n = list.length, them = `${n} picture${n === 1 ? '' : 's'}`;
     const use = (fn) => async () => { cat = key; sel = new Set(list.map((it) => it.id)); render(); await fn(); };
@@ -353,6 +367,7 @@
       '-', { label: 'Move all to a category', disabled: !n, sub: [...KNOWN().map((c) => ({ label: c, checked: n && list.every((it) => it.category === c), run: move(c) })), '-', { label: 'Not sorted yet', run: move('') }] },
       { label: `Sort ${them} with AI`, disabled: !n, run: use(() => act('ai-again')) }, { label: 'Ask a cloud AI about them…', disabled: !n, run: use(() => act('cloud-ask')) },
       '-', { label: `Export ${them} (ZIP)…`, disabled: !n, run: use(() => act('export-sel')) }, ...(file ? [{ label: 'Slice the sheet again…', run: () => slicer(WA.fileOf(file)) }] : []),
+      ...(key === '*' ? ['-', { label: 'Find copies in this browser…', run: () => findCopies(false) }] : []),
       '-', { label: `Delete all ${them}…`, danger: true, disabled: !n, run: use(() => act('delete')) }]);
   });
   // A picture that is all dark (black line art, a black silhouette) is hard to see on the dark checkerboard: its tile
@@ -538,7 +553,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
       { id: 'home', label: 'Home', hue: '#c2410c', groups: [
         ['Start', [B('Start', I.wand, () => act('start'), { big: true, title: 'The start page: what do you want to do? (import, slice a sheet, open a library…)' })]],
         ['Add', [B('Import pictures', IK.add, () => act('add'), { big: true, key: 'Ctrl+O', title: 'Any picture files (PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, TIFF, SVG, animations, classic formats): every page and frame, cropped, named for you, black and white made see-through' }), B('Import a library', IK.zip, () => act('zip'), { big: true, title: 'A library ZIP (from ImageCraft’s Split a sheet, or exported here)' })]],
-        ['Sort', [B('Sort with AI', I.wand, () => act('sort-ai'), { big: true, title: 'The AI looks at each picture (the chosen ones, or every one not yet in a category) and gives it a category, style, form and tags, and a name where it only has a number' }), { col: [B('Ask a cloud AI', I.globe, () => act('cloud-ask'), { title: 'A cloud AI (Claude, Gemini, GPT or OpenRouter, with your own key) names and sorts the chosen pictures: for the ones the AI here gets wrong. Costs a little per picture', disabled: () => !sel.size }), B('Cloud AI settings…', I.gear, () => act('cloud-settings'), { title: 'Your own key for Claude, Gemini, GPT or OpenRouter, and which model to use' })] }]],
+        ['Sort', [B('Sort with AI', I.wand, () => act('sort-ai'), { big: true, title: 'The AI looks at each picture (the chosen ones, or every one not yet in a category) and gives it a category, style, form and tags, and a name where it only has a number' }), { col: [B('Ask a cloud AI', I.globe, () => act('cloud-ask'), { title: 'A cloud AI (Claude, Gemini, GPT or OpenRouter, with your own key) names and sorts the chosen pictures: for the ones the AI here gets wrong. Costs a little per picture', disabled: () => !sel.size }), B('Cloud AI settings…', I.gear, () => act('cloud-settings'), { title: 'Your own key for Claude, Gemini, GPT or OpenRouter, and which model to use' })] }, B('Find copies…', I.duplicate || I.copy, () => act('dupes'), { big: true, title: 'Pictures that are the same picture (a sheet sent twice, a picture imported again): keep one of each, remove the rest. On the server when you are looking at it, else in this browser' })]],
         ['Slice', [B('Montage Slicer', IK.slice, () => act('slice'), { big: true, title: 'Cut a sheet (montage) of clip art into separate pictures: found by themselves or by a grid, named in order, added to the library' })]],
         ['Library', [B('Export (ZIP)', IK.exportZ, () => act('export-all'), { big: true, title: 'Everything shown (the category you are in, or all) as one ZIP: pictures, SVGs and library.json' }), { col: [B('Save to the folder', IK.up, () => act('folder-out'), { title: 'Write the whole library to its folder (backup, sync, sharing)' }), B('Add from a folder', IK.down, () => act('folder-in'), { title: 'Read a library folder into this library' }), B('Choose the folder…', IK.folder, () => act('folder-pick'), { title: 'Which folder the library is saved to' })] }]],
         ['Edit', [{ col: [B('Choose all', I.selectAll, () => act('select-all'), { key: 'Ctrl+A' }), B('Delete', I.trash, () => act('delete'), { key: 'Delete', disabled: () => !sel.size })] }]],
