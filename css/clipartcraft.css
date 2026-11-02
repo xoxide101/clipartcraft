@@ -396,3 +396,9 @@ label.ed-sw input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .rb-slide.narrow { grid-template-columns: 50px 76px 46px; }
 .crb-row .crb-sep { margin: 0 3px; }
 .crb .rb-font.input { height: 22px; min-height: 0; padding-top: 0; padding-bottom: 0; }
+.ed-navs { display: flex; align-items: center; gap: 8px; margin-left: 12px; }
+.ed-navs[hidden] { display: none; }
+.ed-nav { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px 0 8px; font-weight: 600; color: var(--accent, #7c3aed); border-color: currentColor; }
+.ed-nav[data-ed=next] { padding: 0 8px 0 12px; }
+.ed-pos { min-width: 64px; text-align: center; font-variant-numeric: tabular-nums; }
+.rb-pos { margin-left: 4px; font-variant-numeric: tabular-nums; }

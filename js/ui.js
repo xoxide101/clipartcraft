@@ -632,6 +632,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     pick: '<path d="M15 3l6 6-3 3-6-6Z" class="fill"/><path d="M13 8l-8 8v3h3l8-8"/>',
     bold: '<path d="M7 4h6a4 4 0 0 1 0 8H7ZM7 12h7a4 4 0 0 1 0 8H7Z"/>',
     down: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
+    prev: '<circle cx="12" cy="12" r="10" class="fill"/><path d="M14.5 7 9.5 12l5 5" stroke-width="2.4"/>', next: '<circle cx="12" cy="12" r="10" class="fill"/><path d="M9.5 7l5 5-5 5" stroke-width="2.4"/>',
     layerNew: '<path d="m12 4 9 5-9 5-9-5Z" class="fill"/><path d="m3 14 9 5 9-5"/><path d="M19 2v5M16.5 4.5h5"/>',
     layerSel: '<path d="m12 4 9 5-9 5-9-5Z" stroke-dasharray="3 2"/><path d="m3 14 9 5 9-5"/>',
     up: '<path d="M12 19V5M6 11l6-6 6 6"/>', downL: '<path d="M12 5v14M6 13l6 6 6-6"/>',
@@ -661,6 +662,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     r.addEventListener('input', () => { t.value = r.value; set(r.value); }); t.addEventListener('change', () => set(t.value)); t.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') set(t.value); });
     w.sync = () => { if (!E()) return; const v = E().T()[n]; r.value = v; if (document.activeElement !== t) t.value = v; r.disabled = t.disabled = off(); }; return w;
   }
+  const navPos = document.createElement('small'); navPos.className = 'hint rb-pos';
   const busyOff = () => off() || !!E().busy(), curLayer = () => (off() ? {} : E().layers().find((l) => l.active) || {});
   // a slider for something that is not one of the tool settings (how solid the layer is)
   function fSlide(label, min, max, get, set, title) { const w = rSlide('_', label, min, max, title), [r, t] = w.querySelectorAll('input'); r.oninput = null;
@@ -685,7 +687,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
   rCols.addEventListener('click', (e) => { if (off()) return; const s = e.target.closest('[data-sw]'); if (s) return E().setT('col', s.dataset.sw); if (e.target.closest('[data-radd]')) E().addColour(); });
   rCols.addEventListener('contextmenu', (e) => { const s = e.target.closest('[data-mine]'); if (s && !off()) { e.preventDefault(); E().dropColour(s.dataset.sw); } });
   rCols.addEventListener('change', (e) => { const k = e.target.dataset.rc; if (k && !off()) E().setT(k, e.target.value); });
-  function syncTouchTab() { if (!E()) return; if (!fontSel.options.length) fontSel.innerHTML = E().FONTS.map((f) => `<option style="font-family:'${f}'">${f}</option>`).join(''); fontSel.value = E().T().font; fontSel.disabled = off(); [sizeSlide, tolSlide, fsSlide, opSlide, stepSlide, fxSlide, vcSlide, bgSel, vecSel].forEach((w) => w.sync()); drawCols(); if (typeof ribbon !== 'undefined') ribbon.refresh(); }
+  function syncTouchTab() { if (!E()) return; if (!fontSel.options.length) fontSel.innerHTML = E().FONTS.map((f) => `<option style="font-family:'${f}'">${f}</option>`).join(''); fontSel.value = E().T().font; fontSel.disabled = off(); [sizeSlide, tolSlide, fsSlide, opSlide, stepSlide, fxSlide, vcSlide, bgSel, vecSel].forEach((w) => w.sync()); navPos.textContent = off() ? '' : touchLabel(); drawCols(); if (typeof ribbon !== 'undefined') ribbon.refresh(); }
   [opSlide, stepSlide, fxSlide, vcSlide].forEach((w) => w.classList.add('narrow'));
   document.addEventListener('clipart-editor', syncTouchTab);
   const ribbon = window.CraftRibbon({
@@ -700,7 +702,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
         ['Edit', [{ col: [B('Choose all', I.selectAll, () => act('select-all'), { key: 'Ctrl+A' }), B('Delete', I.trash, () => act('delete'), { key: 'Delete', disabled: () => !sel.size })] }]],
       ] },
       { id: 'touch', label: 'Touch up', hue: '#7c3aed', onSelect: () => enterTouch(), groups: [
-        ['Picture', [B('Save', I.save, () => E().save(false), { big: true, title: 'Replace the picture in the library (its very first version is kept, to go back to)', disabled: off }), { col: [B('Save as a copy', I.copy, () => E().save(true), { title: 'Keep both: the picture as it was and this one', disabled: off }), B('Back to the library', IK.folder, () => ribbon.select('home', true), { title: 'The library again (the picture stays here with its changes until you open another)' })] }]],
+        ['Picture', [B('Save', I.save, () => E().save(false), { big: true, title: 'Replace the picture in the library (its very first version is kept, to go back to)', disabled: off }), { col: [B('Save as a copy', I.copy, () => E().save(true), { title: 'Keep both: the picture as it was and this one', disabled: off }), B('Back to the library', IK.folder, () => ribbon.select('home', true), { title: 'The library again (the picture stays here with its changes until you open another)' }), { row: [B('Previous picture', TI.prev, () => touchStep(-1), { iconOnly: true, key: 'Page Up', disabled: () => off() || !touchLabel() }), B('Next picture', TI.next, () => touchStep(1), { iconOnly: true, key: 'Page Down', disabled: () => off() || !touchLabel() }), { el: navPos }] }] }]],
         ['Clipboard', [B('Paste', I.paste, () => E().paste(), { big: true, key: 'Ctrl+V', title: 'What you copied (to drag into place), or a picture copied in another program', disabled: off }), { col: [B('Cut', I.cut, () => E().cut(), { key: 'Ctrl+X', disabled: off }), B('Copy', I.copy, () => E().copy(), { key: 'Ctrl+C', disabled: off }), { row: [B('Undo', I.undo, () => E().undo(), { iconOnly: true, key: 'Ctrl+Z', disabled: off }), B('Redo', I.redo, () => E().redo(), { iconOnly: true, key: 'Ctrl+Y', disabled: off }), '|', B('Put it down', TI.down, () => E().putDown(), { iconOnly: true, key: 'Enter', title: 'Put it down: the floating piece (a paste or words) goes into the picture where it is', disabled: () => off() || !E().floating() })] }] }]],
         ['Select', [{ col: [{ row: [tool('Rectangle select', TI.box, { tool: 'select', shape: 'box' }), tool('Ellipse select', TI.ellipse, { tool: 'select', shape: 'ellipse' }), tool('Lasso', TI.lasso, { tool: 'select', shape: 'lasso' }, 'Lasso: drag freehand, or click corners'), tool('Magic wand', TI.wand, { tool: 'select', shape: 'wand' }, 'Magic wand: a patch of about one colour (how close: Colour match)')] },
           { row: [B('Select all', I.selectAll, () => E().selDo('all'), { iconOnly: true, key: 'Ctrl+A', disabled: off }), B('Invert the selection', TI.invert, () => E().selDo('invert'), { iconOnly: true, key: 'Ctrl+Shift+I', disabled: off }), B('Deselect', TI.deselect, () => E().selDo('none'), { iconOnly: true, key: 'Ctrl+D', disabled: () => off() || !E().hasSel() })] },
@@ -742,9 +744,33 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
   touchEmpty.addEventListener('click', (e) => { if (e.target.closest('[data-touch-back]')) ribbon.select('home', true); });
   app.insertBefore(touchEmpty, $('status'));
   function touchUp(it) { touchWant = it || null; ribbon.select('touch', true); }
-  const touchOpts = () => ({ toast, mount: app, before: touchEmpty, onClose: () => ribbon.select('home', true),
+  // Previous / Next in Touch up: through the pictures chosen (when several), or all the library is showing (the
+  // category or search), or the server's when looking at it; changes not saved are asked about first
+  let touchSet = null, stepping = false;
+  function makeTouchSet() { if (onServer()) return { srv: true, list: srv.items.slice() }; const S = chosen(); return { srv: false, list: (S.length > 1 ? shown().filter((x) => sel.has(x.id)) : shown()).filter((x) => x.png) }; }
+  const touchPos = () => { const it = ClipArtEditor.item(); if (!touchSet || !it) return -1; return touchSet.list.findIndex((x) => (touchSet.srv ? x.id === it.serverId : x.id === it.id)); };
+  const touchLabel = () => { const i = touchPos(); return touchSet && touchSet.list.length > 1 && i >= 0 ? `${i + 1} of ${touchSet.list.length}` : ''; };
+  // changes not saved: Save, Don't save or Cancel (as Office asks); false: stay
+  async function saveFirst() {
+    const E = ClipArtEditor; if (!E.item() || !E.changed()) return true;
+    const v = await ask('Save changes?', `Do you want to save the changes to “${esc(E.item().name)}”?`, [{ label: 'Save', value: 'save', primary: true }, { label: 'Don’t save', value: 'leave' }, { label: 'Cancel', value: null }]);
+    if (!v) return false; if (v === 'save') { stepping = true; try { await E.save(false); } finally { stepping = false; } } return true;
+  }
+  async function touchStep(d) {
+    const E = ClipArtEditor; if (stepping || !touchSet || touchSet.list.length < 2) return toast('Nothing to go on to: choose several pictures (or a category) on the Home tab, then touch up.');
+    const n = touchSet.list.length, i = touchPos(), j = i < 0 ? 0 : (i + d + n) % n;
+    if (!(await saveFirst())) return;
+    stepping = true;
+    try {
+      let next = touchSet.list[j]; next = touchSet.srv ? await keepFromServer(next) : (await L.all()).find((x) => x.id === next.id); if (!next) return toast('That picture is not there any more.');
+      if (!touchSet.srv) { sel = new Set([next.id]); last = next.id; render(); }
+      if (i >= 0 && (i + d >= n || i + d < 0)) toast(d > 0 ? 'That was the last: back to the first.' : 'That was the first: round to the last.');
+      await E.open(next, touchOpts());
+    } finally { stepping = false; }
+  }
+  const touchOpts = () => ({ toast, mount: app, before: touchEmpty, onClose: () => ribbon.select('home', true), nav: { step: touchStep, label: touchLabel },
     // saved: the library shows it chosen, and Touch up goes on with it
-    done: async (saved) => { await reload(); if (!saved) return; sel = new Set([saved.id]); render(); if (['touch', 'fix'].includes(ribbon.current())) await ClipArtEditor.open((await L.all()).find((x) => x.id === saved.id) || saved, touchOpts()); } });
+    done: async (saved) => { await reload(); if (!saved || stepping) return; sel = new Set([saved.id]); render(); if (['touch', 'fix'].includes(ribbon.current())) await ClipArtEditor.open((await L.all()).find((x) => x.id === saved.id) || saved, touchOpts()); } });
   async function enterTouch() {
     setTimeout(syncTouchTab, 0);
     let it = touchWant; touchWant = null;
@@ -754,8 +780,8 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     const E = window.ClipArtEditor, open = E.item();
     if (open && (!it || it.id === open.id)) { touchEmpty.hidden = true; E.show(); return; }
     if (!it || !it.png) { touchEmpty.querySelector('p').textContent = it ? 'Only pictures (PNG) can be touched up: this one is an SVG only.' : 'Choose a picture on the Home tab first (or double-click one: it opens here).'; touchEmpty.hidden = false; return; }
-    if (open && E.changed() && !confirm(`“${open.name}” has changes not saved. Leave them and touch up “${it.name}”?`)) { touchEmpty.hidden = true; E.show(); return; }
-    touchEmpty.hidden = true; await E.open(it, touchOpts());
+    if (open && E.changed() && !(await saveFirst())) { touchEmpty.hidden = true; E.show(); return; }
+    touchEmpty.hidden = true; touchSet = makeTouchSet(); await E.open(it, touchOpts());
   }
   function leaveTouch() { touchEmpty.hidden = true; if (ClipArtEditor.isOpen()) ClipArtEditor.close(); app.querySelector('.work').hidden = false; syncTouchTab(); }
   // (the page always opens on the library, not on Touch up)

@@ -520,14 +520,14 @@
       const fresh = await L.makeItem({ name: item.name, png, svg });
       if (asCopy) { const o = offOf(cur), it = { ...item, ...fresh, id: fresh.id, cutAt: item.cutAt ? { x: item.cutAt.x + o.x, y: item.cutAt.y + o.y, w: cur.width, h: cur.height } : undefined, name: item.name, serverId: undefined, links: undefined, pngFirst: undefined, edited: new Date().toISOString() }; delete it.serverId; delete it.links; delete it.pngFirst; await L.put(it); toast(`Saved as a copy: “${it.name}”.`); saved = it; }
       else { if (!item.pngFirst) { item.pngFirst = item.png; if (item.cutAt) item.cutAtFirst = item.cutAt; } if (item.cutAt) { const o = offOf(cur); item.cutAt = { x: item.cutAt.x + o.x, y: item.cutAt.y + o.y, w: cur.width, h: cur.height }; } Object.assign(item, { png, svg: svg || item.svg, thumb: fresh.thumb, width: fresh.width, height: fresh.height, edited: new Date().toISOString() }); if (item.serverId) item.changed = true; await L.put(item); toast(`Saved “${item.name}”.`); saved = item; }
-      past = []; future = []; close(); opts.done && opts.done(saved);
+      past = []; future = []; close(); if (opts.done) await opts.done(saved);
     } catch (e) { console.error(e); toast('Saving failed: ' + (e.message || e)); btns.forEach((b) => { b.disabled = false; }); }
   }
   async function backToFirst() { if (!item.pngFirst) return; const first = await imageOf(item.pngFirst), a = item.cutAt, f = item.cutAtFirst; first.off = a && f ? { x: f.x - a.x, y: f.y - a.y } : { x: 0, y: 0 }; if (layers.length > 1) layerChange(() => { layers = [layers[active]]; active = 0; }); change(first); toast('Back to the very first version: Save to keep it.'); }
 
   function build() {
     el = document.createElement('div'); el.className = 'slicer editor'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Touch up');
-    el.innerHTML = `<div class="sl-bar"><b>Touch up</b><span class="hint ed-name"></span><span class="grow"></span><button class="btn outline" type="button" data-ed="close">Close</button></div>
+    el.innerHTML = `<div class="sl-bar"><b>Touch up</b><span class="hint ed-name"></span><span class="ed-navs" hidden><button class="btn outline ed-nav" type="button" data-ed="prev" title="The previous picture (Page Up)"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="10.5" fill="currentColor" opacity=".16"/><path d="M14.5 6.5 9 12l5.5 5.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Previous</span></button><b class="ed-pos"></b><button class="btn outline ed-nav" type="button" data-ed="next" title="The next picture (Page Down)"><span>Next</span><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="10.5" fill="currentColor" opacity=".16"/><path d="M9.5 6.5 15 12l-5.5 5.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button></span><span class="grow"></span><button class="btn outline" type="button" data-ed="close">Close</button></div>
       <div class="sl-main"><div class="sl-left"><div class="imp-tools sl-tools" role="toolbar"><button class="btn outline" type="button" data-hist="undo" disabled title="Undo (Ctrl+Z)">↶ Undo</button><button class="btn outline" type="button" data-hist="redo" disabled title="Redo (Ctrl+Y)">↷ Redo</button><span class="sep"></span>
         <div class="seg" role="group"><button class="btn" type="button" data-z="out">−</button><button class="btn sl-zoom" type="button" data-z="fit">Fit</button><button class="btn" type="button" data-z="in">+</button></div><button class="btn outline" type="button" data-z="100">100%</button></div>
         <div class="sl-desk"><div class="sl-stage"><canvas class="ed-canvas"></canvas></div></div><div class="sl-status"></div></div><aside class="sl-side side right"></aside></div>`;
@@ -553,6 +553,7 @@
       const b = e.target.closest('[data-bg]'); if (b) { bgView = b.dataset.bg; draw(); renderPanel(); return; }
       const c = e.target.closest('[data-clean]'); if (c) { const k = c.dataset.clean, v = +(el.querySelector(`[data-cv="${k}"]`).value) || CLEAN[k].value; T['cv_' + k] = v; keepT(); const out = CLEAN[k].run(cur, v, fromImg()); change(out); toast(`${CLEAN[k].label}: done (Undo takes it back).`); return; }
       const a = e.target.closest('[data-ed]'); if (!a) return; if (a.dataset.ed === 'close') { if (opts.onClose) return opts.onClose(); if (past.length && !confirm('Close without saving the changes?')) return; close(); return; }
+      if (a.dataset.ed === 'prev' || a.dataset.ed === 'next') return opts.nav && opts.nav.step(a.dataset.ed === 'next' ? 1 : -1);
       if (a.dataset.ed === 'save') return save(false); if (a.dataset.ed === 'copy') return save(true); if (a.dataset.ed === 'first') return backToFirst();
     });
     el.addEventListener('dblclick', (e) => { const lp = e.target.closest('[data-lpick]'); if (lp && !e.target.closest('[data-lvis]')) layerDo('rename', lp.dataset.lpick); });
@@ -562,6 +563,7 @@
     document.addEventListener('keydown', (e) => {
       if (!el || el.hidden) return; if (poly) { if (e.key === 'Enter') { e.preventDefault(); closePoly(e.altKey); return; } if (e.key === 'Escape') { e.preventDefault(); poly = null; preview(null); return; } if (e.key === 'Backspace') { e.preventDefault(); poly.pts.pop(); if (!poly.pts.length) { poly = null; preview(null); } return; } }
       if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+      if ((e.key === 'PageDown' || e.key === 'PageUp') && opts.nav && !e.ctrlKey) { e.preventDefault(); opts.nav.step(e.key === 'PageDown' ? 1 : -1); return; }
       if (flt && !e.ctrlKey && !e.metaKey) { if (e.key === 'Enter') { e.preventDefault(); putDown(); return; } if (e.key === 'Escape' || e.key === 'Delete') { e.preventDefault(); dropFloat(); return; } }
       if (e.ctrlKey || e.metaKey) { const k = e.key.toLowerCase(); if (k === 'c' && !String(getSelection())) { e.preventDefault(); copySel(false); } else if (k === 'x') { e.preventDefault(); copySel(true); } else if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); } else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); } else if (k === 'a') { e.preventDefault(); selDo('all'); } else if (k === 'd') { e.preventDefault(); selDo('none'); } else if (k === 'i' && e.shiftKey) { e.preventDefault(); selDo('invert'); } else if (k === 'j') { e.preventDefault(); layerDo(sel ? 'fromsel' : 'dup'); } return; }
       if (sel && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); selDo('erase'); } else if (sel && e.key === 'Escape') { e.preventDefault(); selDo('none'); }
@@ -581,8 +583,10 @@
     el.querySelector('[data-ed=close]').textContent = o.mount ? 'Back to the library' : 'Close'; el.hidden = false; past = []; future = []; zoom = 1; poly = null; sel = null; selView = null; flt = null; closeText(); maskEdit = false; vec = null;
     el.querySelectorAll('[data-ed]').forEach((b) => { b.disabled = false; });
     cur = await imageOf(it.png); cur.off = { x: 0, y: 0 }; orig = copy(cur); layers = [{ name: 'Picture', img: cur, vis: true, op: 1, mask: null }]; active = 0; sheetFull = await sheetOf(it); if (!sheetPart() && T.from === 'sheet') T.from = 'opened';
-    el.querySelector('.ed-name').textContent = it.name; renderPanel(); draw(); status(); const d = desk(); d.scrollLeft = d.scrollTop = 0;
+    el.querySelector('.ed-name').textContent = it.name; navBar(); renderPanel(); draw(); status(); const d = desk(); d.scrollLeft = d.scrollTop = 0;
   }
+  // Previous / Next (when Touch up is going through a set of pictures): where this one is in it
+  function navBar() { const n = el.querySelector('.ed-navs'), t = opts.nav ? opts.nav.label() : ''; n.hidden = !t; el.querySelector('.ed-pos').textContent = t; }
   function close() { if (el) el.hidden = true; poly = null; preview(null); }
   // shown again (its tab chosen again): the picture and its changes as they were
   function show() { if (el && item) { el.hidden = false; draw(); status(); } }
