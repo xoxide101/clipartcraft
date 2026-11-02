@@ -906,7 +906,9 @@
   const scaled = (img, k) => { const c = document.createElement('canvas'); c.width = img.width * k; c.height = img.height * k; const x = c.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(canvasOf(img), 0, 0, c.width, c.height); return x.getImageData(0, 0, c.width, c.height); };
   const bolder = (img) => { const o = copy(img), d = o.data, s = img.data, W = img.width, H = img.height; for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { let m = 255; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const nx = x + dx, ny = y + dy; if (nx >= 0 && ny >= 0 && nx < W && ny < H) m = Math.min(m, s[(ny * W + nx) * 4]); } const i = (y * W + x) * 4; d[i] = d[i + 1] = d[i + 2] = m; } return o; };
   const negative = (img) => { const o = copy(img), d = o.data; for (let i = 0; i < d.length; i += 4) { d[i] = 255 - d[i]; d[i + 1] = 255 - d[i + 1]; d[i + 2] = 255 - d[i + 2]; } return o; };
-  const TRIES = [(r) => inkOf(r), (r) => onWhite(r), (r) => inkOf(scaled(r, 3)), (r) => bolder(inkOf(scaled(r, 2))), (r) => negative(inkOf(scaled(r, 2)))];
+  // (as seen: on white, and on black, where white words show; each also turned inside out)
+  const onBlack = (img) => { const o = copy(img), d = o.data; for (let i = 0; i < d.length; i += 4) { const a = d[i + 3] / 255; d[i] *= a; d[i + 1] *= a; d[i + 2] *= a; d[i + 3] = 255; } return o; };
+  const TRIES = [(r) => inkOf(r), (r) => onWhite(r), (r) => negative(onWhite(r)), (r) => onBlack(r), (r) => negative(onBlack(r)), (r) => inkOf(scaled(r, 3)), (r) => bolder(inkOf(scaled(r, 2))), (r) => negative(inkOf(scaled(r, 2)))];
   // words made plain for the reader: dark ink on white, however they were drawn (faint grey, white, on a see-through
   // sheet, or white on a pale half see-through band, where onWhite leaves them nearly invisible). Ink is whatever differs
   // from the label's usual pixel, in colour or in how see-through it is (each pixel as its colour times how solid it is,
@@ -1101,7 +1103,8 @@
         if (sheet !== mine) { sayReading(''); return; } // another sheet was opened meanwhile
         sayReading(`Reading ${++k} of ${jobs.length}…`);
         const b = j.box, x0 = Math.max(0, Math.round(b.x)), y0 = Math.max(0, Math.round(b.y)), raw = cropOf(sheet, x0, y0, Math.min(sheet.width - x0, Math.round(b.w)), Math.min(sheet.height - y0, Math.round(b.h)));
-        // tries, one after another until one reads like words: the words as dark ink, as they are, bigger, bolder, light on dark
+        // tries, one after another until one reads like words: the words as dark ink; as seen on white and on black, and each
+        // inverted; then bigger, bolder, light on dark
         let said = '';
         for (const make of TRIES) {
           const part = make(raw), readIt = () => N.read(squareOf(part), { progress: (a, t) => sayReading(`Getting the AI: ${Math.round((a / t) * 100)}%`) });
