@@ -907,16 +907,17 @@
   const bolder = (img) => { const o = copy(img), d = o.data, s = img.data, W = img.width, H = img.height; for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { let m = 255; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const nx = x + dx, ny = y + dy; if (nx >= 0 && ny >= 0 && nx < W && ny < H) m = Math.min(m, s[(ny * W + nx) * 4]); } const i = (y * W + x) * 4; d[i] = d[i + 1] = d[i + 2] = m; } return o; };
   const negative = (img) => { const o = copy(img), d = o.data; for (let i = 0; i < d.length; i += 4) { d[i] = 255 - d[i]; d[i + 1] = 255 - d[i + 1]; d[i + 2] = 255 - d[i + 2]; } return o; };
   const TRIES = [(r) => inkOf(r), (r) => onWhite(r), (r) => inkOf(scaled(r, 3)), (r) => bolder(inkOf(scaled(r, 2))), (r) => negative(inkOf(scaled(r, 2)))];
-  // words made plain for the reader: dark ink on white, however they were drawn (faint grey, white, or on a see-through
-  // sheet, where onWhite alone leaves light words nearly invisible). Ink is what differs from the background: any solid
-  // pixel on a see-through background, else how far a pixel is from the usual colour; the faintest is stretched to black.
+  // words made plain for the reader: dark ink on white, however they were drawn (faint grey, white, on a see-through
+  // sheet, or white on a pale half see-through band, where onWhite leaves them nearly invisible). Ink is whatever differs
+  // from the label's usual pixel, in colour or in how see-through it is (each pixel as its colour times how solid it is,
+  // and how solid); the usual difference is white, the strongest few per cent black.
   function inkOf(img) {
-    const o = copy(img), d = o.data, n = img.width * img.height, v = new Float32Array(n); let clear = 0;
-    for (let p = 0; p < n; p++) if (d[p * 4 + 3] < 128) clear++;
-    if (clear > n * 0.3) for (let p = 0; p < n; p++) v[p] = d[p * 4 + 3] / 255;
-    else { const L = lumOf(onWhite(img)), bg = Float32Array.from(L).sort()[n >> 1]; for (let p = 0; p < n; p++) v[p] = Math.abs(L[p] - bg) / 255; }
-    const hi = Math.max(0.08, Float32Array.from(v).sort()[Math.min(n - 1, Math.floor(n * 0.995))]);
-    for (let p = 0; p < n; p++) { const g = 255 * (1 - Math.min(1, v[p] / hi)), i = p * 4; d[i] = d[i + 1] = d[i + 2] = g; d[i + 3] = 255; }
+    const o = copy(img), d = o.data, n = img.width * img.height, f = new Float32Array(n * 4);
+    for (let p = 0; p < n; p++) { const a = d[p * 4 + 3] / 255; f[p * 4] = d[p * 4] * a; f[p * 4 + 1] = d[p * 4 + 1] * a; f[p * 4 + 2] = d[p * 4 + 2] * a; f[p * 4 + 3] = d[p * 4 + 3]; }
+    const med = [0, 1, 2, 3].map((c) => { const h = new Uint32Array(256); for (let p = 0; p < n; p++) h[Math.min(255, Math.round(f[p * 4 + c]))]++; let acc = 0; for (let v = 0; v < 256; v++) { acc += h[v]; if (acc >= n / 2) return v; } return 0; });
+    const v = new Float32Array(n); for (let p = 0; p < n; p++) v[p] = Math.abs(f[p * 4] - med[0]) + Math.abs(f[p * 4 + 1] - med[1]) + Math.abs(f[p * 4 + 2] - med[2]) + Math.abs(f[p * 4 + 3] - med[3]);
+    const sorted = Float32Array.from(v).sort(), lo = sorted[n >> 1], hi = Math.max(lo + 24, sorted[Math.min(n - 1, Math.floor(n * 0.98))]);
+    for (let p = 0; p < n; p++) { const g = 255 * (1 - Math.max(0, Math.min(1, (v[p] - lo) / (hi - lo)))), i = p * 4; d[i] = d[i + 1] = d[i + 2] = g; d[i + 3] = 255; }
     return o;
   }
   function lumOf(img) { const n = img.width * img.height, L = new Float32Array(n), d = img.data; for (let p = 0; p < n; p++) { const i = p * 4; L[p] = 0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2]; } return L; }
