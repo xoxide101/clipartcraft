@@ -262,6 +262,26 @@ try {
     'reach' => ['kind' => 'php', 'host' => gethostname() ?: '', 'shared' => true, 'here' => $base, 'addresses' => array_values(array_unique(array_filter([$base, !empty($_SERVER['SERVER_ADDR']) && $_SERVER['SERVER_ADDR'] !== '127.0.0.1' && $_SERVER['SERVER_ADDR'] !== '::1' ? preg_replace('#//[^/:]+#', '//' . (str_contains($_SERVER['SERVER_ADDR'], ':') ? '[' . $_SERVER['SERVER_ADDR'] . ']' : $_SERVER['SERVER_ADDR']), $base, 1) : ''])))]]);
   $lib = $lib_of($Q['library'] ?? null);
   if ($what === 'categories') out(200, $lib->categories());
+  // a SQL copy of the library with the pictures themselves (files table, as hex): MySQL/MariaDB, or SQLite (to keep offline)
+  if ($what === 'export.sql') {
+    if (!$may_write) fail(403, 'A copy of the database needs the key (on the server’s setup page).');
+    $sqlite = ($Q['dialect'] ?? '') === 'sqlite'; $cs = $sqlite ? '' : ' CHARACTER SET utf8mb4'; $big = $sqlite ? 'TEXT' : 'MEDIUMTEXT';
+    $q = fn ($v) => $v === null ? 'NULL' : (is_int($v) || is_float($v) ? (string) $v : "'" . str_replace("'", "''", $sqlite ? (string) $v : str_replace('\\', '\\\\', (string) $v)) . "'");
+    @set_time_limit(0); while (ob_get_level()) ob_end_clean();
+    http_response_code(200); header('Content-Type: application/sql; charset=utf-8'); header('Access-Control-Allow-Origin: *'); header('Access-Control-Allow-Headers: *'); header('Access-Control-Expose-Headers: Content-Disposition');
+    header('Content-Disposition: attachment; filename="' . slug($lib->name) . ' clip art' . ($sqlite ? ' (SQLite)' : '') . '.sql"');
+    echo '-- Craft clip-art library “' . $lib->name . '”, ' . now() . ": the items and their pictures (files).\n-- " . ($sqlite ? 'SQLite: sqlite3 clipart.sqlite < this.sql' : 'MySQL/MariaDB: mysql -u USER -p DATABASE < this.sql, or phpMyAdmin › Import') . "\n";
+    if (!$sqlite) echo "SET NAMES utf8mb4;\n";
+    echo "DROP TABLE IF EXISTS items;\nDROP TABLE IF EXISTS files;\nCREATE TABLE IF NOT EXISTS items (id VARCHAR(40) PRIMARY KEY, type VARCHAR(20), name VARCHAR(200) NOT NULL, original VARCHAR(200), seen VARCHAR(200), matched VARCHAR(200), category VARCHAR(200), style VARCHAR(40), form VARCHAR(40), tags $big, description $big, kind VARCHAR(20), width INTEGER, height INTEGER, frames INTEGER, colours INTEGER, source VARCHAR(500), author VARCHAR(200), licence VARCHAR(200), hash VARCHAR(64), added VARCHAR(40), changed VARCHAR(40), files $big)$cs;\n";
+    echo 'CREATE TABLE IF NOT EXISTS files (item VARCHAR(40) NOT NULL, kind VARCHAR(20) NOT NULL, name VARCHAR(250), data ' . ($sqlite ? 'BLOB' : 'LONGBLOB') . ", PRIMARY KEY (item, kind))$cs;\nBEGIN;\n";
+    for ($off = 0; ; $off += 200) { $r = $lib->list('', null, 200, $off); if (!$r['items']) break;
+      foreach ($r['items'] as $it) { $v = []; foreach (COLS as $c) $v[] = $q($c === 'tags' ? implode(', ', $it['tags']) : ($c === 'files' ? json_encode((object) $it['files'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) : ($it[$c] ?? null)));
+        echo 'INSERT INTO items (' . implode(', ', COLS) . ') VALUES (' . implode(', ', $v) . ");\n";
+        foreach ($it['files'] as $k => $f) { $b = $lib->read_file($it, $k); if ($b !== null) echo 'INSERT INTO files (item, kind, name, data) VALUES (' . $q($it['id']) . ', ' . $q($k) . ', ' . $q($f) . ", X'" . bin2hex($b) . "');\n"; }
+        flush(); }
+      if ($off + count($r['items']) >= $r['total']) break; }
+    echo "COMMIT;\n"; exit;
+  }
   if ($what === 'export.zip' || ($what === 'import' && $method === 'POST')) {
     if (!class_exists('ZipArchive')) fail(501, 'This PHP has no ZIP support (the zip extension); export and import need it.');
     $tmp = tempnam(sys_get_temp_dir(), 'cz');

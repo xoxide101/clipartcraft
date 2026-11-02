@@ -152,11 +152,13 @@
     if (onSrv) {
       if (!serverUrl || !serverOk) return toast('Connect to a server first.'); busy('Reading the server’s list…');
       let all = []; try { for (let off = 0; ; off += 500) { const r = await (await fetch(`${serverUrl}/api/items?limit=500&offset=${off}`)).json(); all = all.concat(r.items); if (all.length >= r.total || !r.items.length) break; } } catch (e) { busy(); return fail(e); } busy();
-      return ClipArtDupes.open({ where: 'server', toast, list: all.map((x) => ({ id: x.id, name: x.name, thumb: (x.links || {}).thumb, width: x.width, height: x.height, svg: !!(x.links || {}).svg })),
+      return ClipArtDupes.open({ where: 'server', toast, list: all.map((x) => ({ id: x.id, name: x.name, thumb: (x.links || {}).thumb, width: x.width, height: x.height, svg: !!(x.links || {}).svg, tags: x.tags || [] })),
+        tag: async (ids) => { const key = await L.serverKey(); for (const x of all.filter((y) => ids.includes(y.id))) { if ((x.tags || []).includes('duplicate')) continue; const r = await fetch(`${serverUrl}/api/items/${encodeURIComponent(x.id)}`, { method: 'PATCH', headers: { 'content-type': 'application/json', ...(key ? { 'x-craft-key': key } : {}) }, body: JSON.stringify({ tags: [...(x.tags || []), 'duplicate'] }) }); if (r.status === 403) throw new Error('the server needs its key to change pictures (Server › Connect…, the place’s Key)'); if (!r.ok) throw new Error(`the server said ${r.status}`); } srv.items = []; srv.at = ''; },
         remove: async (ids) => { const key = await L.serverKey(); for (const id of ids) { const r = await fetch(`${serverUrl}/api/items/${encodeURIComponent(id)}`, { method: 'DELETE', headers: key ? { 'x-craft-key': key } : {} }); if (r.status === 403) throw new Error('the server needs its key to remove pictures (Server › Connect…, the place’s Key)'); if (!r.ok && r.status !== 404) throw new Error(`the server said ${r.status}`); } srv.items = []; srv.at = ''; srv.total = 0; },
         done: () => loadServer() });
     }
-    return ClipArtDupes.open({ where: 'local', toast, list: items.map((it) => ({ id: it.id, name: it.name, thumb: it.thumb, width: it.width, height: it.height, svg: !!it.svg, hash: it.hash })), remove: async (ids) => { const S = items.filter((it) => ids.includes(it.id)); return deletePictures(S, true); }, done: () => reload() });
+    return ClipArtDupes.open({ where: 'local', toast, list: items.map((it) => ({ id: it.id, name: it.name, thumb: it.thumb, width: it.width, height: it.height, svg: !!it.svg, hash: it.hash })), remove: async (ids) => { const S = items.filter((it) => ids.includes(it.id)); return deletePictures(S, true); },
+      tag: async (ids) => { for (const it of items.filter((x) => ids.includes(x.id))) { if ((it.tags || []).includes('duplicate')) continue; it.tags = [...(it.tags || []), 'duplicate']; await L.put(it); } }, done: () => reload() });
   }
   function render() {
     const C = cats(); const catBtn = ([k, l, n]) => `<button type="button" class="cat" data-cat="${esc(k)}" aria-current="${cat === k}"><span>${esc(l)}</span><b>${n}</b></button>`;
@@ -314,6 +316,16 @@
           [{ label: 'Take them out here', value: 'out', danger: true }, { label: 'Send them to the server', value: 'send' }, { label: 'Leave them here', value: null, primary: true }]);
           if (v === 'out') { await L.remove(extra.map((it) => it.id)); out = extra.length; } else if (v === 'send') sent = (await L.push(extra, (n, t) => busy(`Sending ${n} of ${t}…`))).length; busy(); }
         await reload(); toast(`Matched the server (${r.total} pictures): got ${r.made.length}${r.removed.length + out ? `, took out ${r.removed.length + out}` : ''}${sent ? `, sent ${sent}` : ''}${del ? `, deleted ${del} on the server` : ''}.`); return;
+      }
+      if (a === 'dbcopy') {
+        await need(); const v = await ask('A copy of the database', `The whole library on <b>${esc(serverUrl.replace(/^https?:\/\//, ''))}</b>, pictures included, as one SQL file.<br><br><b>MySQL / MariaDB</b>: load it into a database on this computer or another server (phpMyAdmin › Import, or <code>mysql -u USER -p DATABASE &lt; file.sql</code>).<br><b>SQLite</b>: a copy to keep offline, no database server needed (<code>sqlite3 clipart.sqlite &lt; file.sql</code>).`,
+          [{ label: 'MySQL / MariaDB', value: 'mysql' }, { label: 'SQLite (offline)', value: 'sqlite' }, { label: 'Cancel', value: null, primary: true }]); if (!v) return;
+        busy('Making the copy (the pictures are in it: this takes a while)…'); const key = await L.serverKey(); let r;
+        try { r = await fetch(`${serverUrl}/api/export.sql?dialect=${v}`, { headers: key ? { 'x-craft-key': key } : {} }); } catch (e) { busy(); throw new Error(`The server at ${serverUrl} did not answer.`); }
+        if (!r.ok) { busy(); const j = await r.json().catch(() => ({})); throw Object.assign(new Error(j.error || `The server said ${r.status}.`), { status: r.status }); }
+        const b = await r.blob(), name = (/filename="([^"]+)"/.exec(r.headers.get('content-disposition') || '') || [])[1] || `clip art${v === 'sqlite' ? ' (SQLite)' : ''}.sql`;
+        const u = URL.createObjectURL(b), ln = document.createElement('a'); ln.href = u; ln.download = name; document.body.append(ln); ln.click(); ln.remove(); setTimeout(() => URL.revokeObjectURL(u), 60000);
+        busy(); toast(`Saved “${name}” (${(b.size / 1048576).toFixed(1)} MB) to your downloads.`); return;
       }
       if (a === 'pull') { await need(); const r = await L.pull((n, t) => busy(`Getting ${n} of ${t}…`)); busy(); await reload(); toast((r.made.length ? `Got ${r.made.length} new or changed item${r.made.length === 1 ? '' : 's'} from the server (it has ${r.total}).` : `Already up to date (the server has ${r.total}).`) + ((r.missing || []).length ? ` ${r.missing.length} could not be got: the server lists them but their picture files are not on it (sent through another server?).` : '')); return; }
       if (a === 'sync') { await need(); const del = await L.sendDeletes(); const r = await L.pull((n, t) => busy(`Getting ${n} of ${t}…`)); const fresh = (await L.all()).filter((it) => !it.serverId); const d = await L.push(fresh, (n, t) => busy(`Sending ${n} of ${t}…`)); busy(); await reload(); toast(`In step with the server: got ${r.made.length}, sent ${d.length}${del ? `, deleted ${del}` : ''}${r.removed.length ? `, ${r.removed.length} deleted on the server taken out here` : ''}.`); return; }
@@ -599,6 +611,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
       { id: 'server', label: 'Server', hue: '#0f766e', groups: [
         ['Connect', [B('Connect…', IK.server, () => act('connect'), { big: true, title: 'Use a clip-art server: on this computer (server/start-server.cmd) or on a web host. Every picture then has a real http link any app can use.' }), { col: [B('Open the server page', IK.link, () => act('open-server')), B('Stop using it', IK.link, () => act('disconnect'), { title: 'Forget the server (nothing is deleted anywhere)' })] }]],
         ['Share', [B('Sync', IK.sync, () => act('sync'), { big: true, title: 'Get what is new on the server, and send what is new here' }), B('Match the server', IK.get, () => act('match'), { big: true, title: 'The server is the master copy: this browser gets everything on it, and pictures deleted there go here too (pictures never sent are asked about)' }), B('Send to the server', IK.send, () => act('push'), { big: true, title: 'The chosen items (or everything) go to the server' }), B('Get from the server', IK.get, () => act('pull'), { big: true, title: 'Everything on the server comes into this library' })]],
+        ['Backup', [B('Copy of the database', IK.get, () => act('dbcopy'), { big: true, title: 'The whole library on the server, pictures included, as a SQL file: MySQL/MariaDB (to load into another database) or SQLite (to keep offline)' })]],
         ['Remove', [B('Take off the server', I.trash, () => act('unserver'), { title: 'The chosen items are deleted from the server but stay here', disabled: () => !sel.size })]],
       ] },
     ],

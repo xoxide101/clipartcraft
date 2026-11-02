@@ -249,6 +249,24 @@ function unzip(b) {
     if (!name.endsWith('/') && (m === 0 || m === 8)) out.push({ name, bytes: m === 0 ? raw : zlib.inflateRawSync(raw) }); p += 46 + nl + el + cl; }
   return out;
 }
+// a SQL copy of a library with the pictures themselves (the files table, as hex): for MySQL/MariaDB, or SQLite (one file
+// to keep, or to load where there is no server: sqlite3 clipart.sqlite < it.sql)
+async function* sqlDump(lib, sqlite) {
+  const q = (v) => (v === null || v === undefined ? 'NULL' : typeof v === 'number' ? String(v) : `'${(sqlite ? String(v) : String(v).replace(/\\/g, '\\\\')).replace(/'/g, "''")}'`);
+  yield `-- Craft clip-art library “${lib.name}”, ${new Date().toISOString()}: the items and their pictures (files).\n-- ${sqlite ? 'SQLite: sqlite3 clipart.sqlite < this.sql' : 'MySQL/MariaDB: mysql -u USER -p DATABASE < this.sql, or phpMyAdmin › Import'}\n`;
+  if (!sqlite) yield 'SET NAMES utf8mb4;\n';
+  const cs = sqlite ? '' : ' CHARACTER SET utf8mb4';
+  yield `DROP TABLE IF EXISTS items;\nDROP TABLE IF EXISTS files;\n${SCHEMA(sqlite ? 'TEXT' : 'MEDIUMTEXT')}${cs};\n${FILES_TABLE.replace('LONGBLOB', sqlite ? 'BLOB' : 'LONGBLOB')}${cs};\nBEGIN;\n`;
+  for (let off = 0; ; off += 200) {
+    const r = await lib.db.list({ limit: 200, offset: off }); if (!r.items.length) break;
+    for (const it of r.items) {
+      yield `INSERT INTO items (${COLS.join(', ')}) VALUES (${COLS.map((c) => q(c === 'tags' ? (Array.isArray(it.tags) ? it.tags.join(', ') : it.tags) : c === 'files' ? JSON.stringify(it.files || {}) : it[c])).join(', ')});\n`;
+      for (const k of Object.keys(it.files || {})) { const b = await lib.readFileAny(it, k); if (b) yield `INSERT INTO files (item, kind, name, data) VALUES (${q(it.id)}, ${q(k)}, ${q(it.files[k])}, X'${b.toString('hex')}');\n`; }
+    }
+    if (off + r.items.length >= r.total) break;
+  }
+  yield 'COMMIT;\n';
+}
 // export: library.json + pictures named after the items (what ClipArtCraft and ImageCraft read)
 async function exportZip(lib, opts = {}) {
   const files = [], list = [], used = new Set();
@@ -380,6 +398,13 @@ function serve(S) {
         return send(res, 200, { server: 'Craft clip-art server', version: VERSION, api: 1, writable: mayWrite(req), main: S.main, libraries: S.connections.map((c) => ({ name: c.name, database: c.db })),
           reach: { kind: 'node', host: os.hostname(), port: S.port, shared: !!S.share, here: base(req), addresses: [`http://localhost:${S.port}`, ...ips.map((ip) => `http://${ip}:${S.port}`)] } }); }
       if (p[1] === 'categories') return send(res, 200, await db.categories());
+      // a SQL copy of the library, pictures included (only this computer, or with the key)
+      if (p[1] === 'export.sql') {
+        if (!mayWrite(req)) return send(res, 403, { error: 'A copy of the database needs the key (on the server’s setup page).' });
+        const sqlite = Q.dialect === 'sqlite'; res.writeHead(200, { 'Content-Type': 'application/sql; charset=utf-8', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Expose-Headers': 'Content-Disposition', 'Content-Disposition': `attachment; filename="${slug(lib.name)} clip art${sqlite ? ' (SQLite)' : ''}.sql"` });
+        for await (const s of sqlDump(lib, sqlite)) if (!res.write(s)) await new Promise((r) => res.once('drain', r));
+        return res.end();
+      }
       if (p[1] === 'export.zip') return send(res, 200, await exportZip(lib, { q: Q.q, category: Q.category, type: Q.type }), 'application/zip', { 'Content-Disposition': `attachment; filename="${slug(lib.name)} clip art.zip"` });
       if (p[1] === 'import' && req.method === 'POST') { const made = await importEntries(lib, unzip(await body(req)), { category: Q.category }); return send(res, 200, { added: made.length, items: made.map((it) => shown(req, lib, it)) }); }
       if (p[1] === 'items') {

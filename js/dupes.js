@@ -28,7 +28,7 @@
     const placeholder = (nm) => /_\d{3,}$|^clip art|^img[_ -]?\d|^\d+$/i.test(nm || '');
     return [...by.values()].filter((g) => g.length > 1).map((g) => g.sort((a, b) => (b.svg - a.svg) || (placeholder(a.name) - placeholder(b.name)) || ((b.width * b.height) - (a.width * a.height)) || a.name.localeCompare(b.name)));
   }
-  function open({ where = 'local', list = [], remove, done, toast } = {}) {
+  function open({ where = 'local', list = [], remove, tag, done, toast } = {}) {
     const back = document.createElement('div'); back.className = 'lists-dlg'; back.setAttribute('role', 'dialog'); back.setAttribute('aria-label', 'Find copies');
     back.innerHTML = `<div class="lists-in dup-in"><div class="lists-head"><b>Find copies</b><span class="hint">${where === 'server' ? 'on the clip-art server' : 'in this browser'}</span><span class="grow"></span><button class="btn outline" type="button" data-d="close">Close</button></div><div class="dup-body"><p class="hint">Looking at ${list.length} pictures…</p></div></div>`;
     document.body.append(back); let groups = [], marks = new Set();
@@ -38,11 +38,13 @@
       const n = marks.size;
       body().innerHTML = `<p class="hint">${groups.length} picture${groups.length === 1 ? '' : 's'} with copies. The best of each (an SVG, the largest, a real name) is kept; the others are marked to remove. Click a picture to change its mark.</p>
         <div class="dup-list">${groups.map((g, gi) => `<div class="dup-row">${g.map((p) => `<button type="button" class="dup-pic${marks.has(p.id) ? ' gone' : ''}" data-p="${esc(p.id)}" title="${esc(p.name)}"><span class="pic"><img src="${esc(p.thumb)}" alt=""></span><small>${esc(p.name)}</small><small class="hint">${p.width || '?'} × ${p.height || '?'}${p.svg ? ' · SVG' : ''}</small><i>${marks.has(p.id) ? 'remove' : 'keep'}</i></button>`).join('')}</div>`).join('')}</div>
-        <div class="lists-foot"><span class="hint">${n} marked to remove</span><span class="grow"></span><button class="btn primary" type="button" data-d="remove" ${n ? '' : 'disabled'}>Remove the ${n} marked${where === 'server' ? ' from the server' : ''}</button></div>`;
+        <div class="lists-foot"><span class="hint">${n} marked to remove</span><span class="grow"></span>${tag ? `<button class="btn outline" type="button" data-d="tag" ${n ? '' : 'disabled'} title="They stay; the tag “duplicate” lets you find them (search duplicate) and delete them later">Tag the ${n} marked “duplicate”</button>` : ''}<button class="btn primary" type="button" data-d="remove" ${n ? '' : 'disabled'}>Remove the ${n} marked${where === 'server' ? ' from the server' : ''}</button></div>`;
     };
     back.addEventListener('click', async (e) => {
       if (e.target === back || e.target.closest('[data-d=close]')) { back.remove(); return; }
       const p = e.target.closest('[data-p]'); if (p) { const id = p.dataset.p, g = groups.find((x) => x.some((y) => y.id === id)); if (marks.has(id)) marks.delete(id); else if (g.filter((y) => !marks.has(y.id)).length > 1) marks.add(id); else return toast && toast('Keep at least one of them.'); draw(); return; }
+      const tg = e.target.closest('[data-d=tag]'); if (tg) { const ids = [...marks]; tg.disabled = true; tg.textContent = 'Tagging…';
+        try { await tag(ids); toast && toast(`Tagged ${ids.length} “duplicate”: search duplicate to see them, and delete them when you are sure.`); back.remove(); done && done(); } catch (err) { toast && toast('Tagging failed: ' + (err.message || err)); draw(); } return; }
       const r = e.target.closest('[data-d=remove]'); if (r) { const ids = [...marks]; if (!confirm(`Remove ${ids.length} picture${ids.length === 1 ? '' : 's'}${where === 'server' ? ' from the server' : ' from this browser'}? (One of each stays.)`)) return; r.disabled = true; r.textContent = 'Removing…';
         try { if ((await remove(ids)) === false) { r.disabled = false; draw(); return; } toast && toast(`Removed ${ids.length} copies.`); back.remove(); done && done(); } catch (err) { toast && toast('Removing failed: ' + (err.message || err)); r.disabled = false; draw(); } }
     });
