@@ -2,7 +2,9 @@
    ellipse, a Photoshop-style lasso, or the magic wand; Shift adds to it, Alt takes away), then fill it with a colour,
    erase it, restore it or keep only it. The brush paints, erases or restores; Fill colours a patch (or one colour
    everywhere); the Eyedropper takes a colour from the picture, and the picture's own colours are offered as swatches.
-   With a selection, every tool stays inside it. One-click clean-ups for what cutting leaves behind (specks, holes,
+   With a selection, every tool stays inside it. Copy, Cut and Paste (also pictures copied in other programs) and Text
+   make a floating piece: drag it into place, then click off it or press Enter to put it down (Escape drops it). Your own
+   colours can be added to the swatches. The ribbon's Touch up tab (ui.js) drives the same tools through the API below. One-click clean-ups for what cutting leaves behind (specks, holes,
    halos, soft edges, a background colour). Restore brings parts back from the picture as it was opened, or from the sheet it was cut from (when the
    working area still has it). Save replaces the picture (the first version is kept, to go back to); Save as a copy
    keeps both. */
@@ -96,10 +98,10 @@
   let el = null, item = null, cur = null, orig = null, sheetFull = null, past = [], future = [], opts = {}, zoom = 1, bgView = 'check';
   const offOf = (img) => img.off || { x: 0, y: 0 };
   const crop = (img, x, y, w, h) => { const o = new ImageData(w, h); for (let yy = 0; yy < h; yy++) for (let xx = 0; xx < w; xx++) { const sx = x + xx, sy = y + yy; if (sx < 0 || sy < 0 || sx >= img.width || sy >= img.height) continue; const i = (sy * img.width + sx) * 4, k = (yy * w + xx) * 4; o.data[k] = img.data[i]; o.data[k + 1] = img.data[i + 1]; o.data[k + 2] = img.data[i + 2]; o.data[k + 3] = img.data[i + 3]; } return o; };
-  const T = { tool: 'select', shape: 'lasso', mode: 'new', op: 'paint', from: 'opened', size: 8, tol: 30, joined: true, col: '#e8483f' };
+  const T = { tool: 'select', shape: 'lasso', mode: 'new', op: 'paint', from: 'opened', size: 8, tol: 30, joined: true, col: '#e8483f', font: 'Arial', fsize: 32, bold: false, mine: [], col2: '#3f8be8', gshape: 'linear', gsrc: 'picture' };
   try { Object.assign(T, JSON.parse(localStorage.getItem('clipartcraft-editor') || '{}')); } catch (e) { /* blocked */ }
   // (the tools before selections: shapes and the wand erased straight away)
-  if (T.tool === 'shape') T.tool = 'select'; if (T.tool === 'wand') { T.tool = 'select'; T.shape = 'wand'; } if (!['select', 'brush', 'fill', 'pick'].includes(T.tool)) T.tool = 'select';
+  if (T.tool === 'shape') T.tool = 'select'; if (T.tool === 'wand') { T.tool = 'select'; T.shape = 'wand'; } if (!['select', 'brush', 'fill', 'gradient', 'pick', 'text'].includes(T.tool)) T.tool = 'select';
   // the selection: 1 for each chosen pixel (null: none), and how it is shown (a light blue with a black and white edge)
   let sel = null, selView = null;
   function setSel(m, mode = 'new') {
@@ -130,11 +132,15 @@
   // (a picture of another size, after a trim or going back, cannot keep the selection)
   const fitSel = () => { if (sel && sel.length !== cur.width * cur.height) { sel = null; selView = null; renderPanel(); } };
   function change(next) { past.push(cur); if (past.length > 50) past.shift(); future = []; const o = offOf(cur); next.off = next.shift ? { x: o.x + next.shift.x, y: o.y + next.shift.y } : next.off || o; cur = next; fitSel(); draw(); status(); }
-  function undo() { if (!past.length) return; future.push(cur); cur = past.pop(); fitSel(); draw(); status(); }
+  function undo() { if (flt) { flt = null; draw(); return; } if (!past.length) return; future.push(cur); cur = past.pop(); fitSel(); draw(); status(); }
   function redo() { if (!future.length) return; past.push(cur); cur = future.pop(); fitSel(); draw(); status(); }
   const toast = (m) => opts.toast && opts.toast(m);
   const BGS = { check: 'repeating-conic-gradient(#c9ccd6 0 25%, #f4f5f8 0 50%) 0 0 / 16px 16px', white: '#fff', black: '#000', grey: '#808080', dark: 'repeating-conic-gradient(#2b2d36 0 25%, #22242c 0 50%) 0 0 / 16px 16px' };
-  function draw() { if (!el || !cur) return; const c = el.querySelector('.ed-canvas'); c.width = cur.width; c.height = cur.height; const x = c.getContext('2d'); x.putImageData(cur, 0, 0); const so = selOverlay(); if (so) x.drawImage(so, 0, 0); c.style.background = BGS[bgView]; applyZoom(); undoButtons(); }
+  function draw() { if (!el || !cur) return; const c = el.querySelector('.ed-canvas'); c.width = cur.width; c.height = cur.height; const x = c.getContext('2d'); x.putImageData(cur, 0, 0); const so = selOverlay(); if (so) x.drawImage(so, 0, 0);
+    if (flt) { x.drawImage(fltCanvas(), Math.round(flt.x), Math.round(flt.y)); const k = Math.max(1, cur.width / (c.getBoundingClientRect().width || cur.width)); x.lineWidth = k; x.setLineDash([4 * k, 3 * k]); x.strokeStyle = '#000'; x.strokeRect(Math.round(flt.x) - k / 2, Math.round(flt.y) - k / 2, flt.img.width + k, flt.img.height + k); x.lineDashOffset = 4 * k; x.strokeStyle = '#fff'; x.strokeRect(Math.round(flt.x) - k / 2, Math.round(flt.y) - k / 2, flt.img.width + k, flt.img.height + k); }
+    c.style.background = BGS[bgView]; applyZoom(); undoButtons(); tell(); }
+  // the ribbon (ui.js) listens, to show the tools, sizes and colours as they are now
+  const tell = () => document.dispatchEvent(new Event('clipart-editor'));
   function undoButtons() { el.querySelectorAll('[data-hist=undo]').forEach((b) => { b.disabled = !past.length; }); el.querySelectorAll('[data-hist=redo]').forEach((b) => { b.disabled = !future.length; }); }
   function status() { const s = el.querySelector('.sl-status'); if (!s || !cur) return; let solid = 0; for (let i = 3; i < cur.data.length; i += 4) if (cur.data[i] >= 24) solid++;
     s.innerHTML = `<span><b>${esc(item.name)}</b></span><span>${cur.width} × ${cur.height} px</span><span>${Math.round((100 * solid) / (cur.width * cur.height))}% picture, the rest see-through</span>${sel ? `<span>selected: ${selCount()} px</span>` : ''}<span>${sheetPart() ? 'its sheet is in the working area: Restore can bring parts back from it' : 'Restore brings back the picture as it was opened'}</span><span class="grow"></span><span>zoom ${Math.round(fitScale() * zoom * 100)}%</span>`; }
@@ -146,27 +152,33 @@
   const setZoom = (z, at) => { zoom = Math.max(0.2, Math.min(60, z)); applyZoom(at); status(); };
 
   function panel() {
-    const matchFields = () => `<label class="field"><span>How close a colour counts</span><input class="input" type="number" min="1" max="200" data-n="tol" value="${T.tol}"></label><label class="field check"><input type="checkbox" data-chk="joined" ${T.joined !== false ? 'checked' : ''}> Joined only (off: that colour everywhere)</label>`;
+    const slide = (n, label, min, max) => `<label class="field"><span>${label}</span><div class="ed-slide"><input type="range" min="${min}" max="${max}" data-n="${n}" value="${T[n]}"><input class="input" type="number" min="${min}" max="${max}" data-n="${n}" value="${T[n]}"></div></label>`;
+    const matchFields = () => `${slide('tol', 'How close a colour counts', 1, 200)}<label class="field check"><input type="checkbox" data-chk="joined" ${T.joined !== false ? 'checked' : ''}> Joined only (off: that colour everywhere)</label>`;
     const seg = (k, list) => `<div class="seg" role="group">${list.map(([v, l]) => `<button class="btn" type="button" data-t="${k}:${v}" aria-pressed="${T[k] === v}">${l}</button>`).join('')}</div>`;
     return `<div class="props-head">Touch up</div><div class="sec">
       <div class="btns hist-row"><button class="btn outline sm" type="button" data-hist="undo" ${past.length ? '' : 'disabled'}>↶ Undo</button><button class="btn outline sm" type="button" data-hist="redo" ${future.length ? '' : 'disabled'}>↷ Redo</button></div>
-      <div class="field"><span>Tool</span>${seg('tool', [['select', 'Select'], ['brush', 'Brush'], ['fill', 'Fill'], ['pick', 'Eyedropper']])}</div>
+      <div class="field"><span>Tool</span>${seg('tool', [['select', 'Select'], ['brush', 'Brush'], ['fill', 'Fill'], ['gradient', 'Gradient'], ['pick', 'Eyedropper'], ['text', 'Text']])}</div>
       ${T.tool === 'select' ? `<div class="touch-opts"><div class="field"><span>Select with</span>${seg('shape', [['box', 'Box'], ['ellipse', 'Ellipse'], ['lasso', 'Lasso'], ['wand', 'Magic wand']])}</div>
         <div class="field"><span>Selecting</span>${seg('mode', [['new', 'New'], ['add', 'Add to it'], ['sub', 'Take away']])}</div>${T.shape === 'wand' ? matchFields() : ''}</div>
         <p class="hint">${T.shape === 'lasso' ? 'Drag to draw freehand, or click (Shift-click) for straight corners; close on the first corner, a double-click or Enter. Backspace takes a corner off, Escape gives it up.' : T.shape === 'wand' ? 'Click a patch: it and everything of about its colour is selected.' : 'Drag the shape over the part.'} Shift adds to the selection, Alt takes away; a click off it lets it go.</p>
         <div class="field"><span>With the selection</span><div class="btns ed-selbtns"><button class="btn outline sm" type="button" data-sel="paint" ${sel ? '' : 'disabled'} title="Fill the selection with the colour">Fill with the colour</button><button class="btn outline sm" type="button" data-sel="erase" ${sel ? '' : 'disabled'} title="Make it see-through (Delete)">Erase</button><button class="btn outline sm" type="button" data-sel="keep" ${sel ? '' : 'disabled'} title="Bring it back from the picture as opened (or its sheet)">Restore</button><button class="btn outline sm" type="button" data-sel="only" ${sel ? '' : 'disabled'} title="Erase everything else">Keep only this</button><button class="btn outline sm" type="button" data-sel="invert" title="Select everything else (Ctrl+Shift+I)">Invert</button><button class="btn outline sm" type="button" data-sel="all" title="Ctrl+A">Select all</button><button class="btn outline sm" type="button" data-sel="none" ${sel ? '' : 'disabled'} title="Ctrl+D">Deselect</button></div></div>`
-      : T.tool === 'brush' ? `<div class="touch-opts"><div class="field"><span>Do</span>${seg('op', [['paint', 'Paint'], ['erase', 'Erase'], ['keep', 'Restore']])}</div><label class="field"><span>Size (pixels across)</span><input class="input" type="number" min="1" max="200" data-n="size" value="${T.size}"></label></div><p class="hint">Paint over the part. Alt: erase (or restore when erasing).${sel ? ' It stays inside the selection.' : ''}</p>`
+      : T.tool === 'brush' ? `<div class="touch-opts"><div class="field"><span>Do</span>${seg('op', [['paint', 'Paint'], ['erase', 'Erase'], ['keep', 'Restore']])}</div>${slide('size', 'Size (pixels across)', 1, 200)}</div><p class="hint">Paint over the part. Alt: erase (or restore when erasing).${sel ? ' It stays inside the selection.' : ''}</p>`
       : T.tool === 'fill' ? `<div class="touch-opts">${matchFields()}</div><p class="hint">Click a patch: ${T.joined !== false ? 'it and everything joined to it' : 'every pixel anywhere'} of about that colour takes the colour.${T.joined !== false ? ' Untick “Joined only” to change a colour everywhere.' : ''}${sel ? ' It stays inside the selection.' : ''}</p>`
+      : T.tool === 'gradient' ? `<div class="touch-opts"><div class="field"><span>Shape</span>${seg('gshape', [['linear', 'Straight across'], ['radial', 'Round']])}</div><div class="field"><span>Colours</span>${seg('gsrc', [['picture', 'From the picture'], ['colours', 'Colour 1 → colour 2']])}</div>
+        ${T.gsrc === 'colours' ? `<div class="field"><span>Colour 2</span><div class="ed-colour"><input type="color" data-col2 value="${T.col2}"><code>${T.col2}</code><button class="btn outline sm" type="button" data-swapcol title="Colour 1 and colour 2 change places">⇄ Swap</button></div></div>` : ''}</div>
+        <p class="hint">${sel ? 'Drag across the selection' : '<b>Select the area first</b> (Select tool), then drag across it'}: ${T.gsrc === 'picture' ? 'it blends from the picture’s colour just outside the selection where you start to the one where you let go (for a background that changes slowly)' : 'colour 1 where you start, colour 2 where you let go'}${T.gshape === 'radial' ? ', round from where you start' : ''}.</p>`
+      : T.tool === 'text' ? `<div class="touch-opts"><label class="field"><span>Font</span><select class="input" data-s="font">${FONTS.map((f) => `<option ${f === T.font ? 'selected' : ''} style="font-family:'${f}'">${f}</option>`).join('')}</select></label>${slide('fsize', 'Size (pixels tall)', 6, 400)}<label class="field check"><input type="checkbox" data-chk="bold" ${T.bold ? 'checked' : ''}> Bold</label></div><p class="hint">Click where the words go, type, then Enter. They float: drag them into place (the font, size and colour still change them), then click off them or press Enter.</p>`
       : `<p class="hint">Click the picture to take its colour; then you are back on ${esc({ select: 'Select', brush: 'Brush', fill: 'Fill' }[T.back] || 'Brush')}.</p>`}
       ${T.tool !== 'pick' ? `<div class="field"><span>Colour</span><div class="ed-colour"><input type="color" data-col value="${T.col}"><code>${T.col}</code><button class="btn outline sm" type="button" data-t="tool:pick" title="Take a colour from the picture">Eyedropper</button></div>
-        <div class="ed-swatches" title="The picture's own colours">${pictureColours().map((h) => `<button type="button" class="ed-sw" data-sw="${h}" title="${h}" style="background:${h}" aria-pressed="${h === T.col}"></button>`).join('')}</div><small class="hint">The picture's own colours: click one to use it.</small></div>` : ''}
+        <div class="ed-swatches" title="The picture's own colours">${pictureColours().map((h) => `<button type="button" class="ed-sw" data-sw="${h}" title="${h}" style="background:${h}" aria-pressed="${h === T.col}"></button>`).join('')}</div><small class="hint">The picture's own colours: click one to use it.</small>
+        <div class="ed-swatches" title="Your colours">${(T.mine || []).map((h) => `<button type="button" class="ed-sw" data-sw="${h}" title="${h} (right-click: take it off)" style="background:${h}" aria-pressed="${h === T.col}"></button>`).join('')}<button class="btn outline sm" type="button" data-addcol title="Keep this colour in your colours (for every picture)">+ Add colour</button></div></div>` : ''}
       ${(T.tool === 'brush' && T.op === 'keep') || T.tool === 'select' ? `<div class="field"><span>Restore from</span>${seg('from', [['opened', 'The picture as opened'], ...(sheetPart() ? [['sheet', 'Its sheet']] : [])])}</div>` : ''}
       <div class="field"><span>Clean up <small class="hint">(the whole picture, one click each)</small></span><div class="ed-clean">${Object.entries(CLEAN).map(([k, c]) => `<div class="ed-crow"><button class="btn outline sm" type="button" data-clean="${k}" title="${esc(c.hint)}">${c.label}</button><input class="input" type="number" data-cv="${k}" value="${T['cv_' + k] ?? c.value}" title="${esc(c.unit)}"><small class="hint">${esc(c.unit)}</small></div>`).join('')}</div></div>
       <div class="field"><span>Background to look against</span>${(() => `<div class="seg" role="group">${[['check', 'Checks'], ['dark', 'Dark'], ['white', 'White'], ['grey', 'Grey'], ['black', 'Black']].map(([v, l]) => `<button class="btn" type="button" data-bg="${v}" aria-pressed="${bgView === v}">${l}</button>`).join('')}</div>`)()}<small class="hint">Specks and halos show up best against the opposite of the picture.</small></div>
       <div class="btns"><button class="btn primary" type="button" data-ed="save">Save</button><button class="btn outline" type="button" data-ed="copy">Save as a copy</button>${item && item.pngFirst ? '<button class="btn ghost" type="button" data-ed="first">Back to the original</button>' : ''}</div>
       <p class="hint">Save replaces the picture in the library (its SVG is traced again); its very first version is kept, to go back to.</p></div>`;
   }
-  function renderPanel() { el.querySelector('.sl-side').innerHTML = panel(); undoButtons(); }
+  function renderPanel() { el.querySelector('.sl-side').innerHTML = panel(); undoButtons(); tell(); }
 
   // drawing on the picture
   let drag = null, poly = null;
@@ -180,6 +192,9 @@
   function onDown(e) {
     if (e.button !== 0 || !cur) return; const p = ptOf(e); e.preventDefault(); e.target.setPointerCapture(e.pointerId);
     const x = Math.floor(p.x), y = Math.floor(p.y), inside = x >= 0 && y >= 0 && x < cur.width && y < cur.height;
+    if (flt) { if (inFloat(p)) { drag = { float: true, dx: p.x - flt.x, dy: p.y - flt.y }; return; } putDown(); return; }
+    if (T.tool === 'text') { if (inside) textAt(p, e); return; }
+    if (T.tool === 'gradient') { if (!sel) return toast('Select the area first (Select tool), then drag across it.'); drag = { grad: true, p0: p, moved: false }; return; }
     if (T.tool === 'pick') { if (!inside) return; const i = (y * cur.width + x) * 4; if (cur.data[i + 3] < 24) return toast('That spot is see-through: click a coloured one.');
       T.col = toHex(cur.data[i], cur.data[i + 1], cur.data[i + 2]); T.tool = T.back || 'brush'; if (T.tool === 'brush') T.op = 'paint'; keepT(); renderPanel(); toast(`Colour ${T.col} taken.`); return; }
     if (T.tool === 'fill') { if (!inside) return; const m = regionOf(cur, x, y, +T.tol || 30, T.joined !== false); if (sel) for (let k = 0; k < m.length; k++) if (!sel[k]) m[k] = 0; change(applyMask(cur, m, 'paint', null, rgbOf(T.col))); return; }
@@ -191,7 +206,9 @@
   }
   function onMove(e) {
     if (!cur) return; const p = ptOf(e);
-    if (!drag) { if (poly) preview([...poly.pts, [p.x, p.y]]); return; }
+    if (!drag) { if (poly) preview([...poly.pts, [p.x, p.y]]); el.querySelector('.ed-canvas').style.cursor = inFloat(p) ? 'move' : T.tool === 'text' ? 'text' : 'crosshair'; return; }
+    if (drag.grad) { drag.moved = true; preview([[drag.p0.x, drag.p0.y], [p.x, p.y], [drag.p0.x + 0.01, drag.p0.y + 0.01]]); return; }
+    if (drag.float) { flt.x = Math.round(p.x - drag.dx); flt.y = Math.round(p.y - drag.dy); draw(); return; }
     if (drag.brush) { brush(cur, drag.last.x, drag.last.y, p.x, p.y, (+T.size || 8) / 2, drag.op, fromImg(), rgbOf(T.col), sel); drag.last = p; draw(); return; }
     if (!drag.moved && Math.hypot(p.x - drag.p0.x, p.y - drag.p0.y) < 3 * p.k) return; drag.moved = true;
     if (drag.lasso) { if (poly.free === null) poly.free = poly.pts.length === 1; const l = poly.pts[poly.pts.length - 1]; if (Math.hypot(p.x - l[0], p.y - l[1]) > 2 * p.k) poly.pts.push([p.x, p.y]); preview(poly.pts); return; }
@@ -200,10 +217,81 @@
   function onUp(e) {
     if (!drag) return; const d = drag; drag = null; const p = ptOf(e);
     if (d.brush) { status(); undoButtons(); return; }
+    if (d.float) return;
+    if (d.grad) { preview(null); if (Math.hypot(p.x - d.p0.x, p.y - d.p0.y) < 2) return toast('Drag across the selection: from where the gradient starts to where it ends.'); change(gradient(cur, sel, d.p0, p)); return; }
     if (d.lasso) { if (poly && poly.free && d.moved) closePoly(); else if (poly && !d.moved && poly.free === null) poly.free = false; return; }
     preview(null); if (!d.moved) { if (sel && d.mode === 'new') setSel(null); return; } if (Math.abs(p.x - d.p0.x) < 2 || Math.abs(p.y - d.p0.y) < 2) return; setSel(maskOf(shapePts(d.p0, p), cur.width, cur.height), d.mode);
   }
 
+  // ------------------------------------------------------------------ floating pieces (a paste, or words), moved, then put down
+  let flt = null, clip = null, textBox = null;
+  const FONTS = ['Arial', 'Arial Black', 'Verdana', 'Trebuchet MS', 'Georgia', 'Times New Roman', 'Courier New', 'Impact', 'Comic Sans MS'];
+  function fltCanvas() { if (!flt.c) flt.c = canvasOf(flt.img); return flt.c; }
+  function putDown() { if (!flt) return; const c = canvasOf(cur), x = c.getContext('2d'); x.drawImage(fltCanvas(), Math.round(flt.x), Math.round(flt.y)); const o = x.getImageData(0, 0, c.width, c.height); flt = null; change(o); }
+  function dropFloat() { flt = null; draw(); }
+  function float(img, x, y, text) { putDown(); flt = { img, x: Math.max(-img.width + 4, Math.min(cur.width - 4, x)), y: Math.max(-img.height + 4, Math.min(cur.height - 4, y)), text }; draw(); }
+  const inFloat = (p) => flt && p.x >= flt.x && p.y >= flt.y && p.x < flt.x + flt.img.width && p.y < flt.y + flt.img.height;
+  // the selected part (only its pixels; the rest of its box see-through)
+  function selBox() { let x0 = cur.width, y0 = cur.height, x1 = -1, y1 = -1; for (let k = 0; k < sel.length; k++) if (sel[k]) { const x = k % cur.width, y = (k / cur.width) | 0; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; } return x1 < 0 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 }; }
+  function copySel(cut) {
+    if (flt) { clip = { img: flt.img, x: flt.x, y: flt.y }; if (cut) dropFloat(); return toast(cut ? 'Cut.' : 'Copied.'); }
+    if (!sel) return toast('Select a part first (Select, then Box, Ellipse, Lasso or Magic wand).');
+    const b = selBox(), o = new ImageData(b.w, b.h);
+    for (let y = 0; y < b.h; y++) for (let x = 0; x < b.w; x++) { const k = (b.y + y) * cur.width + b.x + x; if (!sel[k]) continue; const i = k * 4, j = (y * b.w + x) * 4; for (let q = 0; q < 4; q++) o.data[j + q] = cur.data[i + q]; }
+    clip = { img: o, x: b.x, y: b.y };
+    // (other programs can paste it too)
+    try { canvasOf(o).toBlob((bl) => { if (bl && navigator.clipboard && window.ClipboardItem) navigator.clipboard.write([new ClipboardItem({ 'image/png': bl })]).catch(() => {}); }); } catch (e) { /* not allowed */ }
+    if (cut) change(applyMask(cur, sel, 'erase'));
+    toast(cut ? 'Cut: Paste puts it back, to drag where you like.' : 'Copied: Paste puts a copy in, to drag where you like.');
+  }
+  // Paste: what was copied here (where it came from), or a picture copied in another program (at the top left)
+  async function pasteNow(blob) {
+    if (!cur) return;
+    if (!blob && !clip && navigator.clipboard && navigator.clipboard.read) { try { for (const it of await navigator.clipboard.read()) { const t = it.types.find((x) => x.startsWith('image/')); if (t) { blob = await it.getType(t); break; } } } catch (e) { /* not allowed */ } }
+    if (blob) { const img = await imageOf(blob); if (clip && img.width === clip.img.width && img.height === clip.img.height) return float(clip.img, clip.x, clip.y); return float(img, 0, 0); }
+    if (!clip) return toast('Copy a part first (or copy a picture in another program, then Paste).');
+    float(clip.img, clip.x, clip.y);
+  }
+  // words as a picture, in the colour, font and size chosen
+  function textImg(t) {
+    const font = `${T.bold ? 'bold ' : ''}${Math.max(6, +T.fsize || 32)}px "${T.font}", sans-serif`, m = document.createElement('canvas').getContext('2d'); m.font = font;
+    const lines = String(t).split('\n'), h = Math.ceil((+T.fsize || 32) * 1.25), w = Math.max(1, Math.ceil(Math.max(...lines.map((l) => m.measureText(l).width)) + 4));
+    const c = document.createElement('canvas'); c.width = w; c.height = h * lines.length; const x = c.getContext('2d'); x.font = font; x.fillStyle = T.col; x.textBaseline = 'top';
+    lines.forEach((l, i) => x.fillText(l, 2, i * h + (+T.fsize || 32) * 0.1)); return x.getImageData(0, 0, c.width, c.height);
+  }
+  function closeText() { if (textBox) { textBox.inp.remove(); textBox = null; } }
+  function textAt(p, e) {
+    putDown(); closeText(); const inp = document.createElement('input'); inp.className = 'input ed-textin'; inp.placeholder = 'Type, then Enter'; inp.style.left = `${e.clientX}px`; inp.style.top = `${e.clientY}px`;
+    el.append(inp); textBox = { inp, x: p.x, y: p.y }; setTimeout(() => inp.focus(), 0);
+    inp.addEventListener('keydown', (k) => { k.stopPropagation(); if (k.key === 'Enter') { k.preventDefault(); const t = inp.value, at = textBox; closeText(); if (t.trim()) float(textImg(t), Math.round(at.x), Math.round(at.y), t); } else if (k.key === 'Escape') { k.preventDefault(); closeText(); } });
+    inp.addEventListener('blur', () => setTimeout(() => { if (textBox && textBox.inp === inp && !inp.value) closeText(); }, 200));
+  }
+  // a setting changed (from the panel or the ribbon)
+  function setT(k, v) {
+    if (k === 'tool') { if (v !== T.tool) { putDown(); closeText(); } if (v === 'pick' && T.tool !== 'pick') T.back = T.tool; }
+    T[k] = v; keepT(); poly = null; preview(null);
+    if (flt && flt.text && ['font', 'fsize', 'bold', 'col'].includes(k)) { flt.img = textImg(flt.text); flt.c = null; draw(); }
+    renderPanel();
+  }
+  function addColour(h) { T.mine = [...new Set([h || T.col, ...(T.mine || [])])].slice(0, 24); keepT(); renderPanel(); }
+  function dropColour(h) { T.mine = (T.mine || []).filter((x) => x !== h); keepT(); renderPanel(); }
+  // a gradient over the selection, from a to b: the picture's own colours under a and b (an average of the solid pixels
+  // round each), or colour 1 to colour 2; a little noise so it does not show bands
+  // the picture's colour near (x, y) but outside the selection (the part being mended is not the colour to mend it with):
+  // the solid, unselected pixels round it, looking further out until there are enough
+  function colourAt(img, x, y, m) { const cx = Math.round(x), cy = Math.round(y);
+    for (let rad = 2; rad <= 60; rad += rad < 8 ? 2 : 6) { let r = 0, g = 0, b = 0, n = 0;
+      for (let dy = -rad; dy <= rad; dy++) for (let dx = -rad; dx <= rad; dx++) { const xx = cx + dx, yy = cy + dy; if (xx < 0 || yy < 0 || xx >= img.width || yy >= img.height) continue; const k = yy * img.width + xx, i = k * 4; if ((m && m[k]) || img.data[i + 3] < 128) continue; r += img.data[i]; g += img.data[i + 1]; b += img.data[i + 2]; n++; }
+      if (n >= 6) return [r / n, g / n, b / n]; }
+    return null; }
+  function gradient(img, m, a, b) {
+    const c0 = (T.gsrc === 'picture' && colourAt(img, a.x, a.y, m)) || rgbOf(T.col), c1 = (T.gsrc === 'picture' && colourAt(img, b.x, b.y, m)) || rgbOf(T.gsrc === 'picture' ? T.col : T.col2);
+    const o = copy(img), d = o.data, W = img.width, dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy || 1, L = Math.sqrt(L2);
+    for (let k = 0; k < m.length; k++) { if (!m[k]) continue; const x = k % W + 0.5, y = ((k / W) | 0) + 0.5, i = k * 4;
+      const t = Math.max(0, Math.min(1, T.gshape === 'radial' ? Math.hypot(x - a.x, y - a.y) / L : ((x - a.x) * dx + (y - a.y) * dy) / L2)), n = Math.random() - 0.5;
+      d[i] = c0[0] + (c1[0] - c0[0]) * t + n; d[i + 1] = c0[1] + (c1[1] - c0[1]) * t + n; d[i + 2] = c0[2] + (c1[2] - c0[2]) * t + n; d[i + 3] = 255; }
+    return o;
+  }
   // the selection commands
   function selDo(a) {
     if (!cur) return; const n = cur.width * cur.height;
@@ -214,14 +302,14 @@
     change(applyMask(cur, sel, a, fromImg(), rgbOf(T.col)));
   }
   async function save(asCopy) {
-    const btns = el.querySelectorAll('[data-ed]'); btns.forEach((b) => { b.disabled = true; });
+    putDown(); closeText(); const btns = el.querySelectorAll('[data-ed]'); btns.forEach((b) => { b.disabled = true; });
     try {
-      const png = await new Promise((ok) => canvasOf(cur).toBlob(ok, 'image/png')); let svg = null;
+      const png = await new Promise((ok) => canvasOf(cur).toBlob(ok, 'image/png')); let svg = null, saved = null;
       if (window.CRAFT_RASTERTRACE) { try { svg = CRAFT_RASTERTRACE.traceImage(cur, { profile: 'icon' }).svg; } catch (e) { console.warn('Tracing failed', e); } }
       const fresh = await L.makeItem({ name: item.name, png, svg });
-      if (asCopy) { const o = offOf(cur), it = { ...item, ...fresh, id: fresh.id, cutAt: item.cutAt ? { x: item.cutAt.x + o.x, y: item.cutAt.y + o.y, w: cur.width, h: cur.height } : undefined, name: item.name, serverId: undefined, links: undefined, pngFirst: undefined, edited: new Date().toISOString() }; delete it.serverId; delete it.links; delete it.pngFirst; await L.put(it); toast(`Saved as a copy: “${it.name}”.`); }
-      else { if (!item.pngFirst) { item.pngFirst = item.png; if (item.cutAt) item.cutAtFirst = item.cutAt; } if (item.cutAt) { const o = offOf(cur); item.cutAt = { x: item.cutAt.x + o.x, y: item.cutAt.y + o.y, w: cur.width, h: cur.height }; } Object.assign(item, { png, svg: svg || item.svg, thumb: fresh.thumb, width: fresh.width, height: fresh.height, edited: new Date().toISOString() }); if (item.serverId) item.changed = true; await L.put(item); toast(`Saved “${item.name}”.`); }
-      close(); opts.done && opts.done();
+      if (asCopy) { const o = offOf(cur), it = { ...item, ...fresh, id: fresh.id, cutAt: item.cutAt ? { x: item.cutAt.x + o.x, y: item.cutAt.y + o.y, w: cur.width, h: cur.height } : undefined, name: item.name, serverId: undefined, links: undefined, pngFirst: undefined, edited: new Date().toISOString() }; delete it.serverId; delete it.links; delete it.pngFirst; await L.put(it); toast(`Saved as a copy: “${it.name}”.`); saved = it; }
+      else { if (!item.pngFirst) { item.pngFirst = item.png; if (item.cutAt) item.cutAtFirst = item.cutAt; } if (item.cutAt) { const o = offOf(cur); item.cutAt = { x: item.cutAt.x + o.x, y: item.cutAt.y + o.y, w: cur.width, h: cur.height }; } Object.assign(item, { png, svg: svg || item.svg, thumb: fresh.thumb, width: fresh.width, height: fresh.height, edited: new Date().toISOString() }); if (item.serverId) item.changed = true; await L.put(item); toast(`Saved “${item.name}”.`); saved = item; }
+      past = []; future = []; close(); opts.done && opts.done(saved);
     } catch (e) { console.error(e); toast('Saving failed: ' + (e.message || e)); btns.forEach((b) => { b.disabled = false; }); }
   }
   async function backToFirst() { if (!item.pngFirst) return; const first = await imageOf(item.pngFirst), a = item.cutAt, f = item.cutAtFirst; first.off = a && f ? { x: f.x - a.x, y: f.y - a.y } : { x: 0, y: 0 }; change(first); toast('Back to the very first version: Save to keep it.'); }
@@ -243,21 +331,26 @@
       const h = e.target.closest('[data-hist]'); if (h) { if (h.dataset.hist === 'undo') undo(); else redo(); return; }
       const z = e.target.closest('[data-z]'); if (z) { const v = z.dataset.z; if (v === 'fit') setZoom(1); else if (v === '100') setZoom(1 / fitScale()); else { const r = desk().getBoundingClientRect(); setZoom(zoom * (v === 'in' ? 1.25 : 0.8), { x: r.left + r.width / 2, y: r.top + r.height / 2 }); } return; }
       const sb = e.target.closest('[data-sel]'); if (sb) { selDo(sb.dataset.sel); return; }
-      const sw = e.target.closest('[data-sw]'); if (sw) { T.col = sw.dataset.sw; keepT(); renderPanel(); return; }
-      const t = e.target.closest('[data-t]'); if (t) { const [k, v] = t.dataset.t.split(':'); if (k === 'tool' && v === 'pick' && T.tool !== 'pick') T.back = T.tool; T[k] = v; keepT(); poly = null; preview(null); renderPanel(); return; }
+      const sw = e.target.closest('[data-sw]'); if (sw) { setT('col', sw.dataset.sw); return; }
+      if (e.target.closest('[data-addcol]')) { addColour(); return; }
+      if (e.target.closest('[data-swapcol]')) { const c = T.col; T.col = T.col2; setT('col2', c); return; }
+      const t = e.target.closest('[data-t]'); if (t) { const [k, v] = t.dataset.t.split(':'); setT(k, v); return; }
       const b = e.target.closest('[data-bg]'); if (b) { bgView = b.dataset.bg; draw(); renderPanel(); return; }
       const c = e.target.closest('[data-clean]'); if (c) { const k = c.dataset.clean, v = +(el.querySelector(`[data-cv="${k}"]`).value) || CLEAN[k].value; T['cv_' + k] = v; keepT(); const out = CLEAN[k].run(cur, v, fromImg()); change(out); toast(`${CLEAN[k].label}: done (Undo takes it back).`); return; }
-      const a = e.target.closest('[data-ed]'); if (!a) return; if (a.dataset.ed === 'close') { if (past.length && !confirm('Close without saving the changes?')) return; close(); return; }
+      const a = e.target.closest('[data-ed]'); if (!a) return; if (a.dataset.ed === 'close') { if (opts.onClose) return opts.onClose(); if (past.length && !confirm('Close without saving the changes?')) return; close(); return; }
       if (a.dataset.ed === 'save') return save(false); if (a.dataset.ed === 'copy') return save(true); if (a.dataset.ed === 'first') return backToFirst();
     });
-    el.addEventListener('input', (e) => { const n = e.target.dataset.n; if (n) { T[n] = +e.target.value; keepT(); } if (e.target.matches('[data-col]')) { T.col = e.target.value; keepT(); const c = el.querySelector('.ed-colour code'); if (c) c.textContent = T.col; } });
-    el.addEventListener('change', (e) => { if (e.target.matches('[data-col]')) renderPanel(); const k = e.target.dataset.chk; if (k) { T[k] = e.target.checked; keepT(); renderPanel(); } });
+    el.addEventListener('contextmenu', (e) => { const sw = e.target.closest('.ed-sw'); if (sw && (T.mine || []).includes(sw.dataset.sw)) { e.preventDefault(); dropColour(sw.dataset.sw); } });
+    el.addEventListener('input', (e) => { const n = e.target.dataset.n; if (n) { T[n] = +e.target.value; keepT(); el.querySelectorAll(`[data-n="${n}"]`).forEach((x) => { if (x !== e.target) x.value = e.target.value; }); if (n === 'fsize' && flt && flt.text) { flt.img = textImg(flt.text); flt.c = null; draw(); } tell(); } if (e.target.matches('[data-col]')) { T.col = e.target.value; keepT(); const c = el.querySelector('.ed-colour code'); if (c) c.textContent = T.col; } });
+    el.addEventListener('change', (e) => { if (e.target.matches('[data-col]')) setT('col', e.target.value); if (e.target.matches('[data-col2]')) setT('col2', e.target.value); const k = e.target.dataset.chk; if (k) setT(k, e.target.checked); if (e.target.dataset.s) setT(e.target.dataset.s, e.target.value); });
     document.addEventListener('keydown', (e) => {
       if (!el || el.hidden) return; if (poly) { if (e.key === 'Enter') { e.preventDefault(); closePoly(e.altKey); return; } if (e.key === 'Escape') { e.preventDefault(); poly = null; preview(null); return; } if (e.key === 'Backspace') { e.preventDefault(); poly.pts.pop(); if (!poly.pts.length) { poly = null; preview(null); } return; } }
       if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
-      if (e.ctrlKey || e.metaKey) { const k = e.key.toLowerCase(); if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); } else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); } else if (k === 'a') { e.preventDefault(); selDo('all'); } else if (k === 'd') { e.preventDefault(); selDo('none'); } else if (k === 'i' && e.shiftKey) { e.preventDefault(); selDo('invert'); } return; }
+      if (flt && !e.ctrlKey && !e.metaKey) { if (e.key === 'Enter') { e.preventDefault(); putDown(); return; } if (e.key === 'Escape' || e.key === 'Delete') { e.preventDefault(); dropFloat(); return; } }
+      if (e.ctrlKey || e.metaKey) { const k = e.key.toLowerCase(); if (k === 'c' && !String(getSelection())) { e.preventDefault(); copySel(false); } else if (k === 'x') { e.preventDefault(); copySel(true); } else if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); } else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); } else if (k === 'a') { e.preventDefault(); selDo('all'); } else if (k === 'd') { e.preventDefault(); selDo('none'); } else if (k === 'i' && e.shiftKey) { e.preventDefault(); selDo('invert'); } return; }
       if (sel && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); selDo('erase'); } else if (sel && e.key === 'Escape') { e.preventDefault(); selDo('none'); }
     });
+    document.addEventListener('paste', (e) => { if (!el || el.hidden || !cur || /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return; e.preventDefault(); const f = [...(e.clipboardData ? e.clipboardData.files : [])].find((x) => x.type.startsWith('image/')); pasteNow(f || null); });
     window.addEventListener('resize', () => { if (el && !el.hidden && cur) applyZoom(); });
     document.body.append(el);
   }
@@ -268,10 +361,14 @@
   }
   async function open(it, o = {}) {
     if (!it || !it.png) return o.toast && o.toast('Only pictures (PNG) can be touched up here.');
-    opts = o; item = it; if (!el) build(); el.hidden = false; past = []; future = []; zoom = 1; poly = null; sel = null; selView = null;
+    opts = o; item = it; if (!el) build(); el.classList.toggle('embedded', !!o.mount); if (o.mount) o.mount.insertBefore(el, o.before || null); else document.body.append(el);
+    el.querySelector('[data-ed=close]').textContent = o.mount ? 'Back to the library' : 'Close'; el.hidden = false; past = []; future = []; zoom = 1; poly = null; sel = null; selView = null; flt = null; closeText();
+    el.querySelectorAll('[data-ed]').forEach((b) => { b.disabled = false; });
     cur = await imageOf(it.png); cur.off = { x: 0, y: 0 }; orig = copy(cur); sheetFull = await sheetOf(it); if (!sheetPart() && T.from === 'sheet') T.from = 'opened';
     el.querySelector('.ed-name').textContent = it.name; renderPanel(); draw(); status(); const d = desk(); d.scrollLeft = d.scrollTop = 0;
   }
   function close() { if (el) el.hidden = true; poly = null; preview(null); }
-  window.ClipArtEditor = { open, close, CLEAN, applyShape, wand, regionOf, applyMask, _state: () => ({ sel: selCount(), tool: T.tool, col: T.col, w: cur && cur.width, h: cur && cur.height, past: past.length, sheet: sheetPart(), off: cur ? offOf(cur) : null, solid: cur ? (() => { let n = 0; for (let i = 3; i < cur.data.length; i += 4) if (cur.data[i] >= 24) n++; return Math.round((100 * n) / (cur.width * cur.height)); })() : 0 }) };
+  // shown again (its tab chosen again): the picture and its changes as they were
+  function show() { if (el && item) { el.hidden = false; draw(); status(); } }
+  window.ClipArtEditor = { open, close, show, save, undo, redo, T: () => T, setT, addColour, dropColour, FONTS, palette: () => (cur ? pictureColours() : []), copy: () => copySel(false), cut: () => copySel(true), paste: () => pasteNow(), selDo, hasSel: () => !!sel, floating: () => !!flt, putDown, isOpen: () => !!(el && !el.hidden && item), item: () => item, changed: () => past.length > 0, CLEAN, applyShape, wand, regionOf, applyMask, _state: () => ({ sel: selCount(), tool: T.tool, col: T.col, w: cur && cur.width, h: cur && cur.height, past: past.length, sheet: sheetPart(), off: cur ? offOf(cur) : null, solid: cur ? (() => { let n = 0; for (let i = 3; i < cur.data.length; i += 4) if (cur.data[i] >= 24) n++; return Math.round((100 * n) / (cur.width * cur.height)); })() : 0 }) };
 })();

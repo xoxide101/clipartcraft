@@ -98,6 +98,9 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 /* the Montage Slicer */
 .slicer .imp-tools .btn.outline { height: 30px; padding: 0 10px; }
 .slicer { position: fixed; inset: 0; z-index: 2000; display: flex; flex-direction: column; background: var(--bg); }
+.slicer.embedded { position: static; inset: auto; z-index: auto; min-height: 0; }
+.slicer.embedded[hidden], .work[hidden], .touch-empty[hidden] { display: none; }
+.touch-empty { display: grid; place-content: center; text-align: center; gap: 12px; min-height: 0; padding: 40px; }
 .sl-bar { display: flex; align-items: center; gap: 14px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
 .sl-bar .grow { flex: 1; }
 .sl-main { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 320px; }
@@ -355,3 +358,28 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 .ed-sw { width: 22px; height: 22px; border: 1px solid rgba(0,0,0,.35); border-radius: 4px; padding: 0; cursor: pointer; }
 .ed-sw[aria-pressed=true] { outline: 2px solid var(--accent, #3b6cf6); outline-offset: 1px; }
 .ed-selbtns { flex-wrap: wrap; gap: 4px; }
+.ed-slide { display: flex; align-items: center; gap: 8px; }
+.ed-slide input[type=range] { flex: 1; min-width: 60px; }
+.ed-slide input[type=number] { width: 64px; }
+.ed-textin { position: fixed; z-index: 3000; min-width: 220px; height: 32px; transform: translateY(-50%); box-shadow: 0 4px 14px rgba(0,0,0,.25); }
+.rb-slide { display: grid; grid-template-columns: 82px 84px 48px; white-space: nowrap; align-items: center; gap: 6px; font-size: 12px; }
+.rb-slide .input { height: 22px; padding: 0 4px; font-size: 12px; }
+.rb-font { height: 22px; font-size: 12px; padding: 0 4px; width: 130px; }
+.rb-cols { display: flex; gap: 10px; align-items: center; }
+.rb-now { display: flex; gap: 6px; }
+.rb-now label { display: grid; justify-items: center; font-size: 10px; cursor: pointer; }
+.rb-now input[type=color] { width: 34px; height: 34px; padding: 0; border: 1px solid var(--line, #ccc); border-radius: 6px; background: none; cursor: pointer; }
+.rb-sws { display: grid; gap: 4px; }
+.rb-sw { display: flex; flex-wrap: wrap; gap: 3px; max-width: 160px; align-items: center; }
+.rb-sw .ed-sw { width: 16px; height: 16px; border-radius: 3px; }
+.rb-sw .btn.sm { height: 20px; padding: 0 6px; font-size: 11px; }
+/* a ribbon wider than the window scrolls sideways (the Touch up tab has many tools) */
+.crb { min-width: 0; }
+.crb-body { overflow-x: auto; }
+/* stacked icon rows (the Touch up tab): three fit above the group's name */
+.crb-col > .crb-row { min-height: 25px; }
+.crb-col > .crb-row .crb-icon { height: 25px; }
+.crb-col > .crb-row .rb-font { margin-left: 4px; }
+.rb-slide input[type=range] { height: 18px; margin: 0; }
+.crb-col:has(> .crb-el .rb-slide) { gap: 2px; }
+.crb .crb-row .rb-font.input { height: 22px; min-height: 0; padding-top: 0; padding-bottom: 0; }

@@ -144,7 +144,7 @@
     if (a.dataset.sa === 'delete') return deleteFromServer(s2);
     if (a.dataset.sa === 'keep') { const it = await keepFromServer(s2); if (it) toast(`Kept “${it.name}” in this browser.`); render(); return; }
     if (a.dataset.sa === 'show') { const it = keptOf(s2); if (it) { cat = '*'; sel = new Set([it.id]); render(); } return; }
-    if (a.dataset.sa === 'touchup') { const it = await keepFromServer(s2); if (it && window.ClipArtEditor) ClipArtEditor.open(it, { toast, done: async () => { await reload(); } }); }
+    if (a.dataset.sa === 'touchup') touchUp();
   });
   // Find copies (js/dupes.js): in this browser's library, or on the server (all of it, read from its list)
   async function findCopies(onSrv) {
@@ -332,7 +332,7 @@
       if (a === 'unserver') { const S = chosen().filter((it) => it.serverId); if (!S.length) return toast('Choose something that is on the server.'); if (!confirm(`Take ${S.length === 1 ? `“${S[0].name}”` : `${S.length} items`} off the server? (They stay in this library.)`)) return; await L.removeFromServer(S); await reload(); toast('Taken off the server.'); return; }
       if (a === 'open-server') { if (!serverUrl) return toast('Connect to a server first.'); window.open(serverUrl + '/', '_blank'); return; }
       const one = chosen()[0]; if (!one) return;
-      if (a === 'touchup') return window.ClipArtEditor && ClipArtEditor.open(one, { toast, done: async () => { await reload(); } });
+      if (a === 'touchup') return touchUp(one);
       if (a === 'dl-png') download(one.png, `${one.name}.png`);
       if (a === 'dl-anim') download(one.anim, `${one.name}.${(one.anim.type.split('/')[1] || 'gif').replace('apng', 'png')}`);
       if (a === 'dl-svg') download(new Blob([one.svg], { type: 'image/svg+xml' }), `${one.name}.svg`);
@@ -555,6 +555,17 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     });
     document.body.append(box); draw(); probeAll(P.list.map((pl) => pl.url));
   }
+  // the server's settings page (databases, the admin login, the key): a button on the Server tab, and offered by itself
+  // the first time a server has no admin login yet (anyone who found the page could set it up)
+  const setupUrl = () => { const u = serverUrl || besideUs()[0]; return u ? u.replace(/\/$/, '') + '/setup' : ''; };
+  function openSetup() { const u = setupUrl(); if (!u) return toast('Connect to a server first (Connect…), or open ClipArtCraft from the web server it is on.'); window.open(u, '_blank'); }
+  async function firstTimeSetup() {
+    const u = setupUrl(); if (!u) return; try { if (sessionStorage.getItem('clipartcraft-setup-asked') === u) return; } catch (e) { /* blocked */ }
+    let r = null; try { r = await (await fetch(u.replace(/\/setup$/, '/api/setup'), { cache: 'no-store' })).json(); } catch (e) { return; }
+    if (!r || !r.needAdmin) return; try { sessionStorage.setItem('clipartcraft-setup-asked', u); } catch (e) { /* blocked */ }
+    const v = await ask('Set up the clip-art server', `The clip-art server at <b>${esc(u.replace(/\/setup$/, ''))}</b> is new: it has no admin login yet, so its settings (databases, the key) are open to whoever finds them first.<br><br>Make the admin login now: the server settings open in a new tab. (Later: Server tab › Server settings.)`, [{ label: 'Set it up now', value: 'go', primary: true }, { label: 'Later', value: null }]);
+    if (v) window.open(u, '_blank');
+  }
   async function checkServer(say) { serverUrl = await L.server(); serverOk = false; if (serverUrl) { try { const i = await L.serverInfo(); serverOk = true; if (say) toast(`Connected to the clip-art server (${i.libraries.map((l) => `${l.name}: ${l.database}`).join(', ')}).${i.writable ? '' : ' It can only be read from here.'}`); } catch (e) { if (say) toast(e.message); } } status(); }
   async function need() {
     if (!serverUrl || !serverOk) { if (await autoPlace(true)) return; }
@@ -563,6 +574,8 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
   $('search').oninput = (e) => { query = e.target.value; if (onServer()) { clearTimeout(srvTimer); srvTimer = setTimeout(() => loadServer(), 300); return; } render(); };
   $('grid').addEventListener('click', (e) => {
     if (e.target.closest('[data-srv-more]')) return loadServer(true);
+    // a double-click (the first click redraws the grid, so the click's own count is used): Touch up
+    if (e.detail === 2 && e.target.closest('.tile') && !e.shiftKey && !e.ctrlKey && !e.metaKey) return cat === '#work' && !onServer() ? act('work-import') : touchUp();
     const st = e.target.closest('[data-srv-id]'); if (st) { srvSel = st.dataset.srvId; render(); return; }
     const t = e.target.closest('.tile'); if (!t) { if (e.target === $('grid')) { sel.clear(); render(); } return; } const id = t.dataset.id, S = shown();
     if (e.shiftKey && last) { const a = S.findIndex((x) => x.id === last), b = S.findIndex((x) => x.id === id); S.slice(Math.min(a, b), Math.max(a, b) + 1).forEach((x) => sel.add(x.id)); }
@@ -570,14 +583,15 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     else sel = new Set([id]);
     last = id; render();
   });
-  $('grid').addEventListener('dblclick', (e) => { const t = e.target.closest('.tile'); if (t && cat === '#work') return act('work-import'); if (t) { const n = $('details').querySelector('[data-f=name]'); if (n) { n.focus(); n.select(); } } });
+  // double-click the big picture in the details: Touch up (F2 renames)
+  $('details').addEventListener('dblclick', (e) => { if (e.target.closest('.big') && cat !== '#work') touchUp(); });
   // drop files anywhere
   let dragN = 0;
   document.addEventListener('dragenter', (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { dragN++; $('drop').hidden = false; } });
   document.addEventListener('dragleave', () => { dragN = Math.max(0, dragN - 1); if (!dragN) $('drop').hidden = true; });
   document.addEventListener('dragover', (e) => e.preventDefault());
   document.addEventListener('drop', (e) => { e.preventDefault(); dragN = 0; $('drop').hidden = true; const f = [...e.dataTransfer.files], z = f.filter((x) => /\.zip$/i.test(x.name)), p = f.filter((x) => !/\.zip$/i.test(x.name)); if (z.length) addFiles(z, 'Imported'); if (p.length) importer(p); });
-  document.addEventListener('keydown', (e) => { if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return; if (e.key === 'Delete') act('delete'); if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') { e.preventDefault(); act('select-all'); } });
+  document.addEventListener('keydown', (e) => { if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || document.querySelector('.slicer:not([hidden]), .imp:not([hidden]), .touch-empty:not([hidden])')) return; if (e.key === 'Delete') act('delete'); if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') { e.preventDefault(); act('select-all'); } });
   L.onChange(() => reload()); if (WA) WA.onChange(() => reload()); // another Craft app (or another tab) changed the library
 
   // ------------------------------------------------------------------ title bar and ribbon (this app's own copy)
@@ -597,10 +611,57 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
   };
   const LOGO = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1.5" fill="currentColor" opacity=".35"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><path d="m14 20 2.5-4 2 3 1-1.5 1.5 2.5Z" fill="currentColor"/></svg>';
   const B = (label, icon, run, o = {}) => ({ label, icon, run, ...o });
+  // ---- the Touch up tab's tools (js/editor.js does the work; these show and set its settings)
+  const E = () => window.ClipArtEditor, off = () => !E() || !E().isOpen();
+  const TI = {
+    box: '<rect x="4" y="5" width="16" height="14" stroke-dasharray="3 2.2"/>',
+    ellipse: '<ellipse cx="12" cy="12" rx="8.5" ry="6.5" stroke-dasharray="3 2.2"/>',
+    wand: '<path d="M4 20 14.5 9.5"/><path d="m14.5 9.5 2-2 1 1-2 2Z" class="fill"/><path d="M18 3v2.5M21 6h-2.5M20.2 3.8l-1.6 1.6M13 4l1.2 1.2M20 11l-1.2-1.2"/>',
+    eraseSel: '<rect x="4" y="5" width="16" height="14" stroke-dasharray="3 2.2"/><path d="m9 9 6 6M15 9l-6 6"/>',
+    fillSel: '<rect x="4" y="5" width="16" height="14" stroke-dasharray="3 2.2"/><rect x="8" y="9" width="8" height="6" class="fill"/>',
+    type: '<path d="M5 5h14M12 5v14M9 19h6"/>',
+    lasso: '<path d="M12 4c5 0 9 2.6 9 6s-4 6-9 6c-1.4 0-2.8-.2-4-.6"/><path d="M8 15.4C5 14.4 3 12.4 3 10c0-3.4 4-6 9-6"/><path d="M8 15c-1.2 1.6-1 3.2.2 4.4.8.8 1.4 1.6 1.4 2.6"/>',
+    invert: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 20 20 4v16Z" class="fill"/>',
+    deselect: '<rect x="4" y="4" width="16" height="16" rx="2" stroke-dasharray="3 2"/><path d="m9 9 6 6M15 9l-6 6"/>',
+    keep: '<rect x="7" y="7" width="10" height="10" rx="1" class="fill"/><path d="M3 3h4M3 3v4M21 3h-4M21 3v4M3 21h4M3 21v-4M21 21h-4M21 21v-4"/>',
+    brush: '<path d="M14 3l7 7-8 8-7-7Z" class="fill"/><path d="M6 11c-2 0-3 1.6-3 3.6S2 21 2 21s4.4.4 6-1.2 1.6-3.2.6-4.4"/>',
+    eraser: '<path d="M3 15l9-9 7 7-6 6H7Z" class="fill"/><path d="M8 10l7 7M13 19h8"/>',
+    restore: '<path d="M15 3l6 6-7 7-6-6Z" class="fill"/><path d="M8 10c-1.8 0-2.8 1.4-2.8 3.2S4 19 4 19"/><path d="M3 4.5A5 5 0 0 1 11 3.6"/><path d="M3 2v3h3"/>',
+    fill: '<path d="M4 11.5 11 4.5l7 7-7 7Z" class="fill"/><path d="M8 4l3 3M18 11.5H5"/><path d="M20 14.5s2 2.4 2 3.7a2 2 0 0 1-4 0c0-1.3 2-3.7 2-3.7Z"/>',
+    gradient: '<defs><linearGradient id="tig" x1="0" x2="1"><stop offset="0" stop-color="currentColor" stop-opacity=".1"/><stop offset="1" stop-color="currentColor"/></linearGradient></defs><rect x="3" y="5" width="18" height="14" rx="2" fill="url(#tig)"/>',
+    pick: '<path d="M15 3l6 6-3 3-6-6Z" class="fill"/><path d="M13 8l-8 8v3h3l8-8"/>',
+    bold: '<path d="M7 4h6a4 4 0 0 1 0 8H7ZM7 12h7a4 4 0 0 1 0 8H7Z"/>',
+    down: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
+  };
+  // a tool button: pressed while that tool is in use
+  const tool = (label, icon, set, title) => B(label, icon, () => Object.entries(set).forEach(([k, v]) => E().setT(k, v)), { title: title || label, iconOnly: true, disabled: off, pressed: () => !off() && Object.entries(set).every(([k, v]) => E().T()[k] === v) });
+  // a slider with a box to type the number in
+  function rSlide(n, label, min, max, title) {
+    const w = document.createElement('label'); w.className = 'rb-slide'; w.title = title || label; w.innerHTML = `<span>${label}</span><input type="range" min="${min}" max="${max}"><input class="input" type="number" min="${min}" max="${max}">`;
+    const [r, t] = w.querySelectorAll('input'), set = (v) => { if (!off()) E().setT(n, Math.max(min, Math.min(max, Math.round(+v) || min))); };
+    r.addEventListener('input', () => { t.value = r.value; set(r.value); }); t.addEventListener('change', () => set(t.value)); t.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') set(t.value); });
+    w.sync = () => { if (!E()) return; const v = E().T()[n]; r.value = v; if (document.activeElement !== t) t.value = v; r.disabled = t.disabled = off(); }; return w;
+  }
+  const sizeSlide = rSlide('size', 'Brush', 1, 200, 'Brush, eraser and restore size (pixels across)'), tolSlide = rSlide('tol', 'Colour match', 1, 200, 'How close a colour counts, for the magic wand and Fill'), fsSlide = rSlide('fsize', 'Text', 6, 400, 'How tall the words are (pixels)');
+  const fontSel = document.createElement('select'); fontSel.className = 'input rb-font'; fontSel.title = 'Font for Text';
+  fontSel.addEventListener('change', () => { if (!off()) E().setT('font', fontSel.value); });
+  // the colours: colour 1 and 2 (click to choose any), the picture's own, yours (+ Add colour; right-click one to take it off)
+  const rCols = document.createElement('div'); rCols.className = 'rb-cols'; let colsSig = '';
+  function drawCols() {
+    if (!E()) return; const T = E().T(), pal = off() ? [] : E().palette().slice(0, 16), sig = [T.col, T.col2, pal.join(), (T.mine || []).join(), off()].join('|'); if (sig === colsSig) return; colsSig = sig;
+    const sw = (h, mine) => `<button type="button" class="ed-sw" data-sw="${h}" title="${h}${mine ? ' (right-click: take it off)' : ''}" style="background:${h}" aria-pressed="${h === T.col}"${mine ? ' data-mine' : ''}></button>`;
+    rCols.innerHTML = `<div class="rb-now"><label title="Colour 1 (brush, fill, text): click to choose any colour"><input type="color" data-rc="col" value="${T.col}"><small>1</small></label><label title="Colour 2 (gradients)"><input type="color" data-rc="col2" value="${T.col2}"><small>2</small></label></div>
+      <div class="rb-sws"><div class="rb-sw" title="The picture's own colours">${pal.map((h) => sw(h)).join('') || '<small class="hint">the picture’s colours</small>'}</div><div class="rb-sw" title="Your colours">${(T.mine || []).map((h) => sw(h, true)).join('')}<button type="button" class="btn outline sm" data-radd ${off() ? 'disabled' : ''} title="Keep colour 1 in your colours (for every picture)">+ Add colour</button></div></div>`;
+  }
+  rCols.addEventListener('click', (e) => { if (off()) return; const s = e.target.closest('[data-sw]'); if (s) return E().setT('col', s.dataset.sw); if (e.target.closest('[data-radd]')) E().addColour(); });
+  rCols.addEventListener('contextmenu', (e) => { const s = e.target.closest('[data-mine]'); if (s && !off()) { e.preventDefault(); E().dropColour(s.dataset.sw); } });
+  rCols.addEventListener('change', (e) => { const k = e.target.dataset.rc; if (k && !off()) E().setT(k, e.target.value); });
+  function syncTouchTab() { if (!E()) return; if (!fontSel.options.length) fontSel.innerHTML = E().FONTS.map((f) => `<option style="font-family:'${f}'">${f}</option>`).join(''); fontSel.value = E().T().font; fontSel.disabled = off(); [sizeSlide, tolSlide, fsSlide].forEach((w) => w.sync()); drawCols(); if (typeof ribbon !== 'undefined') ribbon.refresh(); }
+  document.addEventListener('clipart-editor', syncTouchTab);
   const ribbon = window.CraftRibbon({
     mount: $('app'), storageKey: 'clipartcraft',
     tabs: [
-      { id: 'home', label: 'Home', hue: '#c2410c', groups: [
+      { id: 'home', label: 'Home', hue: '#c2410c', onSelect: () => leaveTouch(), groups: [
         ['Start', [B('Start', I.wand, () => act('start'), { big: true, title: 'The start page: what do you want to do? (import, slice a sheet, open a library…)' })]],
         ['Add', [B('Import pictures', IK.add, () => act('add'), { big: true, key: 'Ctrl+O', title: 'Any picture files (PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, TIFF, SVG, animations, classic formats): every page and frame, cropped, named for you, black and white made see-through' }), B('Import a library', IK.zip, () => act('zip'), { big: true, title: 'A library ZIP (from ImageCraft’s Split a sheet, or exported here)' })]],
         ['Sort', [B('Sort with AI', I.wand, () => act('sort-ai'), { big: true, title: 'The AI looks at each picture (the chosen ones, or every one not yet in a category) and gives it a category, style, form and tags, and a name where it only has a number' }), { col: [B('Ask a cloud AI', I.globe, () => act('cloud-ask'), { title: 'A cloud AI (Claude, Gemini, GPT or OpenRouter, with your own key) names and sorts the chosen pictures: for the ones the AI here gets wrong. Costs a little per picture', disabled: () => !sel.size }), B('Cloud AI settings…', I.gear, () => act('cloud-settings'), { title: 'Your own key for Claude, Gemini, GPT or OpenRouter, and which model to use' })] }, B('Find copies…', I.duplicate || I.copy, () => act('dupes'), { big: true, title: 'Pictures that are the same picture (a sheet sent twice, a picture imported again): keep one of each, remove the rest. On the server when you are looking at it, else in this browser' })]],
@@ -608,9 +669,22 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
         ['Library', [B('Export (ZIP)', IK.exportZ, () => act('export-all'), { big: true, title: 'Everything shown (the category you are in, or all) as one ZIP: pictures, SVGs and library.json' }), { col: [B('Save to the folder', IK.up, () => act('folder-out'), { title: 'Write the whole library to its folder (backup, sync, sharing)' }), B('Add from a folder', IK.down, () => act('folder-in'), { title: 'Read a library folder into this library' }), B('Choose the folder…', IK.folder, () => act('folder-pick'), { title: 'Which folder the library is saved to' })] }]],
         ['Edit', [{ col: [B('Choose all', I.selectAll, () => act('select-all'), { key: 'Ctrl+A' }), B('Delete', I.trash, () => act('delete'), { key: 'Delete', disabled: () => !sel.size })] }]],
       ] },
-      { id: 'server', label: 'Server', hue: '#0f766e', groups: [
+      { id: 'touch', label: 'Touch up', hue: '#7c3aed', onSelect: () => enterTouch(), groups: [
+        ['Picture', [B('Save', I.save, () => E().save(false), { big: true, title: 'Replace the picture in the library (its very first version is kept, to go back to)', disabled: off }), { col: [B('Save as a copy', I.copy, () => E().save(true), { title: 'Keep both: the picture as it was and this one', disabled: off }), B('Back to the library', IK.folder, () => ribbon.select('home', true), { title: 'The library again (the picture stays here with its changes until you open another)' })] }]],
+        ['Clipboard', [B('Paste', I.paste, () => E().paste(), { big: true, key: 'Ctrl+V', title: 'What you copied (to drag into place), or a picture copied in another program', disabled: off }), { col: [B('Cut', I.cut, () => E().cut(), { key: 'Ctrl+X', disabled: off }), B('Copy', I.copy, () => E().copy(), { key: 'Ctrl+C', disabled: off }), { row: [B('Undo', I.undo, () => E().undo(), { iconOnly: true, key: 'Ctrl+Z', disabled: off }), B('Redo', I.redo, () => E().redo(), { iconOnly: true, key: 'Ctrl+Y', disabled: off }), '|', B('Put it down', TI.down, () => E().putDown(), { iconOnly: true, key: 'Enter', title: 'Put it down: the floating piece (a paste or words) goes into the picture where it is', disabled: () => off() || !E().floating() })] }] }]],
+        ['Select', [{ col: [{ row: [tool('Rectangle select', TI.box, { tool: 'select', shape: 'box' }), tool('Ellipse select', TI.ellipse, { tool: 'select', shape: 'ellipse' }), tool('Lasso', TI.lasso, { tool: 'select', shape: 'lasso' }, 'Lasso: drag freehand, or click corners'), tool('Magic wand', TI.wand, { tool: 'select', shape: 'wand' }, 'Magic wand: a patch of about one colour (how close: Colour match)')] },
+          { row: [B('Select all', I.selectAll, () => E().selDo('all'), { iconOnly: true, key: 'Ctrl+A', disabled: off }), B('Invert the selection', TI.invert, () => E().selDo('invert'), { iconOnly: true, key: 'Ctrl+Shift+I', disabled: off }), B('Deselect', TI.deselect, () => E().selDo('none'), { iconOnly: true, key: 'Ctrl+D', disabled: () => off() || !E().hasSel() })] },
+          { row: [B('Erase the selection', TI.eraseSel, () => E().selDo('erase'), { iconOnly: true, key: 'Delete', disabled: () => off() || !E().hasSel() }), B('Keep only the selection', TI.keep, () => E().selDo('only'), { iconOnly: true, title: 'Keep only the selection: everything else erased', disabled: () => off() || !E().hasSel() }), B('Fill the selection with colour 1', TI.fillSel, () => E().selDo('paint'), { iconOnly: true, disabled: () => off() || !E().hasSel() })] }] }]],
+        ['Tools', [{ col: [{ row: [tool('Brush', TI.brush, { tool: 'brush', op: 'paint' }, 'Brush: paint in colour 1'), tool('Eraser', TI.eraser, { tool: 'brush', op: 'erase' }, 'Eraser: rub out (see-through)'), tool('Restore brush', TI.restore, { tool: 'brush', op: 'keep' }, 'Restore brush: paint back the picture as it was opened (or its sheet)')] },
+          { row: [tool('Paint bucket', TI.fill, { tool: 'fill' }, 'Paint bucket: colour a patch (or that colour everywhere: untick Joined only in the side panel)'), tool('Gradient', TI.gradient, { tool: 'gradient' }, 'Gradient: select the area, then drag across it (blends the colours just outside it, or colour 1 to colour 2)'), tool('Eyedropper', TI.pick, { tool: 'pick' }, 'Eyedropper: take colour 1 from the picture')] },
+          { row: [tool('Text', TI.type, { tool: 'text' }, 'Text: click where the words go, type, Enter; drag them into place'), B('Bold', TI.bold, () => E().setT('bold', !E().T().bold), { iconOnly: true, pressed: () => !!E().T().bold, disabled: off }), { el: fontSel }] }] }]],
+        ['Sizes', [{ col: [{ el: sizeSlide }, { el: tolSlide }, { el: fsSlide }] }]],
+        ['Colours', [{ el: rCols }]],
+      ] },
+      { id: 'server', label: 'Server', hue: '#0f766e', onSelect: () => leaveTouch(), groups: [
         ['Connect', [B('Connect…', IK.server, () => act('connect'), { big: true, title: 'Use a clip-art server: on this computer (server/start-server.cmd) or on a web host. Every picture then has a real http link any app can use.' }), { col: [B('Open the server page', IK.link, () => act('open-server')), B('Stop using it', IK.link, () => act('disconnect'), { title: 'Forget the server (nothing is deleted anywhere)' })] }]],
         ['Share', [B('Sync', IK.sync, () => act('sync'), { big: true, title: 'Get what is new on the server, and send what is new here' }), B('Match the server', IK.get, () => act('match'), { big: true, title: 'The server is the master copy: this browser gets everything on it, and pictures deleted there go here too (pictures never sent are asked about)' }), B('Send to the server', IK.send, () => act('push'), { big: true, title: 'The chosen items (or everything) go to the server' }), B('Get from the server', IK.get, () => act('pull'), { big: true, title: 'Everything on the server comes into this library' })]],
+        ['Settings', [B('Server settings', I.gear, () => openSetup(), { big: true, title: 'The server’s own settings page: the admin login, its databases (SQLite or MySQL/MariaDB, with their passwords), the key, copying libraries. Opens in a new tab' })]],
         ['Backup', [B('Copy of the database', IK.get, () => act('dbcopy'), { big: true, title: 'The whole library on the server, pictures included, as a SQL file: MySQL/MariaDB (to load into another database) or SQLite (to keep offline)' })]],
         ['Remove', [B('Take off the server', I.trash, () => act('unserver'), { title: 'The chosen items are deleted from the server but stay here', disabled: () => !sel.size })]],
       ] },
@@ -620,6 +694,32 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     quick: [{ icon: 'wand', title: 'Start (wizard)', run: () => act('start') }, { icon: 'open', title: 'Import pictures', key: 'Ctrl+O', run: () => act('add') }, { icon: 'export', title: 'Export (ZIP)', run: () => act('export-all') }],
     getTitle: () => 'Clip-art library', getStatus: () => ({ text: `${items.length} item${items.length === 1 ? '' : 's'}` }), getInfo: () => [], rightEls: [] });
   const app = $('app'); app.prepend(ribbon.el); app.prepend(tb.el);
+  // Touch up as a page of its own (the tab between Home and Server): the chosen picture, kept with its changes while
+  // the other tabs are looked at; another picture asks first when this one has changes not saved
+  let touchWant = null;
+  const touchEmpty = document.createElement('div'); touchEmpty.className = 'touch-empty'; touchEmpty.hidden = true;
+  touchEmpty.innerHTML = '<b>Touch up</b><p class="hint"></p><div><button class="btn outline" type="button" data-touch-back>Back to the library</button></div>';
+  touchEmpty.addEventListener('click', (e) => { if (e.target.closest('[data-touch-back]')) ribbon.select('home', true); });
+  app.insertBefore(touchEmpty, $('status'));
+  function touchUp(it) { touchWant = it || null; ribbon.select('touch', true); }
+  const touchOpts = () => ({ toast, mount: app, before: touchEmpty, onClose: () => ribbon.select('home', true),
+    // saved: the library shows it chosen, and Touch up goes on with it
+    done: async (saved) => { await reload(); if (!saved) return; sel = new Set([saved.id]); render(); if (ribbon.current() === 'touch') await ClipArtEditor.open((await L.all()).find((x) => x.id === saved.id) || saved, touchOpts()); } });
+  async function enterTouch() {
+    setTimeout(syncTouchTab, 0);
+    let it = touchWant; touchWant = null;
+    if (!it && onServer() && srvSel) { const s2 = srv.items.find((x) => x.id === srvSel); if (s2) it = await keepFromServer(s2); }
+    if (!it && !onServer() && cat !== '#work') it = chosen()[0];
+    app.querySelector('.work').hidden = true;
+    const E = window.ClipArtEditor, open = E.item();
+    if (open && (!it || it.id === open.id)) { touchEmpty.hidden = true; E.show(); return; }
+    if (!it || !it.png) { touchEmpty.querySelector('p').textContent = it ? 'Only pictures (PNG) can be touched up: this one is an SVG only.' : 'Choose a picture on the Home tab first (or double-click one: it opens here).'; touchEmpty.hidden = false; return; }
+    if (open && E.changed() && !confirm(`“${open.name}” has changes not saved. Leave them and touch up “${it.name}”?`)) { touchEmpty.hidden = true; E.show(); return; }
+    touchEmpty.hidden = true; await E.open(it, touchOpts());
+  }
+  function leaveTouch() { touchEmpty.hidden = true; if (ClipArtEditor.isOpen()) ClipArtEditor.close(); app.querySelector('.work').hidden = false; syncTouchTab(); }
+  // (the page always opens on the library, not on Touch up)
+  if (ribbon.current() === 'touch') ribbon.select('home', true);
   const ic = document.createElement('link'); ic.rel = 'icon'; ic.href = 'data:image/svg+xml,' + encodeURIComponent(LOGO.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ')); document.head.append(ic);
   document.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') { e.preventDefault(); act('add'); } });
 
@@ -725,6 +825,6 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
   async function fillFromServer() {
     if (!serverOk) return; await loadServer(); if (!items.length) { cat = '#server'; render(); }
   }
-  loadLists().then(reload).then(() => checkServer()).then(autoPlace).then(fillFromServer).then(offerResume).catch(fail);
+  loadLists().then(reload).then(() => checkServer()).then(autoPlace).then(fillFromServer).then(offerResume).then(firstTimeSetup).catch(fail);
   window.ClipArtCraft = { reload, items: () => items };
 })();
