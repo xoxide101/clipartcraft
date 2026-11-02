@@ -143,11 +143,11 @@
   async function pull(progress = () => {}, opts = {}) { return guard(() => pullNow(progress, opts)); }
   async function pullNow(progress, { q = '', category } = {}) {
     // (a picture the server lists but cannot hand over, its file missing there, is skipped and counted, not the end of it)
-    const here = new Map((await all()).filter((it) => it.serverId).map((it) => [it.serverId, it])), made = [], missing = [], skip = await notHere(), gone = new Set((await meta('deleteQueue')) || []); let n = 0, total = 0;
+    const here = new Map((await all()).filter((it) => it.serverId).map((it) => [it.serverId, it])), made = [], missing = [], skip = await notHere(), gone = new Set((await meta('deleteQueue')) || []), seen = new Set(); let n = 0, total = 0;
     for (let off = 0; ; off += 500) {
       const r = await call(`/api/items?limit=500&offset=${off}&q=${encodeURIComponent(q)}${category !== undefined ? '&category=' + encodeURIComponent(category) : ''}`); total = r.total; if (!r.items.length) break;
       for (const s of r.items) {
-        const old = here.get(s.id); progress(++n, total); if ((old && old.serverChanged === s.changed) || (!old && (skip.has(s.id) || gone.has(s.id)))) continue;
+        const old = here.get(s.id); seen.add(s.id); progress(++n, total); if ((old && old.serverChanged === s.changed) || (!old && (skip.has(s.id) || gone.has(s.id)))) continue;
         const get = async (k) => { if (!s.links[k]) return null; const r = await fetch(s.links[k]); return r.ok ? r.blob() : null; };
         let png = null, svg = null, anim = null; try { png = await get('png'); if (s.links.svg) { const r = await fetch(s.links.svg); if (r.ok) svg = await r.text(); } anim = await get('anim'); } catch (e) { /* counted below */ }
         if (!png && !svg) { missing.push(s.name); continue; }
@@ -157,7 +157,9 @@
         await tx('items', 'readwrite', (st) => req(st.put(it))); made.push(it);
       }
     }
-    changed(); return { made, total, missing };
+    // (a whole pull: pictures here that the server had but no longer has were deleted there, from another machine: they go here too)
+    const removed = []; if (!q && category === undefined && seen.size === total) { for (const [sid, it] of here) if (!seen.has(sid)) removed.push(it); if (removed.length) await remove(removed.map((it) => it.id)); }
+    changed(); return { made, total, missing, removed };
   }
   // deleting: from the server too (queued until the server answers; Sync sends what is left), or from this browser only
   // (remembered, so Sync and Get do not bring it back; keeping it again from the server forgets that)
