@@ -900,6 +900,25 @@
   // ------------------------------------------------------------------ tables, the main area, ruled-out parts and text
   // the sheet as it looks on white (see-through cells read as white page)
   function onWhite(img) { const o = copy(img), d = o.data; for (let i = 0; i < d.length; i += 4) { const a = d[i + 3] / 255; if (a < 1) { d[i] = d[i] * a + 255 * (1 - a); d[i + 1] = d[i + 1] * a + 255 * (1 - a); d[i + 2] = d[i + 2] * a + 255 * (1 - a); d[i + 3] = 255; } } return o; }
+  // a reading that looks like words (letters, not a stray mark or the reader describing an empty picture)
+  const readsLikeWords = (t) => /[A-Za-z]{2,}/.test(t) && !/^(unanswerable|none|blank|empty|white|no text)\b/i.test(t.trim());
+  // the ways a label is shown to the reader, tried in turn when one gives nothing
+  const scaled = (img, k) => { const c = document.createElement('canvas'); c.width = img.width * k; c.height = img.height * k; const x = c.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(canvasOf(img), 0, 0, c.width, c.height); return x.getImageData(0, 0, c.width, c.height); };
+  const bolder = (img) => { const o = copy(img), d = o.data, s = img.data, W = img.width, H = img.height; for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { let m = 255; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const nx = x + dx, ny = y + dy; if (nx >= 0 && ny >= 0 && nx < W && ny < H) m = Math.min(m, s[(ny * W + nx) * 4]); } const i = (y * W + x) * 4; d[i] = d[i + 1] = d[i + 2] = m; } return o; };
+  const negative = (img) => { const o = copy(img), d = o.data; for (let i = 0; i < d.length; i += 4) { d[i] = 255 - d[i]; d[i + 1] = 255 - d[i + 1]; d[i + 2] = 255 - d[i + 2]; } return o; };
+  const TRIES = [(r) => inkOf(r), (r) => onWhite(r), (r) => inkOf(scaled(r, 3)), (r) => bolder(inkOf(scaled(r, 2))), (r) => negative(inkOf(scaled(r, 2)))];
+  // words made plain for the reader: dark ink on white, however they were drawn (faint grey, white, or on a see-through
+  // sheet, where onWhite alone leaves light words nearly invisible). Ink is what differs from the background: any solid
+  // pixel on a see-through background, else how far a pixel is from the usual colour; the faintest is stretched to black.
+  function inkOf(img) {
+    const o = copy(img), d = o.data, n = img.width * img.height, v = new Float32Array(n); let clear = 0;
+    for (let p = 0; p < n; p++) if (d[p * 4 + 3] < 128) clear++;
+    if (clear > n * 0.3) for (let p = 0; p < n; p++) v[p] = d[p * 4 + 3] / 255;
+    else { const L = lumOf(onWhite(img)), bg = Float32Array.from(L).sort()[n >> 1]; for (let p = 0; p < n; p++) v[p] = Math.abs(L[p] - bg) / 255; }
+    const hi = Math.max(0.08, Float32Array.from(v).sort()[Math.min(n - 1, Math.floor(n * 0.995))]);
+    for (let p = 0; p < n; p++) { const g = 255 * (1 - Math.min(1, v[p] / hi)), i = p * 4; d[i] = d[i + 1] = d[i + 2] = g; d[i + 3] = 255; }
+    return o;
+  }
   function lumOf(img) { const n = img.width * img.height, L = new Float32Array(n), d = img.data; for (let p = 0; p < n; p++) { const i = p * 4; L[p] = 0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2]; } return L; }
   // the ruled lines of a table, one way: lines that are smooth along themselves and differ from the line two away,
   // over most of the sheet (a picture's edge never runs right across). across: the upright lines
@@ -1080,8 +1099,14 @@
       for (const j of jobs) {
         if (sheet !== mine) { sayReading(''); return; } // another sheet was opened meanwhile
         sayReading(`Reading ${++k} of ${jobs.length}…`);
-        const b = j.box, x0 = Math.max(0, Math.round(b.x)), y0 = Math.max(0, Math.round(b.y)), part = onWhite(cropOf(sheet, x0, y0, Math.min(sheet.width - x0, Math.round(b.w)), Math.min(sheet.height - y0, Math.round(b.h))));
-        const readIt = () => N.read(squareOf(part), { progress: (a, t) => sayReading(`Getting the AI: ${Math.round((a / t) * 100)}%`) }), said = window.CraftKeys ? await CraftKeys.track('local', readIt) : await readIt(); if (sheet !== mine) { sayReading(''); return; }
+        const b = j.box, x0 = Math.max(0, Math.round(b.x)), y0 = Math.max(0, Math.round(b.y)), raw = cropOf(sheet, x0, y0, Math.min(sheet.width - x0, Math.round(b.w)), Math.min(sheet.height - y0, Math.round(b.h)));
+        // tries, one after another until one reads like words: the words as dark ink, as they are, bigger, bolder, light on dark
+        let said = '';
+        for (const make of TRIES) {
+          const part = make(raw), readIt = () => N.read(squareOf(part), { progress: (a, t) => sayReading(`Getting the AI: ${Math.round((a / t) * 100)}%`) });
+          said = String((window.CraftKeys ? await CraftKeys.track('local', readIt) : await readIt()) || '').trim(); if (sheet !== mine) { sayReading(''); return; }
+          if (readsLikeWords(said)) break; said = '';
+        }
         j.set(said); if (k % 4 === 0) { renderNames(); draw(); }
       }
       opts.toast && opts.toast(`${jobs.length} label${jobs.length === 1 ? '' : 's'} read${quiet ? ' by itself' : ''}: check them in the panel.`);

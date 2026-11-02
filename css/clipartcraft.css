@@ -349,3 +349,9 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 .dup-pic.gone { border-color: #ef4444; opacity: .75; } .dup-pic.gone i { background: #ef4444; }
 .ask-in { max-width: 480px; }
 .ask-in .ask-text { margin: 12px 16px; line-height: 1.45; }
+.ed-colour { display: flex; align-items: center; gap: 8px; }
+.ed-colour input[type=color] { width: 44px; height: 30px; padding: 0; border: 1px solid var(--line, #ccc); border-radius: 6px; background: none; }
+.ed-swatches { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.ed-sw { width: 22px; height: 22px; border: 1px solid rgba(0,0,0,.35); border-radius: 4px; padding: 0; cursor: pointer; }
+.ed-sw[aria-pressed=true] { outline: 2px solid var(--accent, #3b6cf6); outline-offset: 1px; }
+.ed-selbtns { flex-wrap: wrap; gap: 4px; }
