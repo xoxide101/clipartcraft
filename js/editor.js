@@ -4,7 +4,14 @@
    everywhere); the Eyedropper takes a colour from the picture, and the picture's own colours are offered as swatches.
    With a selection, every tool stays inside it. Copy, Cut and Paste (also pictures copied in other programs) and Text
    make a floating piece: drag it into place, then click off it or press Enter to put it down (Escape drops it). Your own
-   colours can be added to the swatches. The ribbon's Touch up tab (ui.js) drives the same tools through the API below. One-click clean-ups for what cutting leaves behind (specks, holes,
+   colours can be added to the swatches.
+   Layers (the picture, a background, pasted pieces, words, effects) can be hidden, faded, moved up and down, merged,
+   and given a mask (what it hides, painted with the brushes or a gradient, so nothing is lost); Save flattens them.
+   Background: removed by finding its edge (or by the AI cut-out), selected, completed (see-through gaps filled from
+   round them), or a new one made behind the picture (a colour, a gradient, a pattern, or the picture's own edges
+   carried out). Mend: a selected part filled from round it (Telea's method), or by the AI (MI-GAN). Effects: an
+   outline, a shadow or a glow, each a layer under the picture. Vector: how the SVG is traced (detail, how many
+   colours), shown before saving, and its colours changed one by one. The ribbon's Touch up tab (ui.js) drives the same tools through the API below. One-click clean-ups for what cutting leaves behind (specks, holes,
    halos, soft edges, a background colour). Restore brings parts back from the picture as it was opened, or from the sheet it was cut from (when the
    working area still has it). Save replaces the picture (the first version is kept, to go back to); Save as a copy
    keeps both. */
@@ -98,7 +105,7 @@
   let el = null, item = null, cur = null, orig = null, sheetFull = null, past = [], future = [], opts = {}, zoom = 1, bgView = 'check';
   const offOf = (img) => img.off || { x: 0, y: 0 };
   const crop = (img, x, y, w, h) => { const o = new ImageData(w, h); for (let yy = 0; yy < h; yy++) for (let xx = 0; xx < w; xx++) { const sx = x + xx, sy = y + yy; if (sx < 0 || sy < 0 || sx >= img.width || sy >= img.height) continue; const i = (sy * img.width + sx) * 4, k = (yy * w + xx) * 4; o.data[k] = img.data[i]; o.data[k + 1] = img.data[i + 1]; o.data[k + 2] = img.data[i + 2]; o.data[k + 3] = img.data[i + 3]; } return o; };
-  const T = { tool: 'select', shape: 'lasso', mode: 'new', op: 'paint', from: 'opened', size: 8, tol: 30, joined: true, col: '#e8483f', font: 'Arial', fsize: 32, bold: false, mine: [], col2: '#3f8be8', gshape: 'linear', gsrc: 'picture' };
+  const T = { tool: 'select', shape: 'lasso', mode: 'new', op: 'paint', from: 'opened', size: 8, tol: 30, joined: true, col: '#e8483f', font: 'Arial', fsize: 32, bold: false, mine: [], col2: '#3f8be8', gshape: 'linear', gsrc: 'picture', fx: 6, bgStyle: 'gradient', bgStep: 12, vprofile: 'icon', vcolors: 0 };
   try { Object.assign(T, JSON.parse(localStorage.getItem('clipartcraft-editor') || '{}')); } catch (e) { /* blocked */ }
   // (the tools before selections: shapes and the wand erased straight away)
   if (T.tool === 'shape') T.tool = 'select'; if (T.tool === 'wand') { T.tool = 'select'; T.shape = 'wand'; } if (!['select', 'brush', 'fill', 'gradient', 'pick', 'text'].includes(T.tool)) T.tool = 'select';
@@ -131,19 +138,49 @@
   const sheetPart = () => !!(sheetFull && item && item.cutAt);
   // (a picture of another size, after a trim or going back, cannot keep the selection)
   const fitSel = () => { if (sel && sel.length !== cur.width * cur.height) { sel = null; selView = null; renderPanel(); } };
-  function change(next) { past.push(cur); if (past.length > 50) past.shift(); future = []; const o = offOf(cur); next.off = next.shift ? { x: o.x + next.shift.x, y: o.y + next.shift.y } : next.off || o; cur = next; fitSel(); draw(); status(); }
-  function undo() { if (flt) { flt = null; draw(); return; } if (!past.length) return; future.push(cur); cur = past.pop(); fitSel(); draw(); status(); }
-  function redo() { if (!future.length) return; past.push(cur); cur = future.pop(); fitSel(); draw(); status(); }
+  // ------------------------------------------------------------------ layers: the bottom one first; cur is the one being worked on
+  // layer: { name, img (ImageData, the picture's size), vis, op (0–1), mask (Uint8Array 0–255, 255 = shown) | null }
+  let layers = [], active = 0, maskEdit = false;
+  const L0 = () => layers[active];
+  const snap = () => ({ layers: layers.map((l) => ({ ...l })), active });
+  function restore(st) { layers = st.layers.map((l) => ({ ...l })); active = Math.min(st.active, layers.length - 1); cur = L0().img; if (maskEdit && !L0().mask) maskEdit = false; }
+  const remember = () => { past.push(snap()); if (past.length > 50) past.shift(); future = []; vec = vec && { ...vec, stale: true }; };
+  function change(next) {
+    remember(); const o = offOf(cur); next.off = next.shift ? { x: o.x + next.shift.x, y: o.y + next.shift.y } : next.off || o;
+    // a trim (or going back to the first version) moves every layer the same way
+    if (next.width !== cur.width || next.height !== cur.height || next.off.x !== o.x || next.off.y !== o.y) { const dx = next.off.x - o.x, dy = next.off.y - o.y;
+      layers = layers.map((l, i) => ({ ...l, img: i === active ? l.img : crop(l.img, dx, dy, next.width, next.height), mask: l.mask ? cropMask(l.mask, cur.width, cur.height, dx, dy, next.width, next.height) : null })); }
+    cur = next; L0().img = cur; fitSel(); draw(); status();
+  }
+  // a change to the layers themselves (added, removed, moved, faded, masked)
+  function layerChange(fn) { remember(); fn(); cur = L0().img; if (maskEdit && !L0().mask) maskEdit = false; fitSel(); draw(); renderPanel(); status(); }
+  function undo() { if (flt) { flt = null; draw(); return; } if (!past.length) return; future.push(snap()); restore(past.pop()); fitSel(); draw(); renderPanel(); status(); }
+  function redo() { if (!future.length) return; past.push(snap()); restore(future.pop()); fitSel(); draw(); renderPanel(); status(); }
+  const cropMask = (m, W, H, x, y, w, h) => { const o = new Uint8Array(w * h).fill(255); for (let yy = 0; yy < h; yy++) for (let xx = 0; xx < w; xx++) { const sx = x + xx, sy = y + yy; if (sx >= 0 && sy >= 0 && sx < W && sy < H) o[yy * w + xx] = m[sy * W + sx]; } return o; };
+  // each layer drawn (its mask applied); kept until its pixels or mask change (the one being worked on is drawn fresh)
+  function layerCanvas(l, live) {
+    if (!live && l.cv && l.cvImg === l.img && l.cvMask === l.mask) return l.cv;
+    let img = l.img; if (l.mask) { img = copy(img); for (let k = 0; k < l.mask.length; k++) img.data[k * 4 + 3] = (img.data[k * 4 + 3] * l.mask[k]) / 255; }
+    const c = canvasOf(img); if (!live) { l.cv = c; l.cvImg = l.img; l.cvMask = l.mask; } return c;
+  }
+  const plain = () => layers.length === 1 && !layers[0].mask && layers[0].vis && layers[0].op === 1;
+  function composite() { const c = document.createElement('canvas'); c.width = cur.width; c.height = cur.height; const x = c.getContext('2d'); layers.forEach((l, i) => { if (!l.vis) return; x.globalAlpha = l.op; x.drawImage(layerCanvas(l, i === active), 0, 0); }); return c; }
+  // the picture as it will be saved: every layer shown, flattened
+  const flat = () => (plain() ? cur : composite().getContext('2d').getImageData(0, 0, cur.width, cur.height));
   const toast = (m) => opts.toast && opts.toast(m);
   const BGS = { check: 'repeating-conic-gradient(#c9ccd6 0 25%, #f4f5f8 0 50%) 0 0 / 16px 16px', white: '#fff', black: '#000', grey: '#808080', dark: 'repeating-conic-gradient(#2b2d36 0 25%, #22242c 0 50%) 0 0 / 16px 16px' };
-  function draw() { if (!el || !cur) return; const c = el.querySelector('.ed-canvas'); c.width = cur.width; c.height = cur.height; const x = c.getContext('2d'); x.putImageData(cur, 0, 0); const so = selOverlay(); if (so) x.drawImage(so, 0, 0);
+  function draw() { if (!el || !cur) return; const c = el.querySelector('.ed-canvas'); c.width = cur.width; c.height = cur.height; const x = c.getContext('2d'); if (plain()) x.putImageData(cur, 0, 0); else { x.clearRect(0, 0, c.width, c.height); x.drawImage(composite(), 0, 0); }
+    // painting a mask: what it hides shows red
+    if (maskEdit && L0().mask) { const m = L0().mask, o = x.createImageData(cur.width, cur.height); for (let k = 0; k < m.length; k++) if (m[k] < 255) { o.data[k * 4] = 230; o.data[k * 4 + 1] = 30; o.data[k * 4 + 2] = 40; o.data[k * 4 + 3] = (255 - m[k]) * 0.5; } const t = document.createElement('canvas'); t.width = cur.width; t.height = cur.height; t.getContext('2d').putImageData(o, 0, 0); x.drawImage(t, 0, 0); }
+    if (vec && vec.show && vec.url) { if (!vec.im || vec.im.src !== vec.url) { vec.im = new Image(); vec.im.onload = () => draw(); vec.im.src = vec.url; } if (vec.im.complete) { x.fillStyle = 'rgba(255,255,255,.85)'; x.fillRect(0, 0, c.width, c.height); x.drawImage(vec.im, 0, 0, c.width, c.height); } }
+    const so = selOverlay(); if (so) x.drawImage(so, 0, 0);
     if (flt) { x.drawImage(fltCanvas(), Math.round(flt.x), Math.round(flt.y)); const k = Math.max(1, cur.width / (c.getBoundingClientRect().width || cur.width)); x.lineWidth = k; x.setLineDash([4 * k, 3 * k]); x.strokeStyle = '#000'; x.strokeRect(Math.round(flt.x) - k / 2, Math.round(flt.y) - k / 2, flt.img.width + k, flt.img.height + k); x.lineDashOffset = 4 * k; x.strokeStyle = '#fff'; x.strokeRect(Math.round(flt.x) - k / 2, Math.round(flt.y) - k / 2, flt.img.width + k, flt.img.height + k); }
     c.style.background = BGS[bgView]; applyZoom(); undoButtons(); tell(); }
   // the ribbon (ui.js) listens, to show the tools, sizes and colours as they are now
   const tell = () => document.dispatchEvent(new Event('clipart-editor'));
   function undoButtons() { el.querySelectorAll('[data-hist=undo]').forEach((b) => { b.disabled = !past.length; }); el.querySelectorAll('[data-hist=redo]').forEach((b) => { b.disabled = !future.length; }); }
   function status() { const s = el.querySelector('.sl-status'); if (!s || !cur) return; let solid = 0; for (let i = 3; i < cur.data.length; i += 4) if (cur.data[i] >= 24) solid++;
-    s.innerHTML = `<span><b>${esc(item.name)}</b></span><span>${cur.width} × ${cur.height} px</span><span>${Math.round((100 * solid) / (cur.width * cur.height))}% picture, the rest see-through</span>${sel ? `<span>selected: ${selCount()} px</span>` : ''}<span>${sheetPart() ? 'its sheet is in the working area: Restore can bring parts back from it' : 'Restore brings back the picture as it was opened'}</span><span class="grow"></span><span>zoom ${Math.round(fitScale() * zoom * 100)}%</span>`; }
+    s.innerHTML = `<span><b>${esc(item.name)}</b></span><span>${cur.width} × ${cur.height} px</span><span>${Math.round((100 * solid) / (cur.width * cur.height))}% picture, the rest see-through</span>${sel ? `<span>selected: ${selCount()} px</span>` : ''}${layers.length > 1 || maskEdit ? `<span>layer: <b>${esc(L0().name)}</b>${maskEdit ? ' (painting its mask)' : ''}</span>` : ''}${busyNow ? `<span class="warn">${esc(busyNow)}</span>` : ''}<span>${sheetPart() ? 'its sheet is in the working area: Restore can bring parts back from it' : 'Restore brings back the picture as it was opened'}</span><span class="grow"></span><span>zoom ${Math.round(fitScale() * zoom * 100)}%</span>`; }
   const desk = () => el.querySelector('.sl-desk');
   function fitScale() { const d = desk(); return cur ? Math.min((d.clientWidth - 40) / cur.width, (d.clientHeight - 40) / cur.height, 8) : 1; }
   function applyZoom(at) { const c = el.querySelector('.ed-canvas'), d = desk(), before = c.getBoundingClientRect(), k = fitScale() * zoom; c.style.width = `${cur.width * k}px`; c.style.height = `${cur.height * k}px`; c.style.imageRendering = k > 2 ? 'pixelated' : 'auto';
@@ -173,12 +210,19 @@
         <div class="ed-swatches" title="The picture's own colours">${pictureColours().map((h) => `<button type="button" class="ed-sw" data-sw="${h}" title="${h}" style="background:${h}" aria-pressed="${h === T.col}"></button>`).join('')}</div><small class="hint">The picture's own colours: click one to use it.</small>
         <div class="ed-swatches" title="Your colours">${(T.mine || []).map((h) => `<button type="button" class="ed-sw" data-sw="${h}" title="${h} (right-click: take it off)" style="background:${h}" aria-pressed="${h === T.col}"></button>`).join('')}<button class="btn outline sm" type="button" data-addcol title="Keep this colour in your colours (for every picture)">+ Add colour</button></div></div>` : ''}
       ${(T.tool === 'brush' && T.op === 'keep') || T.tool === 'select' ? `<div class="field"><span>Restore from</span>${seg('from', [['opened', 'The picture as opened'], ...(sheetPart() ? [['sheet', 'Its sheet']] : [])])}</div>` : ''}
+      <div class="field"><span>Layers <small class="hint">(top first; Save flattens them)</small></span><div class="ed-layers">${layers.map((l, i) => i).reverse().map((i) => { const l = layers[i]; return `<div class="ed-layer" data-lpick="${i}" aria-selected="${i === active}"><button type="button" class="ed-eye" data-lvis="${i}" title="${l.vis ? 'Hide' : 'Show'} it">${l.vis ? '👁' : '–'}</button><canvas data-th="${i}" width="40" height="30"></canvas><span class="nm" title="Double-click to rename">${esc(l.name)}</span>${l.mask ? `<i class="ed-mtag${maskEdit && i === active ? ' on' : ''}">mask</i>` : ''}${l.op < 1 ? `<small class="hint">${Math.round(l.op * 100)}%</small>` : ''}</div>`; }).join('')}</div>
+        <label class="field"><span>How solid this layer is</span><div class="ed-slide"><input type="range" min="0" max="100" data-lop value="${Math.round(L0().op * 100)}"><input class="input" type="number" min="0" max="100" data-lop value="${Math.round(L0().op * 100)}"></div></label>
+        <div class="btns ed-selbtns"><button class="btn outline sm" type="button" data-ly="new">New</button><button class="btn outline sm" type="button" data-ly="dup">Duplicate</button><button class="btn outline sm" type="button" data-ly="fromsel" ${sel ? '' : 'disabled'} title="Ctrl+J">From the selection</button><button class="btn outline sm" type="button" data-ly="up">Up</button><button class="btn outline sm" type="button" data-ly="down">Down</button><button class="btn outline sm" type="button" data-ly="merge" ${active ? '' : 'disabled'}>Merge down</button><button class="btn outline sm" type="button" data-ly="flatten" ${layers.length > 1 ? '' : 'disabled'}>Flatten</button><button class="btn outline sm" type="button" data-ly="del" ${layers.length > 1 ? '' : 'disabled'}>Delete</button></div>
+        <div class="btns ed-selbtns"><button class="btn ${maskEdit ? 'primary' : 'outline'} sm" type="button" data-ly="mask" title="${L0().mask ? 'Paint the mask (or the picture again)' : 'A mask hides parts of the layer without losing them (from the selection, if there is one)'}">${L0().mask ? (maskEdit ? 'Painting the mask' : 'Paint the mask') : 'Add a mask'}</button>${L0().mask ? '<button class="btn outline sm" type="button" data-ly="maskapply">Apply the mask</button><button class="btn outline sm" type="button" data-ly="maskdel">Delete the mask</button>' : ''}</div></div>
+      <div class="field"><span>Vector (the SVG saved with it)</span><label class="field"><span>Detail</span><select class="input" data-s="vprofile">${PROFILES.map(([v, n]) => `<option value="${v}" ${v === T.vprofile ? 'selected' : ''}>${n}</option>`).join('')}</select></label>${slide('vcolors', 'Colours (0: as the picture needs)', 0, 64)}
+        <div class="btns"><button class="btn outline sm" type="button" data-vec="trace">Trace now</button>${vec ? `<button class="btn ${vec.show ? 'primary' : 'outline'} sm" type="button" data-vec="show">${vec.show ? 'Showing the vector' : 'Show the vector'}</button>` : ''}</div>
+        ${vec ? `<small class="hint">${vec.stale ? 'The picture has changed since: Save traces it again.' : 'Save keeps this SVG.'} Its colours (click to change one):</small><div class="ed-swatches">${vec.fills.slice(0, 40).map((h) => `<label class="ed-sw" style="background:${h}" title="${h}"><input type="color" data-vfill="${h}" value="${h.length === 4 ? '#' + [...h.slice(1)].map((c) => c + c).join('') : h.slice(0, 7)}"></label>`).join('')}</div>` : '<small class="hint">See the SVG before saving; fewer colours or Icon detail make it simpler.</small>'}</div>
       <div class="field"><span>Clean up <small class="hint">(the whole picture, one click each)</small></span><div class="ed-clean">${Object.entries(CLEAN).map(([k, c]) => `<div class="ed-crow"><button class="btn outline sm" type="button" data-clean="${k}" title="${esc(c.hint)}">${c.label}</button><input class="input" type="number" data-cv="${k}" value="${T['cv_' + k] ?? c.value}" title="${esc(c.unit)}"><small class="hint">${esc(c.unit)}</small></div>`).join('')}</div></div>
       <div class="field"><span>Background to look against</span>${(() => `<div class="seg" role="group">${[['check', 'Checks'], ['dark', 'Dark'], ['white', 'White'], ['grey', 'Grey'], ['black', 'Black']].map(([v, l]) => `<button class="btn" type="button" data-bg="${v}" aria-pressed="${bgView === v}">${l}</button>`).join('')}</div>`)()}<small class="hint">Specks and halos show up best against the opposite of the picture.</small></div>
       <div class="btns"><button class="btn primary" type="button" data-ed="save">Save</button><button class="btn outline" type="button" data-ed="copy">Save as a copy</button>${item && item.pngFirst ? '<button class="btn ghost" type="button" data-ed="first">Back to the original</button>' : ''}</div>
       <p class="hint">Save replaces the picture in the library (its SVG is traced again); its very first version is kept, to go back to.</p></div>`;
   }
-  function renderPanel() { el.querySelector('.sl-side').innerHTML = panel(); undoButtons(); tell(); }
+  function renderPanel() { el.querySelector('.sl-side').innerHTML = panel(); undoButtons(); renderLayers(); tell(); }
 
   // drawing on the picture
   let drag = null, poly = null;
@@ -194,11 +238,12 @@
     const x = Math.floor(p.x), y = Math.floor(p.y), inside = x >= 0 && y >= 0 && x < cur.width && y < cur.height;
     if (flt) { if (inFloat(p)) { drag = { float: true, dx: p.x - flt.x, dy: p.y - flt.y }; return; } putDown(); return; }
     if (T.tool === 'text') { if (inside) textAt(p, e); return; }
-    if (T.tool === 'gradient') { if (!sel) return toast('Select the area first (Select tool), then drag across it.'); drag = { grad: true, p0: p, moved: false }; return; }
-    if (T.tool === 'pick') { if (!inside) return; const i = (y * cur.width + x) * 4; if (cur.data[i + 3] < 24) return toast('That spot is see-through: click a coloured one.');
-      T.col = toHex(cur.data[i], cur.data[i + 1], cur.data[i + 2]); T.tool = T.back || 'brush'; if (T.tool === 'brush') T.op = 'paint'; keepT(); renderPanel(); toast(`Colour ${T.col} taken.`); return; }
+    if (T.tool === 'gradient') { if (!sel && !(maskEdit && L0().mask)) return toast('Select the area first (Select tool), then drag across it.'); drag = { grad: true, p0: p, moved: false }; return; }
+    if (T.tool === 'pick') { if (!inside) return; const F = flat(), i = (y * cur.width + x) * 4; if (F.data[i + 3] < 24) return toast('That spot is see-through: click a coloured one.');
+      T.col = toHex(F.data[i], F.data[i + 1], F.data[i + 2]); T.tool = T.back || 'brush'; if (T.tool === 'brush') T.op = 'paint'; keepT(); renderPanel(); toast(`Colour ${T.col} taken.`); return; }
     if (T.tool === 'fill') { if (!inside) return; const m = regionOf(cur, x, y, +T.tol || 30, T.joined !== false); if (sel) for (let k = 0; k < m.length; k++) if (!sel[k]) m[k] = 0; change(applyMask(cur, m, 'paint', null, rgbOf(T.col))); return; }
-    if (T.tool === 'brush') { past.push(cur); if (past.length > 50) past.shift(); future = []; { const o = offOf(cur); cur = copy(cur); cur.off = o; } drag = { brush: true, last: p, op: e.altKey ? (T.op === 'erase' ? 'keep' : 'erase') : T.op }; brush(cur, p.x, p.y, p.x, p.y, (+T.size || 8) / 2, drag.op, fromImg(), rgbOf(T.col), sel); draw(); return; }
+    if (T.tool === 'brush' && maskEdit && L0().mask) { remember(); layers[active] = { ...L0(), mask: new Uint8Array(L0().mask) }; const show = (T.op === 'keep') !== e.altKey; drag = { mbrush: true, last: p, v: show ? 255 : 0 }; maskBrush(L0().mask, p, p, drag.v); draw(); return; }
+    if (T.tool === 'brush') { remember(); { const o = offOf(cur); cur = copy(cur); cur.off = o; L0().img = cur; } drag = { brush: true, last: p, op: e.altKey ? (T.op === 'erase' ? 'keep' : 'erase') : T.op }; brush(cur, p.x, p.y, p.x, p.y, (+T.size || 8) / 2, drag.op, fromImg(), rgbOf(T.col), sel); draw(); return; }
     const mode = e.shiftKey ? 'add' : e.altKey ? 'sub' : T.mode;
     if (T.shape === 'wand') { if (inside) setSel(regionOf(cur, x, y, +T.tol || 30, T.joined !== false), mode); return; }
     if (T.shape === 'lasso') { if (poly && poly.pts.length >= 3 && Math.hypot(p.x - poly.pts[0][0], p.y - poly.pts[0][1]) <= 10 * p.k) { closePoly(); return; } if (!poly) poly = { pts: [[p.x, p.y]], free: null, mode }; else poly.pts.push([p.x, p.y]); drag = { lasso: true, p0: p, moved: false }; return; }
@@ -209,6 +254,7 @@
     if (!drag) { if (poly) preview([...poly.pts, [p.x, p.y]]); el.querySelector('.ed-canvas').style.cursor = inFloat(p) ? 'move' : T.tool === 'text' ? 'text' : 'crosshair'; return; }
     if (drag.grad) { drag.moved = true; preview([[drag.p0.x, drag.p0.y], [p.x, p.y], [drag.p0.x + 0.01, drag.p0.y + 0.01]]); return; }
     if (drag.float) { flt.x = Math.round(p.x - drag.dx); flt.y = Math.round(p.y - drag.dy); draw(); return; }
+    if (drag.mbrush) { maskBrush(L0().mask, drag.last, p, drag.v); drag.last = p; draw(); return; }
     if (drag.brush) { brush(cur, drag.last.x, drag.last.y, p.x, p.y, (+T.size || 8) / 2, drag.op, fromImg(), rgbOf(T.col), sel); drag.last = p; draw(); return; }
     if (!drag.moved && Math.hypot(p.x - drag.p0.x, p.y - drag.p0.y) < 3 * p.k) return; drag.moved = true;
     if (drag.lasso) { if (poly.free === null) poly.free = poly.pts.length === 1; const l = poly.pts[poly.pts.length - 1]; if (Math.hypot(p.x - l[0], p.y - l[1]) > 2 * p.k) poly.pts.push([p.x, p.y]); preview(poly.pts); return; }
@@ -216,9 +262,9 @@
   }
   function onUp(e) {
     if (!drag) return; const d = drag; drag = null; const p = ptOf(e);
-    if (d.brush) { status(); undoButtons(); return; }
+    if (d.brush || d.mbrush) { status(); undoButtons(); renderLayers(); return; }
     if (d.float) return;
-    if (d.grad) { preview(null); if (Math.hypot(p.x - d.p0.x, p.y - d.p0.y) < 2) return toast('Drag across the selection: from where the gradient starts to where it ends.'); change(gradient(cur, sel, d.p0, p)); return; }
+    if (d.grad) { preview(null); if (Math.hypot(p.x - d.p0.x, p.y - d.p0.y) < 2) return toast('Drag across the selection: from where the gradient starts to where it ends.'); if (maskEdit && L0().mask) { const m = maskFade(L0().mask, sel, d.p0, p); return layerChange(() => { layers[active] = { ...L0(), mask: m }; }); } change(gradient(cur, sel, d.p0, p)); return; }
     if (d.lasso) { if (poly && poly.free && d.moved) closePoly(); else if (poly && !d.moved && poly.free === null) poly.free = false; return; }
     preview(null); if (!d.moved) { if (sel && d.mode === 'new') setSel(null); return; } if (Math.abs(p.x - d.p0.x) < 2 || Math.abs(p.y - d.p0.y) < 2) return; setSel(maskOf(shapePts(d.p0, p), cur.width, cur.height), d.mode);
   }
@@ -227,7 +273,7 @@
   let flt = null, clip = null, textBox = null;
   const FONTS = ['Arial', 'Arial Black', 'Verdana', 'Trebuchet MS', 'Georgia', 'Times New Roman', 'Courier New', 'Impact', 'Comic Sans MS'];
   function fltCanvas() { if (!flt.c) flt.c = canvasOf(flt.img); return flt.c; }
-  function putDown() { if (!flt) return; const c = canvasOf(cur), x = c.getContext('2d'); x.drawImage(fltCanvas(), Math.round(flt.x), Math.round(flt.y)); const o = x.getImageData(0, 0, c.width, c.height); flt = null; change(o); }
+  function putDown(asLayer) { if (!flt) return; if (asLayer === true) { const f = flt, im = new ImageData(cur.width, cur.height); flt = null; return addLayer(im, f.text ? 'Words' : 'Pasted', f); } const c = canvasOf(cur), x = c.getContext('2d'); x.drawImage(fltCanvas(), Math.round(flt.x), Math.round(flt.y)); const o = x.getImageData(0, 0, c.width, c.height); flt = null; change(o); }
   function dropFloat() { flt = null; draw(); }
   function float(img, x, y, text) { putDown(); flt = { img, x: Math.max(-img.width + 4, Math.min(cur.width - 4, x)), y: Math.max(-img.height + 4, Math.min(cur.height - 4, y)), text }; draw(); }
   const inFloat = (p) => flt && p.x >= flt.x && p.y >= flt.y && p.x < flt.x + flt.img.width && p.y < flt.y + flt.img.height;
@@ -292,27 +338,192 @@
       d[i] = c0[0] + (c1[0] - c0[0]) * t + n; d[i + 1] = c0[1] + (c1[1] - c0[1]) * t + n; d[i + 2] = c0[2] + (c1[2] - c0[2]) * t + n; d[i + 3] = 255; }
     return o;
   }
+  // ------------------------------------------------------------------ layer commands
+  function addLayer(img, name, f) { layerChange(() => { if (f) { const c = canvasOf(img); c.getContext('2d').drawImage(canvasOf(f.img), Math.round(f.x), Math.round(f.y)); img = c.getContext('2d').getImageData(0, 0, c.width, c.height); } img.off = offOf(cur); layers.splice(active + 1, 0, { name, img, vis: true, op: 1, mask: null }); active++; }); }
+  function layerDo(a, v) {
+    if (!cur) return; const W = cur.width, H = cur.height;
+    if (a === 'new') return addLayer(new ImageData(W, H), `Layer ${layers.length + 1}`);
+    if (a === 'dup') return addLayer(copy(cur), L0().name + ' copy');
+    if (a === 'fromsel') { if (!sel) return toast('Select a part first: it is copied to a layer of its own (Ctrl+J).'); const o = new ImageData(W, H); for (let k = 0; k < sel.length; k++) if (sel[k]) for (let q = 0; q < 4; q++) o.data[k * 4 + q] = cur.data[k * 4 + q]; return addLayer(o, 'From the selection'); }
+    if (['pick', 'vis', 'rename'].includes(a) && !layers[+v]) return;
+    if (a === 'pick') { if (+v === active) return; active = +v; cur = L0().img; if (maskEdit && !L0().mask) maskEdit = false; draw(); renderPanel(); status(); return; }
+    if (a === 'vis') return layerChange(() => { layers[+v] = { ...layers[+v], vis: !layers[+v].vis }; });
+    if (a === 'rename') { const n = prompt('Name of the layer:', layers[+v].name); if (n && n.trim()) layerChange(() => { layers[+v] = { ...layers[+v], name: n.trim() }; }); return; }
+    if (a === 'op') { if (Math.round(L0().op * 100) === Math.round(v)) return; } if (a === 'op') return layerChange(() => { layers[active] = { ...L0(), op: Math.max(0, Math.min(1, v / 100)) }; });
+    if (a === 'del') { if (layers.length < 2) return toast('The last layer stays (erase it instead).'); return layerChange(() => { layers.splice(active, 1); active = Math.max(0, active - 1); }); }
+    if (a === 'up' || a === 'down') { const j = active + (a === 'up' ? 1 : -1); if (j < 0 || j >= layers.length) return; return layerChange(() => { [layers[active], layers[j]] = [layers[j], layers[active]]; active = j; }); }
+    if (a === 'merge') { if (active === 0) return toast('There is no layer under this one.'); return layerChange(() => { const c = canvasOf(layers[active - 1].mask ? (() => { const t = layerCanvas(layers[active - 1]); return t.getContext('2d').getImageData(0, 0, W, H); })() : layers[active - 1].img), x = c.getContext('2d'); x.globalAlpha = L0().op; if (L0().vis) x.drawImage(layerCanvas(L0()), 0, 0); const img = x.getImageData(0, 0, W, H); img.off = offOf(cur); layers.splice(active - 1, 2, { ...layers[active - 1], img, mask: null }); active--; }); }
+    if (a === 'flatten') { if (plain()) return; return layerChange(() => { const img = composite().getContext('2d').getImageData(0, 0, W, H); img.off = offOf(cur); layers = [{ name: 'Picture', img, vis: true, op: 1, mask: null }]; active = 0; }); }
+    // masks: what a layer hides, without losing it (painted with the brushes, a gradient or the selection commands)
+    if (a === 'mask') { if (L0().mask) { maskEdit = !maskEdit; draw(); renderPanel(); return toast(maskEdit ? 'Painting the mask: the eraser and brush hide, the restore brush shows again; a gradient fades it.' : 'Painting the picture again.'); }
+      const m = new Uint8Array(W * H).fill(255); if (sel) for (let k = 0; k < m.length; k++) m[k] = sel[k] ? 255 : 0; maskEdit = true; return layerChange(() => { layers[active] = { ...L0(), mask: m }; }); }
+    if (a === 'maskapply') { if (!L0().mask) return; maskEdit = false; return layerChange(() => { const img = copy(cur); for (let k = 0; k < img.width * img.height; k++) img.data[k * 4 + 3] = (img.data[k * 4 + 3] * L0().mask[k]) / 255; img.off = offOf(cur); layers[active] = { ...L0(), img, mask: null }; }); }
+    if (a === 'maskdel') { if (!L0().mask) return; maskEdit = false; return layerChange(() => { layers[active] = { ...L0(), mask: null }; }); }
+  }
+  function maskBrush(m, a, b, v) {
+    const W = cur.width, H = cur.height, r = (+T.size || 8) / 2, n = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / Math.max(1, r / 3)));
+    for (let s2 = 0; s2 <= n; s2++) { const cx = a.x + ((b.x - a.x) * s2) / n, cy = a.y + ((b.y - a.y) * s2) / n;
+      for (let y = Math.max(0, Math.floor(cy - r)); y <= Math.min(H - 1, Math.ceil(cy + r)); y++) for (let x = Math.max(0, Math.floor(cx - r)); x <= Math.min(W - 1, Math.ceil(cx + r)); x++) if ((x - cx) ** 2 + (y - cy) ** 2 <= r * r && (!sel || sel[y * W + x])) m[y * W + x] = v; }
+  }
+  // a mask faded along a line: shown where it starts, hidden where it ends (inside the selection, or everywhere)
+  function maskFade(m0, lim, a, b) { const m = new Uint8Array(m0), W = cur.width, dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy || 1;
+    for (let k = 0; k < m.length; k++) { if (lim && !lim[k]) continue; const x = k % W + 0.5, y = ((k / W) | 0) + 0.5, t = Math.max(0, Math.min(1, T.gshape === 'radial' ? Math.hypot(x - a.x, y - a.y) / Math.sqrt(L2) : ((x - a.x) * dx + (y - a.y) * dy) / L2)); m[k] = Math.round(m0[k] * (1 - t)); }
+    return m; }
+  function renderLayers() {
+    const box = el && el.querySelector('.ed-layers'); if (!box) return;
+    box.querySelectorAll('canvas[data-th]').forEach((c) => { const l = layers[+c.dataset.th]; if (!l) return; const x = c.getContext('2d'), k = Math.min(c.width / cur.width, c.height / cur.height); x.clearRect(0, 0, c.width, c.height); x.drawImage(layerCanvas(l, true), 0, 0, cur.width * k, cur.height * k); });
+  }
+
+  // ------------------------------------------------------------------ background: found by its edge (or the AI), completed, or made new
+  // the background: reached from the picture's edges in small steps of colour (a shadow or a slow gradient is followed;
+  // the edge of the subject, a bigger step, stops it); see-through pixels count as background
+  function edgeBg(img, step) {
+    const W = img.width, H = img.height, d = img.data, m = new Uint8Array(W * H), st = [], diff = (a, b) => Math.abs(d[a * 4] - d[b * 4]) + Math.abs(d[a * 4 + 1] - d[b * 4 + 1]) + Math.abs(d[a * 4 + 2] - d[b * 4 + 2]);
+    const seed = (k) => { if (!m[k]) { m[k] = 1; st.push(k); } };
+    for (let x = 0; x < W; x++) { seed(x); seed((H - 1) * W + x); } for (let y = 0; y < H; y++) { seed(y * W); seed(y * W + W - 1); }
+    while (st.length) { const k = st.pop(), x = k % W, y = (k / W) | 0, clear = d[k * 4 + 3] < 24;
+      for (const q of [x > 0 ? k - 1 : -1, x < W - 1 ? k + 1 : -1, y > 0 ? k - W : -1, y < H - 1 ? k + W : -1]) { if (q < 0 || m[q]) continue; const qc = d[q * 4 + 3] < 24; if (qc || (!clear && diff(k, q) <= step * 3)) { m[q] = 1; st.push(q); } } }
+    return m;
+  }
+  // the AI cut-out (U²-Net): how sure it is that each pixel is the subject, at the picture's size
+  async function aiSubject() {
+    if (!window.CRAFTAI) throw new Error('The AI helpers are not here.'); const r = await CRAFTAI.cutout(canvasOf(flat())), W = cur.width, H = cur.height;
+    const c = document.createElement('canvas'); c.width = r.W; c.height = r.H; const id = c.getContext('2d').createImageData(r.W, r.H); for (let i = 0; i < r.a.length; i++) { id.data[i * 4 + 3] = r.a[i]; } c.getContext('2d').putImageData(id, 0, 0);
+    const o = document.createElement('canvas'); o.width = W; o.height = H; const x = o.getContext('2d'); x.drawImage(c, 0, 0, W, H); const d = x.getImageData(0, 0, W, H).data, a = new Uint8Array(W * H); for (let k = 0; k < a.length; k++) a[k] = d[k * 4 + 3]; return a;
+  }
+  let busyNow = '';
+  const busy = (t) => { busyNow = t || ''; status(); tell(); };
+  async function bgDo(a) {
+    if (!cur || busyNow) return; const W = cur.width, H = cur.height;
+    try {
+      if (a === 'select') return setSel(edgeBg(cur, +T.bgStep || 12));
+      if (a === 'edge' || a === 'ai') {
+        let keep; if (a === 'edge') { const bg = edgeBg(cur, +T.bgStep || 12); keep = new Uint8Array(W * H); for (let k = 0; k < keep.length; k++) keep[k] = bg[k] ? 0 : 255; }
+        else { busy('The AI is finding the subject (the first time it downloads, about 5 MB)…'); keep = await aiSubject(); busy(); }
+        // as a mask: nothing is lost, and the restore brush paints it back
+        if (L0().mask) for (let k = 0; k < keep.length; k++) keep[k] = Math.min(keep[k], L0().mask[k]);
+        maskEdit = true; layerChange(() => { layers[active] = { ...L0(), mask: keep }; }); return toast('Background hidden by a mask, which you are painting now: the restore brush shows parts again, the eraser hides more. Mask (Layers & fixes) to stop; Apply the mask to make it final.');
+      }
+      if (a === 'complete' || a === 'complete-ai') { // every see-through pixel (or the selection) filled from what is round it
+        const hole = new Float32Array(W * H); let n = 0; for (let k = 0; k < hole.length; k++) if (sel ? sel[k] : cur.data[k * 4 + 3] < 128) { hole[k] = 1; n++; }
+        if (!n) return toast('Nothing to fill: no see-through gaps (select the part to fill).');
+        return change(await mend(cur, hole, a === 'complete-ai'));
+      }
+      if (a === 'new') return makeBackground();
+    } catch (e) { busy(); console.error(e); toast('That did not work: ' + (e.message || e)); }
+  }
+  // mend: the hole filled from round it (Telea: quick, best for thin gaps and smooth backgrounds) or by the AI (MI-GAN)
+  async function mend(img, hole, ai) {
+    const W = img.width, H = img.height, n = W * H; let out;
+    // see-through pixels outside the hole are not colours to copy: they are filled too, then left see-through
+    const h2 = new Float32Array(n); for (let k = 0; k < n; k++) h2[k] = hole[k] || img.data[k * 4 + 3] < 128 ? 1 : 0;
+    if (ai) { if (!window.CRAFTAI) throw new Error('The AI helpers are not here.'); busy('The AI is mending (the first time it downloads, about 30 MB)…'); try { const pre = telea(img, h2); out = await CRAFTAI.inpaint(pre, hole); } finally { busy(); } }
+    else { busy('Mending…'); await new Promise((r) => setTimeout(r, 20)); try { out = telea(img, h2); } finally { busy(); } }
+    const o = copy(img); for (let k = 0; k < n; k++) if (hole[k]) { for (let q = 0; q < 3; q++) o.data[k * 4 + q] = out.data[k * 4 + q]; o.data[k * 4 + 3] = 255; }
+    return o;
+  }
+    // Telea's fast-marching inpainting (2004): the gap is filled from its edge inwards, nearest first; each pixel takes a
+  // weighted mean of the known pixels within a few pixels, each continued by its own slope (value + gradient · offset),
+  // weighted towards the direction the fill is moving, to nearer pixels, and to pixels on the same "level" of the
+  // march. Good for thin cracks, scratches and specks; wide holes need the AI.
+  function telea(img, hole, R = 5, slope = 1) {
+    const W = img.width, H = img.height, n = W * H, s = img.data, F = new Float32Array(n * 3), T = new Float32Array(n).fill(1e6), flag = new Uint8Array(n); // 0 known, 1 band, 2 unknown
+    for (let p = 0; p < n; p++) { for (let c = 0; c < 3; c++) F[p * 3 + c] = s[p * 4 + c]; if (hole[p] > 0.5) flag[p] = 2; }
+    // the band: unknown pixels next to a known one
+    const heap = [], push = (t, p) => { heap.push([t, p]); let i = heap.length - 1; while (i > 0) { const j = (i - 1) >> 1; if (heap[j][0] <= heap[i][0]) break; [heap[i], heap[j]] = [heap[j], heap[i]]; i = j; } };
+    const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === i) break; [heap[i], heap[m]] = [heap[m], heap[i]]; i = m; } } return top; };
+    for (let p = 0; p < n; p++) if (flag[p] === 0) { T[p] = 0; const x = p % W, y = (p / W) | 0; for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const u = x + dx, v = y + dy; if (u >= 0 && v >= 0 && u < W && v < H && flag[v * W + u] === 2) { flag[p] = 1; push(0, p); break; } } }
+    for (let p = 0; p < n; p++) if (flag[p] === 1) flag[p] = 0; // known pixels stay known; the heap holds the edge
+    const solve = (a, b, c, d) => { // the march's arrival time from two neighbours (eikonal)
+      let r = 1e6; const t1 = a, t2 = b; if (Math.min(t1, t2) >= 1e6) return Math.min(c, d) + 1;
+      const s2 = 2 - (t1 - t2) * (t1 - t2); if (s2 > 0) r = (t1 + t2 + Math.sqrt(s2)) / 2; else r = Math.min(t1, t2) + 1; return r; };
+    const tAt = (x, y) => (x < 0 || y < 0 || x >= W || y >= H ? 1e6 : T[y * W + x]);
+    const gradOf = (q, c) => { const x = q % W, y = (q / W) | 0, k = (u, v) => (u >= 0 && v >= 0 && u < W && v < H && flag[v * W + u] !== 2 ? v * W + u : -1); const xr = k(x + 1, y), xl = k(x - 1, y), yd = k(x, y + 1), yu = k(x, y - 1);
+      const gx = xr >= 0 && xl >= 0 ? (F[xr * 3 + c] - F[xl * 3 + c]) / 2 : xr >= 0 ? F[xr * 3 + c] - F[q * 3 + c] : xl >= 0 ? F[q * 3 + c] - F[xl * 3 + c] : 0;
+      const gy = yd >= 0 && yu >= 0 ? (F[yd * 3 + c] - F[yu * 3 + c]) / 2 : yd >= 0 ? F[yd * 3 + c] - F[q * 3 + c] : yu >= 0 ? F[q * 3 + c] - F[yu * 3 + c] : 0; return [gx, gy]; };
+    while (heap.length) {
+      const [, p] = pop(); const x = p % W, y = (p / W) | 0; if (flag[p] === 3) continue; flag[p] = 3; // 0 known, 1 filled and waiting, 2 still to fill, 3 done
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const u = x + dx, v = y + dy; if (u < 0 || v < 0 || u >= W || v >= H) continue; const q = v * W + u; if (flag[q] !== 2) continue;
+        const t = Math.min(solve(tAt(u - 1, v), tAt(u, v - 1), tAt(u + 1, v), tAt(u, v + 1)), solve(tAt(u + 1, v), tAt(u, v - 1), 1e6, 1e6), solve(tAt(u - 1, v), tAt(u, v + 1), 1e6, 1e6), solve(tAt(u + 1, v), tAt(u, v + 1), 1e6, 1e6));
+        T[q] = Math.min(T[q], t);
+        // fill q from the known pixels round it
+        const gTx = (tAt(u + 1, v) < 1e6 && tAt(u - 1, v) < 1e6 ? (tAt(u + 1, v) - tAt(u - 1, v)) / 2 : 0), gTy = (tAt(u, v + 1) < 1e6 && tAt(u, v - 1) < 1e6 ? (tAt(u, v + 1) - tAt(u, v - 1)) / 2 : 0);
+        const acc = [0, 0, 0]; let ws = 0;
+        for (let j = -R; j <= R; j++) for (let i = -R; i <= R; i++) {
+          const a = u + i, b = v + j; if (a < 0 || b < 0 || a >= W || b >= H) continue; const k = b * W + a; if (flag[k] === 2 || (i === 0 && j === 0)) continue; const d2 = i * i + j * j; if (d2 > R * R) continue;
+          const dir = Math.max(1e-6, Math.abs((-i * gTx - j * gTy) / Math.sqrt(d2))), dst = 1 / d2, lev = 1 / (1 + Math.abs(T[q] - T[k])), w = dir * dst * lev;
+          for (let c = 0; c < 3; c++) { const [gx, gy] = gradOf(k, c); acc[c] += w * (F[k * 3 + c] + slope * (gx * -i + gy * -j)); } ws += w;
+        }
+        if (ws > 0) for (let c = 0; c < 3; c++) F[q * 3 + c] = acc[c] / ws;
+        flag[q] = 1; push(T[q], q);
+      }
+    }
+    const out = new ImageData(new Uint8ClampedArray(s), W, H), d = out.data; for (let p = 0; p < n; p++) if (hole[p] > 0.5) for (let c = 0; c < 3; c++) d[p * 4 + c] = Math.round(F[p * 3 + c]);
+    return out;
+  }
+  // a new background, a layer under everything: colour 1, a gradient or round glow from colour 1 to 2, a pattern in the
+  // two colours, or the picture's own edges carried out to fill it
+  async function makeBackground() {
+    const W = cur.width, H = cur.height, c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d'), st = T.bgStyle;
+    if (st === 'solid') { x.fillStyle = T.col; x.fillRect(0, 0, W, H); }
+    else if (st === 'gradient' || st === 'round') { const g = st === 'round' ? x.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.hypot(W, H) / 2) : x.createLinearGradient(0, 0, 0, H); g.addColorStop(0, T.col); g.addColorStop(1, T.col2); x.fillStyle = g; x.fillRect(0, 0, W, H); }
+    else if (st === 'edges') { const F = flat(), hole = new Float32Array(W * H); let n = 0; for (let k = 0; k < hole.length; k++) if (F.data[k * 4 + 3] < 128) { hole[k] = 1; n++; } if (!n) return toast('The picture has no see-through background to carry its edges into.'); busy('Carrying the edges out…'); await new Promise((r) => setTimeout(r, 20)); const out = telea(F, hole); busy(); for (let k = 0; k < hole.length; k++) out.data[k * 4 + 3] = 255; x.putImageData(out, 0, 0); }
+    else { const s2 = Math.max(4, Math.round(Math.min(W, H) / 12)); x.fillStyle = T.col2; x.fillRect(0, 0, W, H); x.fillStyle = T.col;
+      for (let yy = 0; yy < H; yy += s2) for (let xx = 0; xx < W; xx += s2) { const i = Math.round(xx / s2), j = Math.round(yy / s2);
+        if (st === 'checks' && (i + j) % 2) x.fillRect(xx, yy, s2, s2); else if (st === 'stripes' && i % 2) x.fillRect(xx, yy, s2, s2); else if (st === 'dots') { x.beginPath(); x.arc(xx + s2 / 2, yy + s2 / 2, s2 / 4, 0, 7); x.fill(); } } }
+    const img = x.getImageData(0, 0, W, H); img.off = offOf(cur);
+    layerChange(() => { layers.unshift({ name: 'Background', img, vis: true, op: 1, mask: null }); active++; });
+    toast('A new background is the bottom layer (Layers: hide it, fade it, or paint its mask).');
+  }
+  // effects: an outline, a shadow or a glow round what the layer shows, as a layer under it
+  function fxDo(a) {
+    if (!cur) return; const W = cur.width, H = cur.height, r = Math.max(1, +T.fx || 6), src = layerCanvas(L0()), sil = document.createElement('canvas'); sil.width = W; sil.height = H;
+    const sx = sil.getContext('2d'); sx.drawImage(src, 0, 0); sx.globalCompositeOperation = 'source-in'; sx.fillStyle = a === 'shadow' ? '#000' : T.col; sx.fillRect(0, 0, W, H);
+    const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d');
+    if (a === 'outline') { for (let i = 0; i < 32; i++) { const t = (i / 32) * Math.PI * 2; for (const k of [0.5, 1]) x.drawImage(sil, Math.cos(t) * r * k, Math.sin(t) * r * k); } }
+    else if (a === 'shadow') { x.filter = `blur(${r / 2}px)`; x.globalAlpha = 0.55; x.drawImage(sil, r * 0.7, r * 0.7); }
+    else { x.filter = `blur(${r}px)`; for (let i = 0; i < 3; i++) x.drawImage(sil, 0, 0); }
+    const img = x.getImageData(0, 0, W, H), name = { outline: 'Outline', shadow: 'Shadow', glow: 'Glow' }[a]; img.off = offOf(cur);
+    layerChange(() => { layers.splice(active, 0, { name, img, vis: true, op: 1, mask: null }); active++; });
+    toast(`${name}: a layer under this one (Layers: fade it, hide it, or Undo).`);
+  }
+
+  // ------------------------------------------------------------------ vector: the SVG traced from the picture, shown and recoloured before saving
+  // vec: { svg, url, show, stale (the picture changed since), fills: [hex] }
+  let vec = null;
+  const PROFILES = [['icon', 'Icon (few, smooth shapes)'], ['web', 'Web (16 colours)'], ['balanced', 'Balanced'], ['detail', 'Detail'], ['pixelExact', 'Pixel exact (pixel art)']];
+  function traceOf(img) { const o = { profile: T.vprofile || 'icon' }; if (+T.vcolors) o.colors = +T.vcolors; return CRAFT_RASTERTRACE.traceImage(img, o); }
+  const fillsOf = (svg) => [...new Set((svg.match(/fill="#[0-9a-fA-F]{3,8}"/g) || []).map((f) => f.slice(6, -1).toLowerCase()))];
+  function setVec(svg, show = true) { if (vec && vec.url) URL.revokeObjectURL(vec.url); vec = { svg, url: URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' })), show, stale: false, fills: fillsOf(svg) }; draw(); renderPanel(); }
+  async function vecDo(a, v, to) {
+    if (!cur) return;
+    if (a === 'trace') { if (!window.CRAFT_RASTERTRACE) return toast('The tracer is not here.'); busy('Tracing…'); await new Promise((r) => setTimeout(r, 20)); try { const t = traceOf(flat()); setVec(t.svg); toast(`Traced: ${fillsOf(t.svg).length} colours, ${Math.round(t.svg.length / 1024)} KB. Save keeps this SVG (until the picture changes).`); } catch (e) { toast('Tracing failed: ' + (e.message || e)); } finally { busy(); } return; }
+    if (a === 'show') { if (!vec) return vecDo('trace'); vec.show = !vec.show; draw(); renderPanel(); return; }
+    if (a === 'recolour' && vec) { const re = new RegExp(`fill="${v.replace('#', '#')}"`, 'gi'); setVec(vec.svg.replace(re, `fill="${to}"`), true); return; }
+  }
   // the selection commands
   function selDo(a) {
     if (!cur) return; const n = cur.width * cur.height;
     if (a === 'all') return setSel(new Uint8Array(n).fill(1)); if (a === 'none') return setSel(null);
     if (a === 'invert') { const o = new Uint8Array(n); for (let k = 0; k < n; k++) o[k] = sel && sel[k] ? 0 : 1; return setSel(o); }
     if (!sel) return toast('Select a part first.');
+    if (maskEdit && L0().mask && ['erase', 'paint', 'keep', 'only'].includes(a)) { const m = new Uint8Array(L0().mask); for (let k = 0; k < n; k++) if (a === 'only' ? !sel[k] : sel[k]) m[k] = a === 'keep' ? 255 : 0; return layerChange(() => { layers[active] = { ...L0(), mask: m }; }); }
     if (a === 'only') { const o = new Uint8Array(n); for (let k = 0; k < n; k++) o[k] = sel[k] ? 0 : 1; return change(applyMask(cur, o, 'erase')); }
     change(applyMask(cur, sel, a, fromImg(), rgbOf(T.col)));
   }
   async function save(asCopy) {
     putDown(); closeText(); const btns = el.querySelectorAll('[data-ed]'); btns.forEach((b) => { b.disabled = true; });
     try {
-      const png = await new Promise((ok) => canvasOf(cur).toBlob(ok, 'image/png')); let svg = null, saved = null;
-      if (window.CRAFT_RASTERTRACE) { try { svg = CRAFT_RASTERTRACE.traceImage(cur, { profile: 'icon' }).svg; } catch (e) { console.warn('Tracing failed', e); } }
+      const F = flat(), png = await new Promise((ok) => canvasOf(F).toBlob(ok, 'image/png')); let svg = vec && !vec.stale ? vec.svg : null, saved = null;
+      if (!svg && window.CRAFT_RASTERTRACE) { try { svg = traceOf(F).svg; } catch (e) { console.warn('Tracing failed', e); } }
       const fresh = await L.makeItem({ name: item.name, png, svg });
       if (asCopy) { const o = offOf(cur), it = { ...item, ...fresh, id: fresh.id, cutAt: item.cutAt ? { x: item.cutAt.x + o.x, y: item.cutAt.y + o.y, w: cur.width, h: cur.height } : undefined, name: item.name, serverId: undefined, links: undefined, pngFirst: undefined, edited: new Date().toISOString() }; delete it.serverId; delete it.links; delete it.pngFirst; await L.put(it); toast(`Saved as a copy: “${it.name}”.`); saved = it; }
       else { if (!item.pngFirst) { item.pngFirst = item.png; if (item.cutAt) item.cutAtFirst = item.cutAt; } if (item.cutAt) { const o = offOf(cur); item.cutAt = { x: item.cutAt.x + o.x, y: item.cutAt.y + o.y, w: cur.width, h: cur.height }; } Object.assign(item, { png, svg: svg || item.svg, thumb: fresh.thumb, width: fresh.width, height: fresh.height, edited: new Date().toISOString() }); if (item.serverId) item.changed = true; await L.put(item); toast(`Saved “${item.name}”.`); saved = item; }
       past = []; future = []; close(); opts.done && opts.done(saved);
     } catch (e) { console.error(e); toast('Saving failed: ' + (e.message || e)); btns.forEach((b) => { b.disabled = false; }); }
   }
-  async function backToFirst() { if (!item.pngFirst) return; const first = await imageOf(item.pngFirst), a = item.cutAt, f = item.cutAtFirst; first.off = a && f ? { x: f.x - a.x, y: f.y - a.y } : { x: 0, y: 0 }; change(first); toast('Back to the very first version: Save to keep it.'); }
+  async function backToFirst() { if (!item.pngFirst) return; const first = await imageOf(item.pngFirst), a = item.cutAt, f = item.cutAtFirst; first.off = a && f ? { x: f.x - a.x, y: f.y - a.y } : { x: 0, y: 0 }; if (layers.length > 1) layerChange(() => { layers = [layers[active]]; active = 0; }); change(first); toast('Back to the very first version: Save to keep it.'); }
 
   function build() {
     el = document.createElement('div'); el.className = 'slicer editor'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Touch up');
@@ -331,6 +542,10 @@
       const h = e.target.closest('[data-hist]'); if (h) { if (h.dataset.hist === 'undo') undo(); else redo(); return; }
       const z = e.target.closest('[data-z]'); if (z) { const v = z.dataset.z; if (v === 'fit') setZoom(1); else if (v === '100') setZoom(1 / fitScale()); else { const r = desk().getBoundingClientRect(); setZoom(zoom * (v === 'in' ? 1.25 : 0.8), { x: r.left + r.width / 2, y: r.top + r.height / 2 }); } return; }
       const sb = e.target.closest('[data-sel]'); if (sb) { selDo(sb.dataset.sel); return; }
+      const lv = e.target.closest('[data-lvis]'); if (lv) { layerDo('vis', lv.dataset.lvis); return; }
+      const lp = e.target.closest('[data-lpick]'); if (lp) { layerDo('pick', lp.dataset.lpick); return; }
+      const ly = e.target.closest('[data-ly]'); if (ly) { layerDo(ly.dataset.ly); return; }
+      const vc = e.target.closest('[data-vec]'); if (vc) { vecDo(vc.dataset.vec); return; }
       const sw = e.target.closest('[data-sw]'); if (sw) { setT('col', sw.dataset.sw); return; }
       if (e.target.closest('[data-addcol]')) { addColour(); return; }
       if (e.target.closest('[data-swapcol]')) { const c = T.col; T.col = T.col2; setT('col2', c); return; }
@@ -340,14 +555,15 @@
       const a = e.target.closest('[data-ed]'); if (!a) return; if (a.dataset.ed === 'close') { if (opts.onClose) return opts.onClose(); if (past.length && !confirm('Close without saving the changes?')) return; close(); return; }
       if (a.dataset.ed === 'save') return save(false); if (a.dataset.ed === 'copy') return save(true); if (a.dataset.ed === 'first') return backToFirst();
     });
+    el.addEventListener('dblclick', (e) => { const lp = e.target.closest('[data-lpick]'); if (lp && !e.target.closest('[data-lvis]')) layerDo('rename', lp.dataset.lpick); });
     el.addEventListener('contextmenu', (e) => { const sw = e.target.closest('.ed-sw'); if (sw && (T.mine || []).includes(sw.dataset.sw)) { e.preventDefault(); dropColour(sw.dataset.sw); } });
-    el.addEventListener('input', (e) => { const n = e.target.dataset.n; if (n) { T[n] = +e.target.value; keepT(); el.querySelectorAll(`[data-n="${n}"]`).forEach((x) => { if (x !== e.target) x.value = e.target.value; }); if (n === 'fsize' && flt && flt.text) { flt.img = textImg(flt.text); flt.c = null; draw(); } tell(); } if (e.target.matches('[data-col]')) { T.col = e.target.value; keepT(); const c = el.querySelector('.ed-colour code'); if (c) c.textContent = T.col; } });
-    el.addEventListener('change', (e) => { if (e.target.matches('[data-col]')) setT('col', e.target.value); if (e.target.matches('[data-col2]')) setT('col2', e.target.value); const k = e.target.dataset.chk; if (k) setT(k, e.target.checked); if (e.target.dataset.s) setT(e.target.dataset.s, e.target.value); });
+    el.addEventListener('input', (e) => { if (e.target.matches('[data-lop]')) el.querySelectorAll('[data-lop]').forEach((x) => { if (x !== e.target) x.value = e.target.value; }); const n = e.target.dataset.n; if (n) { T[n] = +e.target.value; keepT(); el.querySelectorAll(`[data-n="${n}"]`).forEach((x) => { if (x !== e.target) x.value = e.target.value; }); if (n === 'fsize' && flt && flt.text) { flt.img = textImg(flt.text); flt.c = null; draw(); } tell(); } if (e.target.matches('[data-col]')) { T.col = e.target.value; keepT(); const c = el.querySelector('.ed-colour code'); if (c) c.textContent = T.col; } });
+    el.addEventListener('change', (e) => { if (e.target.matches('[data-lop]')) layerDo('op', +e.target.value); if (e.target.dataset.vfill) vecDo('recolour', e.target.dataset.vfill, e.target.value); if (e.target.matches('[data-col]')) setT('col', e.target.value); if (e.target.matches('[data-col2]')) setT('col2', e.target.value); const k = e.target.dataset.chk; if (k) setT(k, e.target.checked); if (e.target.dataset.s) setT(e.target.dataset.s, e.target.value); });
     document.addEventListener('keydown', (e) => {
       if (!el || el.hidden) return; if (poly) { if (e.key === 'Enter') { e.preventDefault(); closePoly(e.altKey); return; } if (e.key === 'Escape') { e.preventDefault(); poly = null; preview(null); return; } if (e.key === 'Backspace') { e.preventDefault(); poly.pts.pop(); if (!poly.pts.length) { poly = null; preview(null); } return; } }
       if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
       if (flt && !e.ctrlKey && !e.metaKey) { if (e.key === 'Enter') { e.preventDefault(); putDown(); return; } if (e.key === 'Escape' || e.key === 'Delete') { e.preventDefault(); dropFloat(); return; } }
-      if (e.ctrlKey || e.metaKey) { const k = e.key.toLowerCase(); if (k === 'c' && !String(getSelection())) { e.preventDefault(); copySel(false); } else if (k === 'x') { e.preventDefault(); copySel(true); } else if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); } else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); } else if (k === 'a') { e.preventDefault(); selDo('all'); } else if (k === 'd') { e.preventDefault(); selDo('none'); } else if (k === 'i' && e.shiftKey) { e.preventDefault(); selDo('invert'); } return; }
+      if (e.ctrlKey || e.metaKey) { const k = e.key.toLowerCase(); if (k === 'c' && !String(getSelection())) { e.preventDefault(); copySel(false); } else if (k === 'x') { e.preventDefault(); copySel(true); } else if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); } else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); } else if (k === 'a') { e.preventDefault(); selDo('all'); } else if (k === 'd') { e.preventDefault(); selDo('none'); } else if (k === 'i' && e.shiftKey) { e.preventDefault(); selDo('invert'); } else if (k === 'j') { e.preventDefault(); layerDo(sel ? 'fromsel' : 'dup'); } return; }
       if (sel && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); selDo('erase'); } else if (sel && e.key === 'Escape') { e.preventDefault(); selDo('none'); }
     });
     document.addEventListener('paste', (e) => { if (!el || el.hidden || !cur || /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return; e.preventDefault(); const f = [...(e.clipboardData ? e.clipboardData.files : [])].find((x) => x.type.startsWith('image/')); pasteNow(f || null); });
@@ -362,13 +578,13 @@
   async function open(it, o = {}) {
     if (!it || !it.png) return o.toast && o.toast('Only pictures (PNG) can be touched up here.');
     opts = o; item = it; if (!el) build(); el.classList.toggle('embedded', !!o.mount); if (o.mount) o.mount.insertBefore(el, o.before || null); else document.body.append(el);
-    el.querySelector('[data-ed=close]').textContent = o.mount ? 'Back to the library' : 'Close'; el.hidden = false; past = []; future = []; zoom = 1; poly = null; sel = null; selView = null; flt = null; closeText();
+    el.querySelector('[data-ed=close]').textContent = o.mount ? 'Back to the library' : 'Close'; el.hidden = false; past = []; future = []; zoom = 1; poly = null; sel = null; selView = null; flt = null; closeText(); maskEdit = false; vec = null;
     el.querySelectorAll('[data-ed]').forEach((b) => { b.disabled = false; });
-    cur = await imageOf(it.png); cur.off = { x: 0, y: 0 }; orig = copy(cur); sheetFull = await sheetOf(it); if (!sheetPart() && T.from === 'sheet') T.from = 'opened';
+    cur = await imageOf(it.png); cur.off = { x: 0, y: 0 }; orig = copy(cur); layers = [{ name: 'Picture', img: cur, vis: true, op: 1, mask: null }]; active = 0; sheetFull = await sheetOf(it); if (!sheetPart() && T.from === 'sheet') T.from = 'opened';
     el.querySelector('.ed-name').textContent = it.name; renderPanel(); draw(); status(); const d = desk(); d.scrollLeft = d.scrollTop = 0;
   }
   function close() { if (el) el.hidden = true; poly = null; preview(null); }
   // shown again (its tab chosen again): the picture and its changes as they were
   function show() { if (el && item) { el.hidden = false; draw(); status(); } }
-  window.ClipArtEditor = { open, close, show, save, undo, redo, T: () => T, setT, addColour, dropColour, FONTS, palette: () => (cur ? pictureColours() : []), copy: () => copySel(false), cut: () => copySel(true), paste: () => pasteNow(), selDo, hasSel: () => !!sel, floating: () => !!flt, putDown, isOpen: () => !!(el && !el.hidden && item), item: () => item, changed: () => past.length > 0, CLEAN, applyShape, wand, regionOf, applyMask, _state: () => ({ sel: selCount(), tool: T.tool, col: T.col, w: cur && cur.width, h: cur && cur.height, past: past.length, sheet: sheetPart(), off: cur ? offOf(cur) : null, solid: cur ? (() => { let n = 0; for (let i = 3; i < cur.data.length; i += 4) if (cur.data[i] >= 24) n++; return Math.round((100 * n) / (cur.width * cur.height)); })() : 0 }) };
+  window.ClipArtEditor = { open, close, show, save, undo, redo, layerDo, bgDo, fxDo, vecDo, layers: () => layers.map((l, i) => ({ name: l.name, vis: l.vis, op: l.op, mask: !!l.mask, active: i === active })), maskEditing: () => maskEdit, busy: () => busyNow, mendSel: async (ai) => { if (!sel) return toast('Select the part to mend first.'); const h = new Float32Array(sel.length); for (let k = 0; k < sel.length; k++) h[k] = sel[k]; try { change(await mend(cur, h, ai)); } catch (e) { busy(); toast('Mending failed: ' + (e.message || e)); } }, PROFILES, _flat: () => flat(), hasVec: () => !!vec, vecShown: () => !!(vec && vec.show), T: () => T, setT, addColour, dropColour, FONTS, palette: () => (cur ? pictureColours() : []), copy: () => copySel(false), cut: () => copySel(true), paste: () => pasteNow(), selDo, hasSel: () => !!sel, floating: () => !!flt, putDown, isOpen: () => !!(el && !el.hidden && item), item: () => item, changed: () => past.length > 0, CLEAN, applyShape, wand, regionOf, applyMask, _state: () => ({ sel: selCount(), tool: T.tool, col: T.col, w: cur && cur.width, h: cur && cur.height, past: past.length, sheet: sheetPart(), off: cur ? offOf(cur) : null, solid: cur ? (() => { let n = 0; for (let i = 3; i < cur.data.length; i += 4) if (cur.data[i] >= 24) n++; return Math.round((100 * n) / (cur.width * cur.height)); })() : 0 }) };
 })();

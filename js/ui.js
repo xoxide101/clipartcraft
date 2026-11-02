@@ -632,6 +632,25 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     pick: '<path d="M15 3l6 6-3 3-6-6Z" class="fill"/><path d="M13 8l-8 8v3h3l8-8"/>',
     bold: '<path d="M7 4h6a4 4 0 0 1 0 8H7ZM7 12h7a4 4 0 0 1 0 8H7Z"/>',
     down: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
+    layerNew: '<path d="m12 4 9 5-9 5-9-5Z" class="fill"/><path d="m3 14 9 5 9-5"/><path d="M19 2v5M16.5 4.5h5"/>',
+    layerSel: '<path d="m12 4 9 5-9 5-9-5Z" stroke-dasharray="3 2"/><path d="m3 14 9 5 9-5"/>',
+    up: '<path d="M12 19V5M6 11l6-6 6 6"/>', downL: '<path d="M12 5v14M6 13l6 6 6-6"/>',
+    merge: '<path d="m12 3 9 5-9 5-9-5Z" class="fill"/><path d="M12 15v6M9 18l3 3 3-3"/>',
+    flatten: '<path d="M3 18h18"/><path d="m12 4 8 5-8 5-8-5Z" class="fill"/>',
+    mask: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="12" cy="12" r="5" class="fill"/>',
+    maskApply: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m8 12 3 3 5-6"/>',
+    bgEdge: '<rect x="3" y="4" width="18" height="16" rx="2" stroke-dasharray="3 2"/><path d="M8 17c0-4 2-8 4-8s4 4 4 8Z" class="fill"/>',
+    bgAi: '<rect x="3" y="4" width="18" height="16" rx="2" stroke-dasharray="3 2"/><path d="M12 8l1.2 3 3 1.2-3 1.2L12 16l-1.2-2.6-3-1.2 3-1.2Z" class="fill"/>',
+    complete: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 14l5-4 4 3 4-5 5 4"/><rect x="13" y="13" width="5" height="4" stroke-dasharray="2 1.5"/>',
+    completeAi: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 7l1 2.4 2.4 1-2.4 1L15 14l-1-2.6-2.4-1 2.4-1Z" class="fill"/>',
+    bgNew: '<rect x="3" y="4" width="18" height="16" rx="2" class="fill"/><path d="M12 9v6M9 12h6"/>',
+    mend: '<path d="M4 20l7-7"/><path d="M14 4l6 6-5 5-6-6Z" class="fill"/><path d="M5 5h3M5 9h2"/>',
+    mendAi: '<path d="M4 20l7-7"/><path d="M14 4l6 6-5 5-6-6Z" class="fill"/><path d="M6 3l.7 1.6L8.3 5l-1.6.7L6 7.3l-.7-1.6L3.7 5l1.6-.4Z"/>',
+    outline: '<circle cx="12" cy="12" r="5" class="fill"/><circle cx="12" cy="12" r="8.5"/>',
+    shadow: '<rect x="8" y="8" width="12" height="12" rx="2" class="fill" opacity=".45"/><rect x="4" y="4" width="12" height="12" rx="2"/>',
+    glow: '<circle cx="12" cy="12" r="4" class="fill"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/>',
+    trace: '<path d="M4 18C8 6 16 6 20 18"/><circle cx="4" cy="18" r="1.6" class="fill"/><circle cx="12" cy="9" r="1.6" class="fill"/><circle cx="20" cy="18" r="1.6" class="fill"/>',
+    eye: '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3" class="fill"/>',
   };
   // a tool button: pressed while that tool is in use
   const tool = (label, icon, set, title) => B(label, icon, () => Object.entries(set).forEach(([k, v]) => E().setT(k, v)), { title: title || label, iconOnly: true, disabled: off, pressed: () => !off() && Object.entries(set).every(([k, v]) => E().T()[k] === v) });
@@ -642,6 +661,16 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     r.addEventListener('input', () => { t.value = r.value; set(r.value); }); t.addEventListener('change', () => set(t.value)); t.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') set(t.value); });
     w.sync = () => { if (!E()) return; const v = E().T()[n]; r.value = v; if (document.activeElement !== t) t.value = v; r.disabled = t.disabled = off(); }; return w;
   }
+  const busyOff = () => off() || !!E().busy(), curLayer = () => (off() ? {} : E().layers().find((l) => l.active) || {});
+  // a slider for something that is not one of the tool settings (how solid the layer is)
+  function fSlide(label, min, max, get, set, title) { const w = rSlide('_', label, min, max, title), [r, t] = w.querySelectorAll('input'); r.oninput = null;
+    const r2 = r.cloneNode(true), t2 = t.cloneNode(true); r.replaceWith(r2); t.replaceWith(t2); r2.addEventListener('input', () => { t2.value = r2.value; }); r2.addEventListener('change', () => { if (!off()) set(+r2.value); }); t2.addEventListener('change', () => { if (!off()) set(+t2.value); }); t2.addEventListener('keydown', (e) => e.stopPropagation());
+    w.sync = () => { if (!E()) return; const v = off() ? max : get(); if (document.activeElement !== r2) r2.value = v; if (document.activeElement !== t2) t2.value = v; r2.disabled = t2.disabled = off(); }; return w; }
+  const opSlide = fSlide('Solid %', 0, 100, () => Math.round((curLayer().op ?? 1) * 100), (v) => E().layerDo('op', v), 'How solid the layer is (100: fully; 0: not seen)');
+  const pickSel = (k, list, title) => { const el = document.createElement('select'); el.className = 'input rb-font'; el.title = title; el.innerHTML = list.map(([v, n]) => `<option value="${v}">${n}</option>`).join(''); el.addEventListener('change', () => { if (!off()) E().setT(k, el.value); }); el.sync = () => { if (E()) { el.value = E().T()[k]; el.disabled = off(); } }; return el; };
+  const bgSel = pickSel('bgStyle', [['solid', 'Colour 1'], ['gradient', 'Gradient 1 → 2'], ['round', 'Round 1 → 2'], ['checks', 'Checks'], ['stripes', 'Stripes'], ['dots', 'Dots'], ['edges', 'Its own edges, carried out']], 'The new background: colours 1 and 2 are on the Touch up tab');
+  const vecSel = pickSel('vprofile', [['icon', 'Icon (smooth)'], ['web', 'Web (16 colours)'], ['balanced', 'Balanced'], ['detail', 'Detail'], ['pixelExact', 'Pixel exact']], 'How the SVG is traced');
+  const stepSlide = rSlide('bgStep', 'Edge', 2, 60, 'How big a step of colour still counts as background (bigger: more goes)'), fxSlide = rSlide('fx', 'Size', 1, 60, 'How wide the outline, shadow or glow is (pixels)'), vcSlide = rSlide('vcolors', 'Colours', 0, 64, 'How many colours the SVG has (0: as the picture needs)');
   const sizeSlide = rSlide('size', 'Brush', 1, 200, 'Brush, eraser and restore size (pixels across)'), tolSlide = rSlide('tol', 'Colour match', 1, 200, 'How close a colour counts, for the magic wand and Fill'), fsSlide = rSlide('fsize', 'Text', 6, 400, 'How tall the words are (pixels)');
   const fontSel = document.createElement('select'); fontSel.className = 'input rb-font'; fontSel.title = 'Font for Text';
   fontSel.addEventListener('change', () => { if (!off()) E().setT('font', fontSel.value); });
@@ -656,7 +685,8 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
   rCols.addEventListener('click', (e) => { if (off()) return; const s = e.target.closest('[data-sw]'); if (s) return E().setT('col', s.dataset.sw); if (e.target.closest('[data-radd]')) E().addColour(); });
   rCols.addEventListener('contextmenu', (e) => { const s = e.target.closest('[data-mine]'); if (s && !off()) { e.preventDefault(); E().dropColour(s.dataset.sw); } });
   rCols.addEventListener('change', (e) => { const k = e.target.dataset.rc; if (k && !off()) E().setT(k, e.target.value); });
-  function syncTouchTab() { if (!E()) return; if (!fontSel.options.length) fontSel.innerHTML = E().FONTS.map((f) => `<option style="font-family:'${f}'">${f}</option>`).join(''); fontSel.value = E().T().font; fontSel.disabled = off(); [sizeSlide, tolSlide, fsSlide].forEach((w) => w.sync()); drawCols(); if (typeof ribbon !== 'undefined') ribbon.refresh(); }
+  function syncTouchTab() { if (!E()) return; if (!fontSel.options.length) fontSel.innerHTML = E().FONTS.map((f) => `<option style="font-family:'${f}'">${f}</option>`).join(''); fontSel.value = E().T().font; fontSel.disabled = off(); [sizeSlide, tolSlide, fsSlide, opSlide, stepSlide, fxSlide, vcSlide, bgSel, vecSel].forEach((w) => w.sync()); drawCols(); if (typeof ribbon !== 'undefined') ribbon.refresh(); }
+  [opSlide, stepSlide, fxSlide, vcSlide].forEach((w) => w.classList.add('narrow'));
   document.addEventListener('clipart-editor', syncTouchTab);
   const ribbon = window.CraftRibbon({
     mount: $('app'), storageKey: 'clipartcraft',
@@ -681,6 +711,16 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
         ['Sizes', [{ col: [{ el: sizeSlide }, { el: tolSlide }, { el: fsSlide }] }]],
         ['Colours', [{ el: rCols }]],
       ] },
+      { id: 'fix', label: 'Layers & fixes', hue: '#be185d', onSelect: () => enterTouch(), groups: [
+        ['Layers', [{ col: [{ row: [B('New layer', TI.layerNew, () => E().layerDo('new'), { iconOnly: true, disabled: off }), B('Duplicate the layer', I.duplicate || I.copy, () => E().layerDo('dup'), { iconOnly: true, key: 'Ctrl+J', disabled: off }), B('Layer from the selection', TI.layerSel, () => E().layerDo('fromsel'), { iconOnly: true, key: 'Ctrl+J', disabled: () => off() || !E().hasSel() }), B('Delete the layer', I.trash, () => E().layerDo('del'), { iconOnly: true, disabled: () => off() || E().layers().length < 2 })] },
+          { row: [B('Layer up', TI.up, () => E().layerDo('up'), { iconOnly: true, disabled: off }), B('Layer down', TI.downL, () => E().layerDo('down'), { iconOnly: true, disabled: off }), B('Merge down', TI.merge, () => E().layerDo('merge'), { iconOnly: true, disabled: () => off() || !!(E().layers()[0] || {}).active }), B('Flatten', TI.flatten, () => E().layerDo('flatten'), { iconOnly: true, disabled: () => off() || E().layers().length < 2 })] }, { el: opSlide }] }]],
+        ['Mask', [{ col: [B('Mask', TI.mask, () => E().layerDo('mask'), { title: 'Add a mask (from the selection, if any): hides parts of the layer without losing them. With a mask: paint it (eraser and brush hide, restore brush shows, a gradient fades)', pressed: () => !off() && E().maskEditing(), disabled: off }), B('Apply the mask', TI.maskApply, () => E().layerDo('maskapply'), { disabled: () => off() || !curLayer().mask }), B('Delete the mask', I.trash, () => E().layerDo('maskdel'), { disabled: () => off() || !curLayer().mask })] }]],
+        ['Background', [{ col: [{ row: [B('Remove the background by its edge', TI.bgEdge, () => E().bgDo('edge'), { iconOnly: true, title: 'Remove by edge: the background hidden by a mask, found from the picture’s edges following small steps of colour (Edge: how big a step)', disabled: busyOff }), B('Remove the background with AI', TI.bgAi, () => E().bgDo('ai'), { iconOnly: true, title: 'Remove with AI: the AI finds the subject and hides the rest with a mask (the first time downloads about 5 MB)', disabled: busyOff }), B('Select the background', TI.box, () => E().bgDo('select'), { iconOnly: true, title: 'Select the background (found by its edge), to mend, fill or erase it', disabled: busyOff }), '|',
+            B('Complete the background', TI.complete, () => E().bgDo('complete'), { iconOnly: true, title: 'Complete it: the see-through gaps (or the selection) filled from the colours round them', disabled: busyOff }), B('Complete the background with AI', TI.completeAi, () => E().bgDo('complete-ai'), { iconOnly: true, title: 'Complete with AI: the AI fills the see-through gaps (or the selection) to match (the first time downloads about 30 MB)', disabled: busyOff }), '|', B('New background', TI.bgNew, () => E().bgDo('new'), { iconOnly: true, title: 'New background: a bottom layer in the style chosen below (colours 1 and 2 are on the Touch up tab)', disabled: busyOff })] }, { el: bgSel }, { el: stepSlide }] }]],
+        ['Mend', [{ col: [B('Mend', TI.mend, () => E().mendSel(false), { title: 'Fill the selection from what is round it (quick; best for thin gaps and smooth backgrounds)', disabled: () => busyOff() || !E().hasSel() }), B('Mend with AI', TI.mendAi, () => E().mendSel(true), { title: 'The AI fills the selection to match what is round it (missing parts, holes, marks)', disabled: () => busyOff() || !E().hasSel() })] }]],
+        ['Effects', [{ col: [{ row: [B('Outline', TI.outline, () => E().fxDo('outline'), { iconOnly: true, title: 'Outline in colour 1, round what the layer shows (a layer under it)', disabled: off }), B('Shadow', TI.shadow, () => E().fxDo('shadow'), { iconOnly: true, title: 'A soft shadow (a layer under it)', disabled: off }), B('Glow', TI.glow, () => E().fxDo('glow'), { iconOnly: true, title: 'A glow in colour 1 (a layer under it)', disabled: off })] }, { el: fxSlide }] }]],
+        ['Vector', [{ col: [{ el: vecSel }, { el: vcSlide }, { row: [B('Trace now', TI.trace, () => E().vecDo('trace'), { title: 'Trace the SVG now and see it (Save keeps it, until the picture changes)', disabled: busyOff }), B('Show the vector', TI.eye, () => E().vecDo('show'), { iconOnly: true, pressed: () => !off() && E().vecShown(), disabled: off })] }] }]],
+      ] },
       { id: 'server', label: 'Server', hue: '#0f766e', onSelect: () => leaveTouch(), groups: [
         ['Connect', [B('Connect…', IK.server, () => act('connect'), { big: true, title: 'Use a clip-art server: on this computer (server/start-server.cmd) or on a web host. Every picture then has a real http link any app can use.' }), { col: [B('Open the server page', IK.link, () => act('open-server')), B('Stop using it', IK.link, () => act('disconnect'), { title: 'Forget the server (nothing is deleted anywhere)' })] }]],
         ['Share', [B('Sync', IK.sync, () => act('sync'), { big: true, title: 'Get what is new on the server, and send what is new here' }), B('Match the server', IK.get, () => act('match'), { big: true, title: 'The server is the master copy: this browser gets everything on it, and pictures deleted there go here too (pictures never sent are asked about)' }), B('Send to the server', IK.send, () => act('push'), { big: true, title: 'The chosen items (or everything) go to the server' }), B('Get from the server', IK.get, () => act('pull'), { big: true, title: 'Everything on the server comes into this library' })]],
@@ -704,7 +744,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
   function touchUp(it) { touchWant = it || null; ribbon.select('touch', true); }
   const touchOpts = () => ({ toast, mount: app, before: touchEmpty, onClose: () => ribbon.select('home', true),
     // saved: the library shows it chosen, and Touch up goes on with it
-    done: async (saved) => { await reload(); if (!saved) return; sel = new Set([saved.id]); render(); if (ribbon.current() === 'touch') await ClipArtEditor.open((await L.all()).find((x) => x.id === saved.id) || saved, touchOpts()); } });
+    done: async (saved) => { await reload(); if (!saved) return; sel = new Set([saved.id]); render(); if (['touch', 'fix'].includes(ribbon.current())) await ClipArtEditor.open((await L.all()).find((x) => x.id === saved.id) || saved, touchOpts()); } });
   async function enterTouch() {
     setTimeout(syncTouchTab, 0);
     let it = touchWant; touchWant = null;
@@ -719,7 +759,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
   }
   function leaveTouch() { touchEmpty.hidden = true; if (ClipArtEditor.isOpen()) ClipArtEditor.close(); app.querySelector('.work').hidden = false; syncTouchTab(); }
   // (the page always opens on the library, not on Touch up)
-  if (ribbon.current() === 'touch') ribbon.select('home', true);
+  if (['touch', 'fix'].includes(ribbon.current())) ribbon.select('home', true);
   const ic = document.createElement('link'); ic.rel = 'icon'; ic.href = 'data:image/svg+xml,' + encodeURIComponent(LOGO.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ')); document.head.append(ic);
   document.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') { e.preventDefault(); act('add'); } });
 

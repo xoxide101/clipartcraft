@@ -1,7 +1,7 @@
 {
   "name": "clipartcraft-ai-libs",
   "private": true,
-  "description": "Bundles Transformers.js (CLIP, to name pictures by what is in them) into lib/craft-ai-libs.js: npm install, then npm run build",
+  "description": "Bundles Transformers.js (naming pictures, background cut-out, repair) into lib/craft-ai-libs.js: npm install, then npm run build",
   "scripts": {
     "build": "esbuild entry.js --bundle --minify --format=iife --legal-comments=eof --platform=browser --outfile=../craft-ai-libs.js"
   },

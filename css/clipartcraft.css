@@ -383,3 +383,16 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 .rb-slide input[type=range] { height: 18px; margin: 0; }
 .crb-col:has(> .crb-el .rb-slide) { gap: 2px; }
 .crb .crb-row .rb-font.input { height: 22px; min-height: 0; padding-top: 0; padding-bottom: 0; }
+.ed-layers { display: grid; gap: 2px; margin-bottom: 6px; }
+.ed-layer { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border: 1px solid var(--line, #ccc); border-radius: 6px; cursor: pointer; font-size: 12px; }
+.ed-layer[aria-selected=true] { border-color: var(--accent, #7c3aed); background: color-mix(in srgb, var(--accent, #7c3aed) 14%, transparent); }
+.ed-layer canvas { width: 40px; height: 30px; background: repeating-conic-gradient(#c9ccd6 0 25%, #f4f5f8 0 50%) 0 0 / 8px 8px; border-radius: 3px; flex: none; }
+.ed-layer .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed-eye { border: 0; background: none; cursor: pointer; width: 22px; color: inherit; font-size: 14px; padding: 0; }
+.ed-mtag { font-style: normal; font-size: 10px; padding: 0 4px; border: 1px solid currentColor; border-radius: 3px; opacity: .7; }
+.ed-mtag.on { background: #e11d48; color: #fff; border-color: #e11d48; opacity: 1; }
+label.ed-sw { display: inline-block; position: relative; overflow: hidden; }
+label.ed-sw input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.rb-slide.narrow { grid-template-columns: 50px 76px 46px; }
+.crb-row .crb-sep { margin: 0 3px; }
+.crb .rb-font.input { height: 22px; min-height: 0; padding-top: 0; padding-bottom: 0; }

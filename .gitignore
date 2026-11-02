@@ -7,3 +7,4 @@ server/node_modules/
 server/debug.log
 server/debug.log.old
 config.js
+lib/ai-build/node_modules/
