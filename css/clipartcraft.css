@@ -310,7 +310,9 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 .dna:hover { border-color: var(--line); }
 /* Touch up (js/editor.js) */
 .ed-clean { display: grid; gap: 5px; }
-.ed-crow { display: grid; grid-template-columns: auto 64px 1fr; gap: 6px; align-items: center; }
+.ed-crow { display: grid; grid-template-columns: 1fr 64px; gap: 2px 6px; align-items: center; }
+.ed-crow .btn { justify-self: start; }
+.ed-crow .hint { grid-column: 1 / -1; margin-top: -2px; }
 .ed-crow .input { padding: 3px 6px; min-width: 0; }
 .ed-crow .hint { font-size: 11px; }
 .editor .ed-canvas { box-shadow: 0 4px 20px rgba(0,0,0,.25); }

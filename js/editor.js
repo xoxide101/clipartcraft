@@ -71,21 +71,26 @@
   };
 
   // ------------------------------------------------------------------ the window
-  let el = null, item = null, cur = null, orig = null, sheetPart = null, past = [], future = [], opts = {}, zoom = 1, bgView = 'check';
+  // cur.off: where the picture now starts, in the pixels of the picture as opened (a trim moves it); sheetFull: its whole
+  // sheet (when the working area has it), with item.cutAt saying where the picture as opened sat on it
+  let el = null, item = null, cur = null, orig = null, sheetFull = null, past = [], future = [], opts = {}, zoom = 1, bgView = 'check';
+  const offOf = (img) => img.off || { x: 0, y: 0 };
+  const crop = (img, x, y, w, h) => { const o = new ImageData(w, h); for (let yy = 0; yy < h; yy++) for (let xx = 0; xx < w; xx++) { const sx = x + xx, sy = y + yy; if (sx < 0 || sy < 0 || sx >= img.width || sy >= img.height) continue; const i = (sy * img.width + sx) * 4, k = (yy * w + xx) * 4; o.data[k] = img.data[i]; o.data[k + 1] = img.data[i + 1]; o.data[k + 2] = img.data[i + 2]; o.data[k + 3] = img.data[i + 3]; } return o; };
   const T = { tool: 'shape', shape: 'lasso', op: 'erase', side: 'in', from: 'opened', size: 8, tol: 30 };
   try { Object.assign(T, JSON.parse(localStorage.getItem('clipartcraft-editor') || '{}')); } catch (e) { /* blocked */ }
   const keepT = () => { try { localStorage.setItem('clipartcraft-editor', JSON.stringify(T)); } catch (e) { /* blocked */ } };
-  const fromImg = () => (T.from === 'sheet' && sheetPart ? sheetPart : orig);
-  function change(next, keepSize) { past.push(cur); if (past.length > 50) past.shift(); future = []; if (next.shift && (sheetPart || orig)) { /* a trim: the sources are cut the same way */ const s = next.shift, cut = (img) => { const o = new ImageData(next.width, next.height); for (let y = 0; y < next.height; y++) o.data.set(img.data.subarray(((y + s.y) * img.width + s.x) * 4, ((y + s.y) * img.width + s.x + next.width) * 4), y * next.width * 4); return o; }; orig = cut(orig); if (sheetPart) sheetPart = cut(sheetPart); }
-    cur = next; draw(); status(); }
-  function undo() { if (!past.length) return; future.push(cur); cur = past.pop(); if (cur.width !== orig.width || cur.height !== orig.height) toast('That was a trim: Restore now comes from the trimmed picture.'); draw(); status(); }
+  // where Restore takes its pixels from, lined up with the picture as it is now
+  const fromImg = () => { const o = offOf(cur); return T.from === 'sheet' && sheetFull && item.cutAt ? crop(sheetFull, item.cutAt.x + o.x, item.cutAt.y + o.y, cur.width, cur.height) : crop(orig, o.x, o.y, cur.width, cur.height); };
+  const sheetPart = () => !!(sheetFull && item && item.cutAt);
+  function change(next) { past.push(cur); if (past.length > 50) past.shift(); future = []; const o = offOf(cur); next.off = next.shift ? { x: o.x + next.shift.x, y: o.y + next.shift.y } : next.off || o; cur = next; draw(); status(); }
+  function undo() { if (!past.length) return; future.push(cur); cur = past.pop(); draw(); status(); }
   function redo() { if (!future.length) return; past.push(cur); cur = future.pop(); draw(); status(); }
   const toast = (m) => opts.toast && opts.toast(m);
   const BGS = { check: 'repeating-conic-gradient(#c9ccd6 0 25%, #f4f5f8 0 50%) 0 0 / 16px 16px', white: '#fff', black: '#000', grey: '#808080', dark: 'repeating-conic-gradient(#2b2d36 0 25%, #22242c 0 50%) 0 0 / 16px 16px' };
   function draw() { if (!el || !cur) return; const c = el.querySelector('.ed-canvas'); c.width = cur.width; c.height = cur.height; c.getContext('2d').putImageData(cur, 0, 0); c.style.background = BGS[bgView]; applyZoom(); undoButtons(); }
   function undoButtons() { el.querySelectorAll('[data-hist=undo]').forEach((b) => { b.disabled = !past.length; }); el.querySelectorAll('[data-hist=redo]').forEach((b) => { b.disabled = !future.length; }); }
   function status() { const s = el.querySelector('.sl-status'); if (!s || !cur) return; let solid = 0; for (let i = 3; i < cur.data.length; i += 4) if (cur.data[i] >= 24) solid++;
-    s.innerHTML = `<span><b>${esc(item.name)}</b></span><span>${cur.width} × ${cur.height} px</span><span>${Math.round((100 * solid) / (cur.width * cur.height))}% picture, the rest see-through</span><span>${sheetPart ? 'its sheet is in the working area: Restore can bring parts back from it' : 'Restore brings back the picture as it was opened'}</span><span class="grow"></span><span>zoom ${Math.round(fitScale() * zoom * 100)}%</span>`; }
+    s.innerHTML = `<span><b>${esc(item.name)}</b></span><span>${cur.width} × ${cur.height} px</span><span>${Math.round((100 * solid) / (cur.width * cur.height))}% picture, the rest see-through</span><span>${sheetPart() ? 'its sheet is in the working area: Restore can bring parts back from it' : 'Restore brings back the picture as it was opened'}</span><span class="grow"></span><span>zoom ${Math.round(fitScale() * zoom * 100)}%</span>`; }
   const desk = () => el.querySelector('.sl-desk');
   function fitScale() { const d = desk(); return cur ? Math.min((d.clientWidth - 40) / cur.width, (d.clientHeight - 40) / cur.height, 8) : 1; }
   function applyZoom(at) { const c = el.querySelector('.ed-canvas'), d = desk(), before = c.getBoundingClientRect(), k = fitScale() * zoom; c.style.width = `${cur.width * k}px`; c.style.height = `${cur.height * k}px`; c.style.imageRendering = k > 2 ? 'pixelated' : 'auto';
@@ -103,7 +108,7 @@
         <p class="hint">${T.shape === 'lasso' ? 'Drag to draw freehand, or click (Shift-click) for straight corners; close on the first corner, a double-click or Enter. Backspace takes a corner off, Escape gives it up.' : 'Drag the shape over the part.'} Erase outside = keep only what you drew round.</p>`
       : T.tool === 'brush' ? `<div class="touch-opts"><div class="field"><span>Do</span>${seg('op', [['erase', 'Erase'], ['keep', 'Restore']])}</div><label class="field"><span>Size (pixels across)</span><input class="input" type="number" min="1" max="200" data-n="size" value="${T.size}"></label></div><p class="hint">Paint over the part. Alt: the other way (erase ⇄ restore).</p>`
       : `<div class="touch-opts"><label class="field"><span>How close a colour counts</span><input class="input" type="number" min="1" max="200" data-n="tol" value="${T.tol}"></label></div><p class="hint">Click a patch to make it and everything joined to it of about that colour see-through.</p>`}
-      ${T.op === 'keep' && T.tool !== 'wand' ? `<div class="field"><span>Restore from</span>${seg('from', [['opened', 'The picture as opened'], ...(sheetPart ? [['sheet', 'Its sheet']] : [])])}</div>` : ''}
+      ${T.op === 'keep' && T.tool !== 'wand' ? `<div class="field"><span>Restore from</span>${seg('from', [['opened', 'The picture as opened'], ...(sheetPart() ? [['sheet', 'Its sheet']] : [])])}</div>` : ''}
       <div class="field"><span>Clean up <small class="hint">(the whole picture, one click each)</small></span><div class="ed-clean">${Object.entries(CLEAN).map(([k, c]) => `<div class="ed-crow"><button class="btn outline sm" type="button" data-clean="${k}" title="${esc(c.hint)}">${c.label}</button><input class="input" type="number" data-cv="${k}" value="${T['cv_' + k] ?? c.value}" title="${esc(c.unit)}"><small class="hint">${esc(c.unit)}</small></div>`).join('')}</div></div>
       <div class="field"><span>Background to look against</span>${(() => `<div class="seg" role="group">${[['check', 'Checks'], ['dark', 'Dark'], ['white', 'White'], ['grey', 'Grey'], ['black', 'Black']].map(([v, l]) => `<button class="btn" type="button" data-bg="${v}" aria-pressed="${bgView === v}">${l}</button>`).join('')}</div>`)()}<small class="hint">Specks and halos show up best against the opposite of the picture.</small></div>
       <div class="btns"><button class="btn primary" type="button" data-ed="save">Save</button><button class="btn outline" type="button" data-ed="copy">Save as a copy</button>${item && item.pngFirst ? '<button class="btn ghost" type="button" data-ed="first">Back to the original</button>' : ''}</div>
@@ -123,7 +128,7 @@
   function onDown(e) {
     if (e.button !== 0 || !cur) return; const p = ptOf(e); e.preventDefault(); e.target.setPointerCapture(e.pointerId);
     if (T.tool === 'wand') { const x = Math.floor(p.x), y = Math.floor(p.y); if (x >= 0 && y >= 0 && x < cur.width && y < cur.height) change(wand(cur, x, y, +T.tol || 30)); return; }
-    if (T.tool === 'brush') { past.push(cur); if (past.length > 50) past.shift(); future = []; cur = copy(cur); drag = { brush: true, last: p, op: e.altKey ? (T.op === 'erase' ? 'keep' : 'erase') : T.op }; brush(cur, p.x, p.y, p.x, p.y, (+T.size || 8) / 2, drag.op, fromImg()); draw(); return; }
+    if (T.tool === 'brush') { past.push(cur); if (past.length > 50) past.shift(); future = []; { const o = offOf(cur); cur = copy(cur); cur.off = o; } drag = { brush: true, last: p, op: e.altKey ? (T.op === 'erase' ? 'keep' : 'erase') : T.op }; brush(cur, p.x, p.y, p.x, p.y, (+T.size || 8) / 2, drag.op, fromImg()); draw(); return; }
     if (T.shape === 'lasso') { if (poly && poly.pts.length >= 3 && Math.hypot(p.x - poly.pts[0][0], p.y - poly.pts[0][1]) <= 10 * p.k) { closePoly(e.altKey); return; } if (!poly) poly = { pts: [[p.x, p.y]], free: null }; else poly.pts.push([p.x, p.y]); drag = { lasso: true, p0: p, moved: false }; return; }
     drag = { p0: p, moved: false };
   }
@@ -148,12 +153,12 @@
       const png = await new Promise((ok) => canvasOf(cur).toBlob(ok, 'image/png')); let svg = null;
       if (window.CRAFT_RASTERTRACE) { try { svg = CRAFT_RASTERTRACE.traceImage(cur, { profile: 'icon' }).svg; } catch (e) { console.warn('Tracing failed', e); } }
       const fresh = await L.makeItem({ name: item.name, png, svg });
-      if (asCopy) { const it = { ...item, ...fresh, id: fresh.id, name: item.name, serverId: undefined, links: undefined, pngFirst: undefined, edited: new Date().toISOString() }; delete it.serverId; delete it.links; delete it.pngFirst; await L.put(it); toast(`Saved as a copy: “${it.name}”.`); }
-      else { if (!item.pngFirst) item.pngFirst = item.png; Object.assign(item, { png, svg: svg || item.svg, thumb: fresh.thumb, width: fresh.width, height: fresh.height, edited: new Date().toISOString() }); if (item.serverId) item.changed = true; await L.put(item); toast(`Saved “${item.name}”.`); }
+      if (asCopy) { const o = offOf(cur), it = { ...item, ...fresh, id: fresh.id, cutAt: item.cutAt ? { x: item.cutAt.x + o.x, y: item.cutAt.y + o.y, w: cur.width, h: cur.height } : undefined, name: item.name, serverId: undefined, links: undefined, pngFirst: undefined, edited: new Date().toISOString() }; delete it.serverId; delete it.links; delete it.pngFirst; await L.put(it); toast(`Saved as a copy: “${it.name}”.`); }
+      else { if (!item.pngFirst) { item.pngFirst = item.png; if (item.cutAt) item.cutAtFirst = item.cutAt; } if (item.cutAt) { const o = offOf(cur); item.cutAt = { x: item.cutAt.x + o.x, y: item.cutAt.y + o.y, w: cur.width, h: cur.height }; } Object.assign(item, { png, svg: svg || item.svg, thumb: fresh.thumb, width: fresh.width, height: fresh.height, edited: new Date().toISOString() }); if (item.serverId) item.changed = true; await L.put(item); toast(`Saved “${item.name}”.`); }
       close(); opts.done && opts.done();
     } catch (e) { console.error(e); toast('Saving failed: ' + (e.message || e)); btns.forEach((b) => { b.disabled = false; }); }
   }
-  async function backToFirst() { if (!item.pngFirst) return; change(await imageOf(item.pngFirst)); orig = copy(cur); toast('Back to the very first version: Save to keep it.'); }
+  async function backToFirst() { if (!item.pngFirst) return; const first = await imageOf(item.pngFirst), a = item.cutAt, f = item.cutAtFirst; first.off = a && f ? { x: f.x - a.x, y: f.y - a.y } : { x: 0, y: 0 }; change(first); toast('Back to the very first version: Save to keep it.'); }
 
   function build() {
     el = document.createElement('div'); el.className = 'slicer editor'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Touch up');
@@ -186,17 +191,16 @@
     document.body.append(el);
   }
   // the picture's place on its sheet, from the working area (when the sheet is still there)
-  async function sheetPartOf(it, W, H) {
+  async function sheetOf(it) {
     if (!it.cutAt || !it.sheet || !window.CraftWork) return null;
-    try { const src = await window.CraftWork.get(it.sheet); if (!src) return null; const full = await imageOf(window.CraftWork.fileOf(src)), a = it.cutAt; if (a.w !== W || a.h !== H) return null;
-      const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d', { willReadFrequently: true }); x.putImageData(full, -a.x, -a.y); return x.getImageData(0, 0, W, H); } catch (e) { return null; }
+    try { const src = await window.CraftWork.get(it.sheet); return src ? await imageOf(window.CraftWork.fileOf(src)) : null; } catch (e) { return null; }
   }
   async function open(it, o = {}) {
     if (!it || !it.png) return o.toast && o.toast('Only pictures (PNG) can be touched up here.');
     opts = o; item = it; if (!el) build(); el.hidden = false; past = []; future = []; zoom = 1; poly = null;
-    cur = await imageOf(it.png); orig = copy(cur); sheetPart = await sheetPartOf(it, cur.width, cur.height); if (!sheetPart && T.from === 'sheet') T.from = 'opened';
+    cur = await imageOf(it.png); cur.off = { x: 0, y: 0 }; orig = copy(cur); sheetFull = await sheetOf(it); if (!sheetPart() && T.from === 'sheet') T.from = 'opened';
     el.querySelector('.ed-name').textContent = it.name; renderPanel(); draw(); status(); const d = desk(); d.scrollLeft = d.scrollTop = 0;
   }
   function close() { if (el) el.hidden = true; poly = null; preview(null); }
-  window.ClipArtEditor = { open, close, CLEAN, applyShape, wand, _state: () => ({ w: cur && cur.width, h: cur && cur.height, past: past.length, sheet: !!sheetPart, solid: cur ? (() => { let n = 0; for (let i = 3; i < cur.data.length; i += 4) if (cur.data[i] >= 24) n++; return Math.round((100 * n) / (cur.width * cur.height)); })() : 0 }) };
+  window.ClipArtEditor = { open, close, CLEAN, applyShape, wand, _state: () => ({ w: cur && cur.width, h: cur && cur.height, past: past.length, sheet: sheetPart(), off: cur ? offOf(cur) : null, solid: cur ? (() => { let n = 0; for (let i = 3; i < cur.data.length; i += 4) if (cur.data[i] >= 24) n++; return Math.round((100 * n) / (cur.width * cur.height)); })() : 0 }) };
 })();
