@@ -580,7 +580,9 @@
   function onMenu(e) {
     e.preventDefault(); if (!sheet || !window.CraftMenu) return; const p = ptOf(e);
     const i = boxes.findIndex((b) => { const sb = sheetBox(b); return p.x >= sb.x && p.x <= sb.x + sb.w && p.y >= sb.y && p.y <= sb.y + sb.h; });
-    const setPref = (b, o) => { prefs.set(b.key, { ...(prefs.get(b.key) || {}), ...o }); find(); };
+    const many = (b) => (chosenBoxes.size > 1 && chosenBoxes.has(b.key) ? boxes.filter((x) => chosenBoxes.has(x.key)) : [b]);
+    // (right-clicking one of several chosen boxes: the setting goes to all of them)
+    const setPref = (b, o) => { for (const x of many(b)) prefs.set(x.key, { ...(prefs.get(x.key) || {}), ...o }); find(); };
     const snap = (b, keepShadow) => () => { const r = snapBox(b, keepShadow); if (!r) return opts.toast && opts.toast('Nothing in that box but page.'); moved.set(b.key, r); if (!keepShadow) prefs.set(b.key, { ...(prefs.get(b.key) || {}), noShadow: true }); renderPanel(); find(); };
     const tools = [{ label: 'Touch up', checked: tool === 'solid', run: () => { tool = 'solid'; renderPanel(); } }, { label: 'Grid here', checked: tool === 'grid', run: () => { tool = 'grid'; renderPanel(); } }, { label: 'Pick', checked: tool === 'pick', run: () => { tool = 'pick'; renderPanel(); } }, { label: 'Main area', checked: tool === 'area', run: () => { tool = 'area'; renderPanel(); } }, { label: 'Rule out', checked: tool === 'out', run: () => { tool = 'out'; renderPanel(); } }];
     if (i < 0) {
@@ -590,13 +592,15 @@
     }
     const b = boxes[i], off = skip.has(i), isCell = S.mode !== 'find' && b.r !== undefined, plan = namesNow().get(i), mt = metaOf(b);
     // what the sheet says about it (the name it will get, its style and tags, where it sits), then what can be done
-    const info = off ? [{ info: 'Left out: it will not be added', strong: true }] : [{ info: `${plan.n} · ${plan.name}`, strong: true },
+    const group = many(b), info = group.length > 1 ? [{ info: `${group.length} chosen: what you pick here goes to all of them`, strong: true }] : off ? [{ info: 'Left out: it will not be added', strong: true }] : [{ info: `${plan.n} · ${plan.name}`, strong: true },
       ...(mt.style || mt.tags.length ? [{ info: [mt.style && `Style: ${mt.style}`, mt.tags.length && `Tags: ${mt.tags.join(', ')}`].filter(Boolean).join(' · ') }] : []),
       ...(mt.where || mt.title ? [{ info: [mt.where && mt.where.charAt(0).toUpperCase() + mt.where.slice(1), mt.title && `from “${mt.title}”`].filter(Boolean).join(' · ') }] : []),
       ...(!mt.fromSheet && S.mode === 'table' ? [{ info: 'No row label or heading yet: read them with the AI, or type them in the panel' }] : [])];
     CraftMenu.show(e.clientX, e.clientY, [...info, '-', ...histItems(), '-',
       { label: 'Name this picture…', disabled: off, run: () => { const v = prompt('Name for this picture:', b.name || plan.name); if (v === null) return; setPref(b, { name: v.trim() }); } },
-      { label: off ? 'Put this picture back' : 'Leave this picture out', run: () => { if (off) skip.delete(i); else skip.add(i); draw(); count(); } },
+      group.length > 1 ? { label: `Leave these ${group.length} out (or put them back)`, run: () => { const idx = group.map((g) => boxes.indexOf(g)), allOff = idx.every((j) => skip.has(j)); idx.forEach((j) => (allOff ? skip.delete(j) : skip.add(j))); chosenBoxes.clear(); draw(); count(); } }
+        : { label: off ? 'Put this picture back' : 'Leave this picture out', run: () => { if (off) skip.delete(i); else skip.add(i); draw(); count(); } },
+      ...(group.length > 1 ? [{ label: `Reset these ${group.length} cells`, run: () => { group.forEach((g) => { moved.delete(g.key); prefs.delete(g.key); }); chosenBoxes.clear(); renderPanel(); find(); } }] : []),
       { label: 'Reset just this cell', disabled: !moved.has(b.key) && !prefs.has(b.key) && b.part === undefined && !marks.some((mk) => { const [mx, my] = midOf(mk.pts), sb = sheetBox(b); return mx >= sb.x && mx <= sb.x + sb.w && my >= sb.y && my <= sb.y + sb.h; }), run: () => resetBox(b) },
       '-', { label: 'Snap the box to the picture', run: snap(b, true) }, { label: 'Snap to the picture, leaving out its shadow', run: snap(b, false) },
       '-', { label: 'Background', disabled: off, sub: [{ label: 'How much background to take', disabled: off, sub: [[12, 'Much less (keeps light parts)'], [24, 'Less'], [0, 'Normal'], [60, 'More']].map(([v, l]) => ({ label: l, checked: (b.ctol || 0) === v, run: () => setPref(b, { ctol: v || undefined }) })) },
@@ -1304,5 +1308,5 @@
     if (el) { const c = el.querySelector('.sl-desk canvas'); c.hidden = true; el.querySelector('.sl-empty').hidden = false; const st = el.querySelector('.sl-status'); if (st) st.innerHTML = ''; renderPanel(); }
   }
   function close() { if (el) { el.hidden = true; const r = el.querySelector('.sl-review'); if (r) r.hidden = true; } }
-  window.ClipArtSlicer = { fixSpelling, pngText, styleFor, _cut: (i) => baseCut(boxes[i]), _boxes: () => boxes.map(sheetBox), _table: () => table, open, close, autoCut, combine, splitJoined, edgeRoom, splitSheet, sheetItem, findItem, boxClear, gridCells, gridItem, svgCut, readSheet, tableOf, state: () => ({ mode: S.mode, boxes: boxes.length, skipped: skip.size, area, outs: outs.length, notext: S.notext, captions: captions.length, owned: captions.filter((t) => t.own).length, said: autoSaid, rows: rowCount(), cols: colCount(), moved: moved.size, marks: marks.length, whole: boxes.filter((b) => b.whole).map((b) => b.r + ':' + b.c).join(' ') }) };
+  window.ClipArtSlicer = { fixSpelling, pngText, styleFor, _cut: (i) => baseCut(boxes[i]), _boxes: () => boxes.map(sheetBox), _table: () => table, open, close, autoCut, combine, splitJoined, edgeRoom, splitSheet, sheetItem, findItem, boxClear, gridCells, gridItem, svgCut, readSheet, tableOf, state: () => ({ mode: S.mode, boxes: boxes.length, skipped: skip.size, area, outs: outs.length, notext: S.notext, captions: captions.length, owned: captions.filter((t) => t.own).length, said: autoSaid, rows: rowCount(), cols: colCount(), moved: moved.size, prefs: prefs.size, marks: marks.length, whole: boxes.filter((b) => b.whole).map((b) => b.r + ':' + b.c).join(' ') }) };
 })();
