@@ -142,19 +142,22 @@
   // bring the server's items into this browser (ones already here are updated if the server's copy is newer)
   async function pull(progress = () => {}, opts = {}) { return guard(() => pullNow(progress, opts)); }
   async function pullNow(progress, { q = '', category } = {}) {
-    const here = new Map((await all()).filter((it) => it.serverId).map((it) => [it.serverId, it])), made = []; let n = 0, total = 0;
+    // (a picture the server lists but cannot hand over, its file missing there, is skipped and counted, not the end of it)
+    const here = new Map((await all()).filter((it) => it.serverId).map((it) => [it.serverId, it])), made = [], missing = []; let n = 0, total = 0;
     for (let off = 0; ; off += 500) {
       const r = await call(`/api/items?limit=500&offset=${off}&q=${encodeURIComponent(q)}${category !== undefined ? '&category=' + encodeURIComponent(category) : ''}`); total = r.total; if (!r.items.length) break;
       for (const s of r.items) {
         const old = here.get(s.id); progress(++n, total); if (old && old.serverChanged === s.changed) continue;
-        const get = async (k) => s.links[k] ? (await fetch(s.links[k])).blob() : null, png = await get('png'), svg = s.links.svg ? await (await fetch(s.links.svg)).text() : null, anim = await get('anim');
+        const get = async (k) => { if (!s.links[k]) return null; const r = await fetch(s.links[k]); return r.ok ? r.blob() : null; };
+        let png = null, svg = null, anim = null; try { png = await get('png'); if (s.links.svg) { const r = await fetch(s.links.svg); if (r.ok) svg = await r.text(); } anim = await get('anim'); } catch (e) { /* counted below */ }
+        if (!png && !svg) { missing.push(s.name); continue; }
         const it = old || { id: uid(), added: s.added || new Date().toISOString() };
         Object.assign(it, Object.fromEntries(META.map((k) => [k, s[k] ?? it[k] ?? (k === 'tags' ? [] : '')])), { png, svg, anim, serverId: s.id, links: s.links, serverChanged: s.changed, source: s.source || 'clip-art server' });
-        if (!it.thumb || !old) it.thumb = (await thumbOf(png ? URL.createObjectURL(png) : svgUrl(svg))).thumb;
+        try { if (!it.thumb || !old) it.thumb = (await thumbOf(png ? URL.createObjectURL(png) : svgUrl(svg))).thumb; } catch (e) { missing.push(s.name); continue; }
         await tx('items', 'readwrite', (st) => req(st.put(it))); made.push(it);
       }
     }
-    changed(); return { made, total };
+    changed(); return { made, total, missing };
   }
   async function removeFromServer(items) { for (const it of items) if (it.serverId) { try { await call('/api/items/' + it.serverId, { method: 'DELETE' }); } catch (e) { if (!/No such item/.test(e.message)) throw e; } delete it.serverId; delete it.links; await tx('items', 'readwrite', (st) => req(st.put(it))); } changed(); }
 
