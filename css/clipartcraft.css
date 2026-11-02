@@ -317,3 +317,16 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 .ed-crow .hint { font-size: 11px; }
 .editor .ed-canvas { box-shadow: 0 4px 20px rgba(0,0,0,.25); }
 .head-sets { display: flex; gap: 6px; } .head-sets select { flex: 1; min-width: 0; }
+/* the bottom bar: a cell for each thing */
+.statusbar { gap: 6px; }
+.statusbar .cell { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-2); color: var(--muted); }
+.statusbar .cell b { color: var(--fg); }
+.statusbar .dot { width: 8px; height: 8px; border-radius: 50%; background: #9ca3af; }
+.statusbar .dot.ok { background: #22c55e; } .statusbar .dot.bad { background: #ef4444; }
+.statusbar .size-cell { gap: 4px; padding: 1px 6px; }
+.statusbar .size-cell button { border: 0; background: transparent; color: var(--fg); font: inherit; cursor: pointer; padding: 0 4px; border-radius: 4px; }
+.statusbar .size-cell button:hover { background: var(--accent-soft); }
+.statusbar .size-cell input[type=range] { width: 110px; accent-color: var(--accent); }
+.statusbar .size-cell .pct { min-width: 42px; text-align: right; color: var(--fg); font-weight: 600; }
+
+.statusbar .grow { flex: 1; }

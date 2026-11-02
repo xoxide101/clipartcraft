@@ -54,7 +54,7 @@
         busy(`Sorting ${++n} of ${list.length}: ${it.name}…`);
         let src; try { src = it.png ? await createImageBitmap(it.png) : await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = L.svgUrl(it.svg); }); } catch (e) { continue; }
         const c = document.createElement('canvas'); c.width = src.width || 224; c.height = src.height || 224; c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
-        const t0 = performance.now(), ai = await N.name(c, { lessons: await L.lessons(), describe: describeOn() }); it.ai = ai.words; it.vec = ai.vec; if (ai.description) it.description = ai.description;
+        const t0 = performance.now(), lessons = await L.lessons(), ai = window.CraftKeys ? await CraftKeys.track('local', () => N.name(c, { lessons, describe: describeOn() })) : await N.name(c, { lessons, describe: describeOn() }); it.ai = ai.words; it.vec = ai.vec; if (ai.description) it.description = ai.description;
         if (window.CraftKeys) CraftKeys.activity('local', { what: `Sort “${it.name}”`, model: describeOn() ? 'CLIP + Florence-2 (this computer)' : 'CLIP (this computer)', ms: Math.round(performance.now() - t0), came: `${ai.name} · ${ai.category}${ai.description ? ' · “' + ai.description + '”' : ''}` });
         // the names side by side: the one it came with (kept for good), what the AI sees, and the nearest word on the lists
         if (!it.original) it.original = it.name; if (ai.described) it.seen = ai.seenAs || ai.name; const mw = (ai.words || []).find((w) => !w.described && !w.learnt); if (mw) it.matched = mw.word.charAt(0).toUpperCase() + mw.word.slice(1);
@@ -151,7 +151,21 @@
       <div class="btns"><button class="btn primary" type="button" data-act="work-import">Import again</button><button class="btn outline" type="button" data-act="work-slice">Slice it</button><button class="btn outline" type="button" data-act="work-dl">Save the file</button></div>` : `<div class="many">${S.slice(0, 12).map((w) => `<img src="${w.thumb}" alt="">`).join('')}</div><div class="btns"><button class="btn primary" type="button" data-act="work-import">Import them again</button></div>`}
       <div class="btns"><button class="btn outline danger" type="button" data-act="work-del">Delete ${one ? 'it' : 'them'}</button></div></div>`;
   }
-  function status() { const S = shown(); $('status').innerHTML = `<span title="${serverUrl ? esc(`The clip-art server at ${serverUrl}. “On it”: how many of the pictures in this browser have been sent to it (Send to the server or Sync sends the rest).`) : 'No clip-art server: the library is kept in this browser (Server › Connect…)'}">${serverUrl ? `Server: <b>${serverOk ? 'connected' : 'not answering'}</b> (${esc(serverUrl.replace(/^https?:\/\//, ''))}) · ${items.filter((it) => it.serverId).length} of ${items.length} pictures here are on it` : 'No server'}</span><span>${cat === '*' && !query ? '' : `<b>${S.length}</b> shown`}</span><span class="grow"></span><span><b>${items.length}</b> in the library</span><label class="hint">Size <input type="range" id="size" min="80" max="260" value="${size}" aria-label="Thumbnail size"></label><span class="sel-n">${sel.size ? `<b>${sel.size}</b> chosen` : 'none chosen'}</span>`; $('size').oninput = (e) => { size = +e.target.value; $('grid').style.setProperty('--tile', size + 'px'); try { localStorage.setItem('clipartcraft-size', size); } catch (err) { /* blocked */ } }; }
+  // the bar at the bottom: one cell for each thing (the server, the library, what is shown and chosen), the size of the
+  // pictures as a percentage (100% = the starting size), and the AI switch at the end (added by craft-keys.js)
+  const SIZE0 = 140; // (the starting size)
+  function status() {
+    const S = shown(), onIt = items.filter((it) => it.serverId).length, cats = new Set(items.map((it) => it.category).filter(Boolean)).size, pct = Math.round((size / SIZE0) * 100);
+    const dot = serverUrl ? (serverOk ? 'ok' : 'bad') : 'off';
+    $('status').innerHTML = `<span class="cell" title="${serverUrl ? esc(`The clip-art server at ${serverUrl}. “On it”: how many of the pictures in this browser have been sent to it (Send to the server or Sync sends the rest).`) : 'No clip-art server: the library is kept in this browser (Server › Connect…)'}"><i class="dot ${dot}"></i>${serverUrl ? `${serverOk ? 'Connected' : 'Not answering'}: ${esc(serverUrl.replace(/^https?:\/\//, '').replace(/\/clipart-server\.php$/, ''))} · <b>${onIt}</b> of ${items.length} on it` : 'No server'}</span>
+      <span class="cell"><b>${items.length}</b> picture${items.length === 1 ? '' : 's'} · <b>${cats}</b> categor${cats === 1 ? 'y' : 'ies'}</span>
+      ${cat === '*' && !query ? '' : `<span class="cell"><b>${S.length}</b> shown</span>`}
+      <span class="cell">${sel.size ? `<b>${sel.size}</b> chosen` : 'none chosen'}</span><span class="grow"></span>
+      <span class="cell size-cell" title="The size of the pictures"><button type="button" data-sz="-" aria-label="Smaller">−</button><input type="range" id="size" min="80" max="320" value="${size}" aria-label="Size of the pictures"><button type="button" data-sz="+" aria-label="Bigger">+</button><button type="button" class="pct" data-sz="0" title="Back to 100%">${pct}%</button></span>`;
+    const setSize = (v) => { size = Math.max(80, Math.min(320, Math.round(v))); $('grid').style.setProperty('--tile', size + 'px'); try { localStorage.setItem('clipartcraft-size', size); } catch (err) { /* blocked */ } const p = $('status').querySelector('.pct'); if (p) p.textContent = Math.round((size / SIZE0) * 100) + '%'; const r = $('size'); if (r && +r.value !== size) r.value = size; };
+    $('size').oninput = (e) => setSize(+e.target.value);
+    $('status').querySelectorAll('[data-sz]').forEach((b) => { b.onclick = () => setSize(b.dataset.sz === '0' ? SIZE0 : size * (b.dataset.sz === '+' ? 1.15 : 1 / 1.15)); });
+  }
 
   // ------------------------------------------------------------------ actions
   function pick(accept, multiple = true) { return new Promise((ok) => { const i = document.createElement('input'); i.type = 'file'; i.accept = accept; i.multiple = multiple; i.onchange = () => ok([...i.files]); i.click(); }); }

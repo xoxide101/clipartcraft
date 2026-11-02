@@ -24,7 +24,7 @@
   function imageCraftKeys() { try { const s = JSON.parse(localStorage.getItem('imagecraft-cloud') || 'null'); return s && s.keys ? PROVIDERS.filter((p) => (s.keys[p] || '').trim()).reduce((o, p) => ({ ...o, [p]: s.keys[p].trim() }), {}) : {}; } catch (e) { return {}; } }
 
   async function call(url, opts, who) {
-    let r; try { r = await fetch(url, opts); } catch (e) { throw new Error(`${NAMES[who]} could not be reached (no internet, or the browser blocked it).`); }
+    let r; try { r = await (window.CraftKeys ? CraftKeys.track('cloud', fetch(url, opts)) : fetch(url, opts)); } catch (e) { throw new Error(`${NAMES[who]} could not be reached (no internet, or the browser blocked it).`); }
     const t = await r.text(); let j = null; try { j = JSON.parse(t); } catch (e) { /* not JSON */ }
     if (!r.ok) {
       const m = (j && j.error && (j.error.message || j.error.type)) || t.slice(0, 200);

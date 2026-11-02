@@ -1081,7 +1081,7 @@
         if (sheet !== mine) { sayReading(''); return; } // another sheet was opened meanwhile
         sayReading(`Reading ${++k} of ${jobs.length}…`);
         const b = j.box, x0 = Math.max(0, Math.round(b.x)), y0 = Math.max(0, Math.round(b.y)), part = onWhite(cropOf(sheet, x0, y0, Math.min(sheet.width - x0, Math.round(b.w)), Math.min(sheet.height - y0, Math.round(b.h))));
-        const said = await N.read(squareOf(part), { progress: (a, t) => sayReading(`Getting the AI: ${Math.round((a / t) * 100)}%`) }); if (sheet !== mine) { sayReading(''); return; }
+        const readIt = () => N.read(squareOf(part), { progress: (a, t) => sayReading(`Getting the AI: ${Math.round((a / t) * 100)}%`) }), said = window.CraftKeys ? await CraftKeys.track('local', readIt) : await readIt(); if (sheet !== mine) { sayReading(''); return; }
         j.set(said); if (k % 4 === 0) { renderNames(); draw(); }
       }
       opts.toast && opts.toast(`${jobs.length} label${jobs.length === 1 ? '' : 's'} read${quiet ? ' by itself' : ''}: check them in the panel.`);
