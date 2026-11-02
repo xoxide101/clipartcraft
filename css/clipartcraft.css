@@ -347,3 +347,5 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 .dup-pic small { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dup-pic i { position: absolute; top: 4px; right: 4px; font-style: normal; font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 4px; background: #22c55e; color: #fff; }
 .dup-pic.gone { border-color: #ef4444; opacity: .75; } .dup-pic.gone i { background: #ef4444; }
+.ask-in { max-width: 480px; }
+.ask-in .ask-text { margin: 12px 16px; line-height: 1.45; }

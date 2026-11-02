@@ -44,7 +44,7 @@
       if (e.target === back || e.target.closest('[data-d=close]')) { back.remove(); return; }
       const p = e.target.closest('[data-p]'); if (p) { const id = p.dataset.p, g = groups.find((x) => x.some((y) => y.id === id)); if (marks.has(id)) marks.delete(id); else if (g.filter((y) => !marks.has(y.id)).length > 1) marks.add(id); else return toast && toast('Keep at least one of them.'); draw(); return; }
       const r = e.target.closest('[data-d=remove]'); if (r) { const ids = [...marks]; if (!confirm(`Remove ${ids.length} picture${ids.length === 1 ? '' : 's'}${where === 'server' ? ' from the server' : ' from this browser'}? (One of each stays.)`)) return; r.disabled = true; r.textContent = 'Removing…';
-        try { await remove(ids); toast && toast(`Removed ${ids.length} copies.`); back.remove(); done && done(); } catch (err) { toast && toast('Removing failed: ' + (err.message || err)); r.disabled = false; draw(); } }
+        try { if ((await remove(ids)) === false) { r.disabled = false; draw(); return; } toast && toast(`Removed ${ids.length} copies.`); back.remove(); done && done(); } catch (err) { toast && toast('Removing failed: ' + (err.message || err)); r.disabled = false; draw(); } }
     });
     (async () => { groups = await groupsOf(list, (n, t) => { body().innerHTML = `<p class="hint">Looking at ${n} of ${t} pictures…</p>`; }); marks = new Set(groups.flatMap((g) => g.slice(1).map((p) => p.id))); draw(); })().catch((e) => { body().innerHTML = `<p class="hint warn">${esc(e.message || e)}</p>`; });
   }

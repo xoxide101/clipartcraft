@@ -72,6 +72,32 @@
     const todo = made.filter(needsSort); if (!todo.length || !window.CraftNamer) return;
     if ((await CraftNamer.downloaded()) && (!describeOn() || (await CraftNamer.describerDownloaded()))) { await sortWithAI(todo, { quiet: true }); await reload(); toast(`${todo.length} new picture${todo.length === 1 ? '' : 's'} sorted into categories by the AI.`); }
   }
+  // a question with buttons (resolves to the chosen button's value, or null when closed)
+  function ask(title, text, buttons) {
+    return new Promise((done) => {
+      const box = document.createElement('div'); box.className = 'lists-dlg'; box.setAttribute('role', 'dialog'); box.setAttribute('aria-label', title);
+      box.innerHTML = `<div class="lists-in ask-in"><div class="lists-head"><b>${esc(title)}</b></div><p class="ask-text">${text}</p><div class="lists-foot"><span class="grow"></span>${buttons.map((b, i) => `<button class="btn ${b.primary ? 'primary' : b.danger ? 'outline danger' : 'outline'}" type="button" data-i="${i}">${esc(b.label)}</button>`).join('')}</div></div>`;
+      const end = (v) => { box.remove(); document.removeEventListener('keydown', key, true); done(v); }, key = (e) => { if (e.key === 'Escape') { e.stopPropagation(); end(null); } };
+      box.addEventListener('click', (e) => { if (e.target === box) return end(null); const b = e.target.closest('[data-i]'); if (b) end(buttons[+b.dataset.i].value); });
+      document.addEventListener('keydown', key, true); document.body.append(box); box.querySelector('.btn.primary, .btn')?.focus();
+    });
+  }
+  // deleting pictures: ones that are on the server too are asked about (from the server as well, or this browser only)
+  async function deletePictures(S, asked) {
+    const on = S.filter((it) => it.serverId).length, what = S.length === 1 ? `“${esc(S[0].name)}”` : `${S.length} pictures`;
+    let server = false;
+    if (on) { const v = await ask('Delete', `${what}: ${on === S.length ? (S.length === 1 ? 'it is' : 'they are') : `${on} of them are`} on the clip-art server too.<br><br><b>Everywhere</b> deletes ${on === 1 ? 'it' : 'them'} from the server as well, for every app and browser using it. <b>Only in this browser</b> leaves the server alone (Sync will not bring ${on === 1 ? 'it' : 'them'} back).`,
+      [{ label: 'Everywhere', value: 'all', danger: true }, { label: 'Only in this browser', value: 'here' }, { label: 'Cancel', value: null, primary: true }]); if (!v) return false; server = v === 'all'; }
+    else if (!asked && !confirm(`Delete ${S.length === 1 ? `“${S[0].name}”` : `${S.length} pictures`} from the library? (Export first if you might want ${S.length === 1 ? 'it' : 'them'} back.)`)) return false;
+    const r = await L.deleteItems(S, { server }); sel.clear(); await reload(); srv.at = ''; if (onServer()) loadServer();
+    toast(r.waiting ? `Deleted here. The server did not take the deletions yet (${esc(r.error && r.error.message || '')}): Sync sends them later.` : server && r.sent ? `Deleted here and from the server (${r.sent}).` : 'Deleted.'); return true;
+  }
+  // one of the server's pictures deleted there (for every app and browser using it), and a copy kept here too
+  async function deleteFromServer(s2) {
+    await need(); if (!confirm(`Delete “${s2.name}” from the clip-art server? (Every app and browser using it loses it${keptOf(s2) ? '; the copy kept in this browser goes too' : ''}.)`)) return;
+    const kept = keptOf(s2); try { if (kept) await L.deleteItems([kept], { server: true }); else await L.deleteOnServer([s2.id]); } catch (e) { return fail(e); }
+    srv.items = srv.items.filter((x) => x !== s2); srv.total = Math.max(0, srv.total - 1); srvSel = null; await reload(); toast(`Deleted “${s2.name}” from the server.`);
+  }
   async function reload() { items = await L.all(); work = WA ? await WA.all() : []; [...sel].forEach((id) => { if (!items.some((it) => it.id === id)) sel.delete(id); }); render(); }
   // ------------------------------------------------------------------ On the server: the server's pictures, looked at where
   // they are (its thumbnails); only what is kept (or touched up) is copied into this browser
@@ -97,7 +123,7 @@
       const l = s2.links || {}, png = l.png ? await (await fetch(l.png)).blob() : null; let svg = null; if (l.svg) { try { const r = await fetch(l.svg); if (r.ok) svg = await r.text(); } catch (e) { /* the PNG will do */ } }
       const it = await L.makeItem({ name: s2.name, category: s2.category || '', tags: s2.tags || [], png, svg, source: s2.source || 'Clip-art server' });
       for (const k of ['style', 'form', 'description', 'original', 'seen', 'matched', 'collection', 'place', 'kind']) if (s2[k]) it[k] = s2[k];
-      it.serverId = s2.id; it.links = s2.links; it.checked = true; await L.put(it); busy(); await reload(); return it;
+      it.serverId = s2.id; it.links = s2.links; it.checked = true; await L.put(it); await L.notHere(null, [s2.id]); busy(); await reload(); return it;
     } catch (e) { busy(); fail(e); return null; }
   }
   function serverDetails() {
@@ -109,12 +135,13 @@
       <p><b>${esc(s2.name)}</b></p><p class="hint">${[s2.category || 'Not sorted yet', s2.style, s2.form, s2.width && `${s2.width} × ${s2.height} pixels`].filter(Boolean).map(esc).join(' · ')}</p>
       ${s2.description ? `<p class="hint">${esc(s2.description)}</p>` : ''}${(s2.tags || []).length ? `<p class="hint">Tags: ${esc(s2.tags.join(', '))}</p>` : ''}
       ${sib.length ? `<div class="field"><span>Same DNA / style</span><div class="dna-row">${[s2, ...sib].map((x) => `<button type="button" class="dna${x === s2 ? ' on' : ''}" data-srv="${esc(x.id)}" title="${esc(x.name)}"><img src="${esc((x.links || {}).thumb || '')}" alt=""><small>${esc(x.style || '')}</small></button>`).join('')}</div></div>` : ''}
-      <div class="btns">${kept ? `<button class="btn outline" type="button" data-sa="show">Kept here: show it</button>` : `<button class="btn primary" type="button" data-sa="keep" title="Copy it into this browser's library (to have it without the server)">Keep a copy here</button>`}<button class="btn outline" type="button" data-sa="touchup" title="A copy is kept here and opened to touch up">Touch up…</button></div>
+      <div class="btns">${kept ? `<button class="btn outline" type="button" data-sa="show">Kept here: show it</button>` : `<button class="btn primary" type="button" data-sa="keep" title="Copy it into this browser's library (to have it without the server)">Keep a copy here</button>`}<button class="btn outline" type="button" data-sa="touchup" title="A copy is kept here and opened to touch up">Touch up…</button><button class="btn outline danger" type="button" data-sa="delete" title="Delete it from the server (every app and browser using it)">Delete</button></div>
       <div class="btns">${l.png ? `<a class="btn outline" href="${esc(l.png)}" target="_blank" rel="noopener" download>PNG</a>` : ''}${l.svg ? `<a class="btn outline" href="${esc(l.svg)}" target="_blank" rel="noopener" download>SVG</a>` : ''}<button type="button" class="btn ghost sm" data-copy="${esc(l.png || '')}">Copy its link</button></div></div>`;
   }
   $('details').addEventListener('click', async (e) => {
     const sb = e.target.closest('[data-srv]'); if (sb) { srvSel = sb.dataset.srv; render(); return; }
     const a = e.target.closest('[data-sa]'); if (!a) return; const s2 = srv.items.find((x) => x.id === srvSel); if (!s2) return;
+    if (a.dataset.sa === 'delete') return deleteFromServer(s2);
     if (a.dataset.sa === 'keep') { const it = await keepFromServer(s2); if (it) toast(`Kept “${it.name}” in this browser.`); render(); return; }
     if (a.dataset.sa === 'show') { const it = keptOf(s2); if (it) { cat = '*'; sel = new Set([it.id]); render(); } return; }
     if (a.dataset.sa === 'touchup') { const it = await keepFromServer(s2); if (it && window.ClipArtEditor) ClipArtEditor.open(it, { toast, done: async () => { await reload(); } }); }
@@ -129,7 +156,7 @@
         remove: async (ids) => { const key = await L.serverKey(); for (const id of ids) { const r = await fetch(`${serverUrl}/api/items/${encodeURIComponent(id)}`, { method: 'DELETE', headers: key ? { 'x-craft-key': key } : {} }); if (r.status === 403) throw new Error('the server needs its key to remove pictures (Server › Connect…, the place’s Key)'); if (!r.ok && r.status !== 404) throw new Error(`the server said ${r.status}`); } srv.items = []; srv.at = ''; srv.total = 0; },
         done: () => loadServer() });
     }
-    return ClipArtDupes.open({ where: 'local', toast, list: items.map((it) => ({ id: it.id, name: it.name, thumb: it.thumb, width: it.width, height: it.height, svg: !!it.svg, hash: it.hash })), remove: (ids) => L.remove(ids), done: () => reload() });
+    return ClipArtDupes.open({ where: 'local', toast, list: items.map((it) => ({ id: it.id, name: it.name, thumb: it.thumb, width: it.width, height: it.height, svg: !!it.svg, hash: it.hash })), remove: async (ids) => { const S = items.filter((it) => ids.includes(it.id)); return deletePictures(S, true); }, done: () => reload() });
   }
   function render() {
     const C = cats(); const catBtn = ([k, l, n]) => `<button type="button" class="cat" data-cat="${esc(k)}" aria-current="${cat === k}"><span>${esc(l)}</span><b>${n}</b></button>`;
@@ -268,7 +295,8 @@
       if (a === 'folder-pick') { const h = await L.pickFolder(); toast(`Library folder: “${h.name}”.`); return; }
       if (a === 'select-all') { sel = new Set(shown().map((it) => it.id)); render(); return; }
       if (a === 'delete' && cat === '#work') return act('work-del');
-      if (a === 'delete') { const S = chosen(); if (!S.length) return toast('Choose something first.'); if (!confirm(`Delete ${S.length === 1 ? `“${S[0].name}”` : `${S.length} items`} from the library? (Export first if you might want ${S.length === 1 ? 'it' : 'them'} back.)`)) return; await L.remove(S.map((x) => x.id)); sel.clear(); await reload(); toast('Deleted.'); return; }
+      if (a === 'delete' && onServer()) { const s2 = srv.items.find((x) => x.id === srvSel); if (!s2) return toast('Choose a picture first.'); return deleteFromServer(s2); }
+      if (a === 'delete') { const S = chosen(); if (!S.length) return toast('Choose something first.'); await deletePictures(S); return; }
       if (a === 'connect') return connectWindow();
       if (a === 'disconnect') { await L.server(''); await checkServer(); toast('Not using a server now (the pictures stay here).'); return; }
       if (a === 'push') { const S = sel.size ? chosen() : items; if (!S.length) return toast('The library is empty.'); await need(); const done = await L.push(S, (n, t) => busy(`Sending ${n} of ${t}…`)); busy(); await reload(); toast(`Sent ${done.length} item${done.length === 1 ? '' : 's'} to the server.`); return; }
@@ -278,7 +306,7 @@
       if (a.startsWith('undone-cancel-')) { await dropUndone(undone[+a.slice(14)]); await reload(); await offerResume(); return; }
       if (a === 'undone-flush') { if (!confirm('Clear the whole Still to do list? (Pictures waiting to be sent stay here, just not sent; files nothing was made from leave the working area.)')) return; await L.forgetPending(); for (const w of undone) await dropUndone(w); await reload(); await offerResume(); return; }
       if (a === 'pull') { await need(); const r = await L.pull((n, t) => busy(`Getting ${n} of ${t}…`)); busy(); await reload(); toast((r.made.length ? `Got ${r.made.length} new or changed item${r.made.length === 1 ? '' : 's'} from the server (it has ${r.total}).` : `Already up to date (the server has ${r.total}).`) + ((r.missing || []).length ? ` ${r.missing.length} could not be got: the server lists them but their picture files are not on it (sent through another server?).` : '')); return; }
-      if (a === 'sync') { await need(); const r = await L.pull((n, t) => busy(`Getting ${n} of ${t}…`)); const fresh = (await L.all()).filter((it) => !it.serverId); const d = await L.push(fresh, (n, t) => busy(`Sending ${n} of ${t}…`)); busy(); await reload(); toast(`In step with the server: got ${r.made.length}, sent ${d.length}.`); return; }
+      if (a === 'sync') { await need(); const del = await L.sendDeletes(); const r = await L.pull((n, t) => busy(`Getting ${n} of ${t}…`)); const fresh = (await L.all()).filter((it) => !it.serverId); const d = await L.push(fresh, (n, t) => busy(`Sending ${n} of ${t}…`)); busy(); await reload(); toast(`In step with the server: got ${r.made.length}, sent ${d.length}${del ? `, deleted ${del}` : ''}.`); return; }
       if (a === 'unserver') { const S = chosen().filter((it) => it.serverId); if (!S.length) return toast('Choose something that is on the server.'); if (!confirm(`Take ${S.length === 1 ? `“${S[0].name}”` : `${S.length} items`} off the server? (They stay in this library.)`)) return; await L.removeFromServer(S); await reload(); toast('Taken off the server.'); return; }
       if (a === 'open-server') { if (!serverUrl) return toast('Connect to a server first.'); window.open(serverUrl + '/', '_blank'); return; }
       const one = chosen()[0]; if (!one) return;

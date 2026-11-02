@@ -134,7 +134,7 @@
       if (it.svg) j.svg = it.svg; if (it.anim) { j.anim = await b64(it.anim); j.animExt = (it.anim.type.split('/')[1] || 'gif').replace('apng', 'png'); }
       if (it.thumb) { j.thumb = it.thumb.replace(/^data:[^,]*,/, ''); j.thumbExt = 'png'; }
       let s; try { s = await call(it.serverId ? '/api/items/' + it.serverId : '/api/items', { method: it.serverId ? 'PATCH' : 'POST', body: JSON.stringify(j) }); } catch (e) { if (!it.serverId || !/No such item/.test(e.message)) throw e; delete it.serverId; s = await call('/api/items', { method: 'POST', body: JSON.stringify(j) }); }
-      it.serverId = s.id; it.links = s.links; it.name = s.name; await tx('items', 'readwrite', (st) => req(st.put(it))); out.push(it); progress(++n, items.length);
+      it.serverId = s.id; it.links = s.links; it.name = s.name; it.serverChanged = s.changed; await tx('items', 'readwrite', (st) => req(st.put(it))); out.push(it); progress(++n, items.length);
       left.delete(it.id); await meta('pushQueue', [...left]);
     }
     changed(); return out;
@@ -143,11 +143,11 @@
   async function pull(progress = () => {}, opts = {}) { return guard(() => pullNow(progress, opts)); }
   async function pullNow(progress, { q = '', category } = {}) {
     // (a picture the server lists but cannot hand over, its file missing there, is skipped and counted, not the end of it)
-    const here = new Map((await all()).filter((it) => it.serverId).map((it) => [it.serverId, it])), made = [], missing = []; let n = 0, total = 0;
+    const here = new Map((await all()).filter((it) => it.serverId).map((it) => [it.serverId, it])), made = [], missing = [], skip = await notHere(), gone = new Set((await meta('deleteQueue')) || []); let n = 0, total = 0;
     for (let off = 0; ; off += 500) {
       const r = await call(`/api/items?limit=500&offset=${off}&q=${encodeURIComponent(q)}${category !== undefined ? '&category=' + encodeURIComponent(category) : ''}`); total = r.total; if (!r.items.length) break;
       for (const s of r.items) {
-        const old = here.get(s.id); progress(++n, total); if (old && old.serverChanged === s.changed) continue;
+        const old = here.get(s.id); progress(++n, total); if ((old && old.serverChanged === s.changed) || (!old && (skip.has(s.id) || gone.has(s.id)))) continue;
         const get = async (k) => { if (!s.links[k]) return null; const r = await fetch(s.links[k]); return r.ok ? r.blob() : null; };
         let png = null, svg = null, anim = null; try { png = await get('png'); if (s.links.svg) { const r = await fetch(s.links.svg); if (r.ok) svg = await r.text(); } anim = await get('anim'); } catch (e) { /* counted below */ }
         if (!png && !svg) { missing.push(s.name); continue; }
@@ -159,11 +159,26 @@
     }
     changed(); return { made, total, missing };
   }
+  // deleting: from the server too (queued until the server answers; Sync sends what is left), or from this browser only
+  // (remembered, so Sync and Get do not bring it back; keeping it again from the server forgets that)
+  async function notHere(add, drop) { let s = new Set((await meta('notHere')) || []); if (add) add.forEach((x) => s.add(x)); if (drop) drop.forEach((x) => s.delete(x)); if (add || drop) await meta('notHere', [...s]); return s; }
+  async function sendDeletes() {
+    const q = (await meta('deleteQueue')) || []; let n = 0; if (!q.length) return 0;
+    for (const id of [...q]) { try { await call('/api/items/' + id, { method: 'DELETE' }); n++; } catch (e) { if (!/No such item/.test(e.message)) { await meta('deleteQueue', q); throw e; } } q.splice(q.indexOf(id), 1); await meta('deleteQueue', q); }
+    return n;
+  }
+  async function deleteOnServer(ids) { await meta('deleteQueue', [...new Set([...((await meta('deleteQueue')) || []), ...ids])]); return sendDeletes(); }
+  async function deleteItems(items, { server = false } = {}) {
+    const ids = items.filter((it) => it.serverId).map((it) => it.serverId);
+    if (ids.length && server) await meta('deleteQueue', [...new Set([...((await meta('deleteQueue')) || []), ...ids])]); else if (ids.length) await notHere(ids);
+    await remove(items.map((it) => it.id)); if (!ids.length || !server) return { sent: 0, waiting: 0 };
+    try { const sent = await sendDeletes(); return { sent, waiting: 0 }; } catch (e) { return { sent: 0, waiting: ((await meta('deleteQueue')) || []).length, error: e }; }
+  }
   async function removeFromServer(items) { for (const it of items) if (it.serverId) { try { await call('/api/items/' + it.serverId, { method: 'DELETE' }); } catch (e) { if (!/No such item/.test(e.message)) throw e; } delete it.serverId; delete it.links; await tx('items', 'readwrite', (st) => req(st.put(it))); } changed(); }
 
   // the category, style and form lists (editable; shared by every Craft app through the store)
   async function lists(value) { return meta('lists', value); }
   // the user's corrections the AI learns from: [{ id (the picture's), vec, name, category, style, form, at }]
   async function lessons(value) { return value === undefined ? (await meta('lessons')) || [] : meta('lessons', value); }
-  window.CraftClipart = { DB, lists, lessons, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip };
+  window.CraftClipart = { DB, lists, lessons, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, deleteItems, deleteOnServer, sendDeletes, notHere, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip };
 })();
