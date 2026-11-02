@@ -41,6 +41,10 @@
   <span class="grow"></span><a href="setup">Setup</a><button type="button" id="clear">Clear the log</button></header>
 <main id="main"><p class="hint">Loading…</p></main>
 <script>
+// copying text: the clipboard API works only on https (or this computer); on plain http the old copy command does it
+const copyText = (text) => { if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text).then(() => true, () => oldCopy(text)); return Promise.resolve(oldCopy(text)); };
+function oldCopy(text) { const t = document.createElement('textarea'); t.value = text; t.setAttribute('readonly', ''); t.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0'; document.body.append(t); t.select(); let ok = false; try { ok = document.execCommand('copy'); } catch (e) { ok = false; } t.remove(); return ok; }
+
 /* The debug page of the Craft clip-art server: what the server is (versions, databases, no passwords) and its log
    (requests, errors, database tests, copies, and notes written here). "Copy for Claude" puts all of it on the
    clipboard to paste into the chat; the same log is in debug.log beside the server. */
@@ -84,7 +88,7 @@
     lines.push('', `Log (last ${data.log.length}):`); for (const l of data.log) lines.push(`${l.t} [${l.kind}] ${l.text}${l.extra ? ' ' + JSON.stringify(l.extra) : ''}`);
     return lines.join('\n');
   }
-  $('#copy').onclick = async () => { if (!data) return; try { await navigator.clipboard.writeText(asText()); $('#copy').textContent = 'Copied: paste it to Claude'; } catch (e) { const w = window.open('', '_blank'); if (w) { w.document.body.innerText = asText(); } } setTimeout(() => { $('#copy').textContent = 'Copy for Claude'; }, 2500); };
+  $('#copy').onclick = async () => { if (!data) return; try { if (!(await copyText(asText()))) throw new Error('not copied'); $('#copy').textContent = 'Copied: paste it to Claude'; } catch (e) { const w = window.open('', '_blank'); if (w) { w.document.body.innerText = asText(); } } setTimeout(() => { $('#copy').textContent = 'Copy for Claude'; }, 2500); };
   $('#refresh').onclick = load; $('#quiet').onchange = () => data && render();
   $('#clear').onclick = async () => { if (!confirm('Clear the log?')) return; await fetch(API + '/clear', { method: 'POST', headers: H(), body: '{}' }); load(); };
   const tick = () => { clearInterval(timer); if ($('#auto').checked) timer = setInterval(() => { if (document.activeElement && document.activeElement.id === 'note') return; load(); }, 2000); };

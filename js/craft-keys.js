@@ -8,6 +8,9 @@
      CraftKeys.load()                               → { keys, workspace } or null (asks for the password if locked) */
 (function () {
   'use strict';
+  // copying text: the clipboard API works only on https (or this computer); on plain http the old copy command does it
+  const copyText = (text) => { if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text).then(() => true, () => oldCopy(text)); return Promise.resolve(oldCopy(text)); };
+  function oldCopy(text) { const t = document.createElement('textarea'); t.value = text; t.setAttribute('readonly', ''); t.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0'; document.body.append(t); t.select(); let ok = false; try { ok = document.execCommand('copy'); } catch (e) { ok = false; } t.remove(); return ok; }
   const ROUNDS = 250000, enc = new TextEncoder(), dec = new TextDecoder();
   const b64 = (u8) => btoa(String.fromCharCode(...u8)), unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
   async function keyFrom(password, salt) { const base = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']); return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: ROUNDS, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']); }
@@ -118,7 +121,7 @@
     const shut = () => { back.remove(); window.removeEventListener('craft-activity', draw); };
     back.addEventListener('click', (e) => { if (e.target === back || e.target.closest('[data-a=close]')) return shut(); const t = e.target.closest('[data-tab]'); if (t) { tab = t.dataset.tab; draw(); return; }
       if (e.target.closest('[data-a=clear]')) { ACT[tab].length = 0; draw(); window.dispatchEvent(new CustomEvent('craft-activity')); return; }
-      const cp = e.target.closest('[data-a=copy]'); if (cp) { const text = ACT[tab].map((x) => `${new Date(x.at).toISOString()} ${tab === 'debug' ? x.level + ' ' + x.text : `${x.what || ''} ${x.model || ''} ${x.ms != null ? x.ms + 'ms' : ''} ${x.ok === false ? 'FAILED' : 'OK'} ${x.sent || ''} => ${x.came || ''}`}`).join('\n'); navigator.clipboard.writeText(text).then(() => { cp.textContent = 'Copied'; }); } });
+      const cp = e.target.closest('[data-a=copy]'); if (cp) { const text = ACT[tab].map((x) => `${new Date(x.at).toISOString()} ${tab === 'debug' ? x.level + ' ' + x.text : `${x.what || ''} ${x.model || ''} ${x.ms != null ? x.ms + 'ms' : ''} ${x.ok === false ? 'FAILED' : 'OK'} ${x.sent || ''} => ${x.came || ''}`}`).join('\n'); copyText(text).then((ok) => { cp.textContent = ok ? 'Copied' : 'Copying is blocked here'; }); } });
     back.addEventListener('keydown', (e) => { if (e.key === 'Escape') shut(); });
     window.addEventListener('craft-activity', draw); draw(); (document.body || document.documentElement).append(back); back.querySelector('[data-a=close]').focus();
   }

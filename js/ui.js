@@ -4,6 +4,9 @@
 (function () {
   'use strict';
   const $ = (id) => document.getElementById(id), L = window.CraftClipart, I = window.CraftIcons, WA = window.CraftWork;
+  // copying text: the clipboard API works only on https (or this computer); on plain http the old copy command does it
+  const copyText = (text) => { if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text).then(() => true, () => oldCopy(text)); return Promise.resolve(oldCopy(text)); };
+  function oldCopy(text) { const t = document.createElement('textarea'); t.value = text; t.setAttribute('readonly', ''); t.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0'; document.body.append(t); t.select(); let ok = false; try { ok = document.execCommand('copy'); } catch (e) { ok = false; } t.remove(); return ok; }
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   let startOpen = false, items = [], work = [], cat = '*', query = '', sel = new Set(), last = null, size = 140, serverUrl = '', serverOk = false;
   try { size = +localStorage.getItem('clipartcraft-size') || 140; } catch (e) { /* blocked storage */ }
@@ -336,7 +339,7 @@
       if (a === 'dl-png') download(one.png, `${one.name}.png`);
       if (a === 'dl-anim') download(one.anim, `${one.name}.${(one.anim.type.split('/')[1] || 'gif').replace('apng', 'png')}`);
       if (a === 'dl-svg') download(new Blob([one.svg], { type: 'image/svg+xml' }), `${one.name}.svg`);
-      if (a === 'copy') { if (one.png && navigator.clipboard && window.ClipboardItem) { await navigator.clipboard.write([new ClipboardItem({ 'image/png': one.png })]); toast('Copied the picture.'); } else if (one.svg) { await navigator.clipboard.writeText(one.svg); toast('Copied the SVG as text.'); } }
+      if (a === 'copy') { if (one.png && navigator.clipboard && window.ClipboardItem) { await navigator.clipboard.write([new ClipboardItem({ 'image/png': one.png })]); toast('Copied the picture.'); } else if (one.svg) { toast((await copyText(typeof one.svg === 'string' ? one.svg : await one.svg.text())) ? 'Copied the SVG as text.' : 'Copying is blocked here.'); } else toast('Copying a picture needs https (or the server on this computer): use Download PNG.'); }
     } catch (e) {
       if (e && e.name === 'AbortError') return;
       // a server elsewhere wants its key before anything changes: ask once, keep it, try again
@@ -442,7 +445,7 @@
     if (e.key === 'Enter' && e.altKey && sel.size && cat !== '#work') { e.preventDefault(); openProps(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && sel.size === 1 && cat !== '#work' && !String(getSelection())) { e.preventDefault(); act('copy'); }
   });
-  document.addEventListener('click', (e) => { if (startOpen && e.target.closest('.start .tiles [data-act]')) { startOpen = false; $('start').hidden = true; } const c = e.target.closest('[data-copy]'); if (c) { navigator.clipboard.writeText(c.dataset.copy).then(() => toast('Link copied: paste it into any app or web page.')); return; } const b = e.target.closest('[data-act]'); if (b) act(b.dataset.act); });
+  document.addEventListener('click', (e) => { if (startOpen && e.target.closest('.start .tiles [data-act]')) { startOpen = false; $('start').hidden = true; } const c = e.target.closest('[data-copy]'); if (c) { copyText(c.dataset.copy).then((ok) => toast(ok ? 'Link copied: paste it into any app or web page.' : 'Copying is blocked here: ' + c.dataset.copy)); return; } const b = e.target.closest('[data-act]'); if (b) act(b.dataset.act); });
   // the clip-art server (optional): is it there?
   const busy = (m) => { const t = $('toast'); if (m) { t.textContent = m; t.hidden = false; clearTimeout(toast.t); } else t.hidden = true; };
   // ------------------------------------------------------------------ places: the clip-art servers this browser knows
