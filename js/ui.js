@@ -216,6 +216,7 @@
       if (e && e.name === 'AbortError') return;
       // a server elsewhere wants its key before anything changes: ask once, keep it, try again
       if (e && e.status === 403 && !act.asked) { const k = prompt('This clip-art server needs its key to change the library (it is on the server’s setup page, …/setup):', ''); if (k) { await L.serverKey(k.trim()); act.asked = true; try { return await act(a); } finally { act.asked = false; } } }
+      if (e && e.quiet) { busy(); toast(e.message); return; }
       busy(); fail(e);
     }
   }
@@ -340,12 +341,15 @@
   // when ClipArtCraft opens: if the server in use does not answer, the first saved place that does
   // the server that sits beside a hosted ClipArtCraft (…/clipartcraft/server/clipart-server.php)
   const besideUs = () => (/^https?:$/.test(location.protocol) ? [new URL('server/clipart-server.php', location.href).href, new URL('server', location.href).href].map(tidyUrl) : []);
-  async function autoPlace() {
-    const P = places(); if (serverOk) return;
-    // opened from a website with no places yet: the server beside it, if it answers
-    if (!P.list.length) { for (const u of besideUs()) { const r = await probe(u); if (!r.ok) continue; P.list.push({ name: 'This website', url: u, key: '' }); savePlaces(P); await L.server(u); await checkServer(); toast(`Connected to the clip-art server beside this page (${u}).`); return; } return; }
-    if (!P.auto) return;
-    for (const pl of P.list) { const r = await probe(pl.url, pl.key); if (!r.ok) continue; await L.server(pl.url); await L.serverKey(pl.key || ''); await checkServer(); toast(`Connected to ${pl.name} (${pl.url}).`); return; }
+  // (asked: Get, Send or Sync pressed: the saved places are tried even when not used by themselves at start)
+  async function autoPlace(asked) {
+    const P = places(); if (serverOk) return true;
+    // the saved places first (top to bottom), then (on a website) the server beside this page; one that answers is used
+    const tries = [...(asked || P.auto || !P.list.length ? P.list : []), ...besideUs().filter((u) => !P.list.some((pl) => tidyUrl(pl.url) === u)).map((u) => ({ name: 'This website', url: u, key: '', beside: true }))];
+    for (const pl of tries) { const r = await probe(pl.url, pl.key); if (!r.ok) continue;
+      if (pl.beside) { P.list.push({ name: pl.name, url: pl.url, key: '' }); savePlaces(P); }
+      await L.server(pl.url); await L.serverKey(pl.key || ''); await checkServer(); toast(`Connected to ${pl.name} (${pl.url}).`); return true; }
+    return false;
   }
   function connectWindow() {
     const P = places(); let found = [];
@@ -425,7 +429,9 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     document.body.append(box); draw(); probeAll(P.list.map((pl) => pl.url));
   }
   async function checkServer(say) { serverUrl = await L.server(); serverOk = false; if (serverUrl) { try { const i = await L.serverInfo(); serverOk = true; if (say) toast(`Connected to the clip-art server (${i.libraries.map((l) => `${l.name}: ${l.database}`).join(', ')}).${i.writable ? '' : ' It can only be read from here.'}`); } catch (e) { if (say) toast(e.message); } } status(); }
-  async function need() { if (!serverUrl) { await act('connect'); if (!serverUrl) throw new Error('Connect to a server first.'); } if (!serverOk) await checkServer(); if (!serverOk) throw new Error(`The clip-art server at ${serverUrl} did not answer (is it running?).`); }
+  async function need() {
+    if (!serverUrl || !serverOk) { if (await autoPlace(true)) return; }
+    if (!serverUrl) { connectWindow(); throw Object.assign(new Error('No clip-art server answers yet: choose or add one in the window (Server › Connect…).'), { quiet: true }); } if (!serverOk) await checkServer(); if (!serverOk) throw new Error(`The clip-art server at ${serverUrl} did not answer (is it running?).`); }
   $('cats').onclick = (e) => { const t = e.target.closest('[data-tree]'); if (t) { const k = t.dataset.tree; if (openTree.has(k)) openTree.delete(k); else openTree.add(k); keepTree(); render(); return; } const b = e.target.closest('[data-cat]'); if (!b) return; cat = b.dataset.cat; sel.clear(); render(); };
   $('search').oninput = (e) => { query = e.target.value; render(); };
   $('grid').addEventListener('click', (e) => {
