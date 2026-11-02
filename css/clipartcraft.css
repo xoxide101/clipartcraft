@@ -316,3 +316,4 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 .ed-crow .input { padding: 3px 6px; min-width: 0; }
 .ed-crow .hint { font-size: 11px; }
 .editor .ed-canvas { box-shadow: 0 4px 20px rgba(0,0,0,.25); }
+.head-sets { display: flex; gap: 6px; } .head-sets select { flex: 1; min-width: 0; }

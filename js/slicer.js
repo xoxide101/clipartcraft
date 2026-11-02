@@ -329,11 +329,21 @@
   }
   // a table's (or grid's) rows and columns: untick to leave one out; row labels name the pictures, column headings
   // become a tag. Captions read under pictures name them too.
+  // Headings are remembered (in this browser): the ones used before are offered while typing, and the last sheet's can
+  // fill a new sheet's columns at once (sheets made from one template share them)
+  const HEADS = 'clipartcraft-headings';
+  // named lists of headings (a template's columns), to fill a sheet's columns in one go; the style table's comes first
+  const STARTER = { 'Classic to modern (7 styles)': ['Original Pixel Clip Art', 'Restored Original', 'Modern Illustrated Sticker', 'Dimensional Puffy Sticker', 'Glazed / Resin Collectible', 'Modern Realistic Illustration', 'Contemporary Realism'] };
+  const heads = () => { let h; try { h = JSON.parse(localStorage.getItem(HEADS) || 'null'); } catch (e) { h = null; } h = { all: [], last: [], ...(h || {}) }; if (!h.sets) h.sets = { ...STARTER }; return h; };
+  const saveHeads = (h) => { try { localStorage.setItem(HEADS, JSON.stringify(h)); } catch (e) { /* blocked */ } };
+  function rememberHeads() { const now = colNames.map((h) => String(h || '').trim()); if (!now.some(Boolean)) return; const h = heads(); h.last = now; h.all = [...new Set([...now.filter(Boolean), ...h.all])].slice(0, 200); saveHeads(h); }
   function renderNames() {
     const box = el && el.querySelector('#sl-names'); if (!box) return;
     const R = rowCount(), C = colCount(), caps = captions.filter((t) => t.own).length;
-    const list = (n, off, names, kind, word) => `<div class="rc-list">${Array.from({ length: n }, (_, i) => `<label class="rc"><input type="checkbox" data-${kind}="${i}" ${off.has(i) ? '' : 'checked'} title="Untick to leave this ${word} out"><input class="input" data-${kind}name="${i}" value="${esc(names[i] || '')}" placeholder="${word === 'row' ? 'Row' : 'Column'} ${i + 1}"></label>`).join('')}</div>`;
+    const list = (n, off, names, kind, word) => `<div class="rc-list">${Array.from({ length: n }, (_, i) => `<label class="rc"><input type="checkbox" data-${kind}="${i}" ${off.has(i) ? '' : 'checked'} title="Untick to leave this ${word} out"><input class="input" data-${kind}name="${i}" value="${esc(names[i] || '')}" placeholder="${word === 'row' ? 'Row' : 'Column'} ${i + 1}"${kind === 'col' ? ' list="sl-heads"' : ''}></label>`).join('')}</div>`;
     box.innerHTML = `${R ? `<div class="field"><span>Rows <small class="hint">(the label names each picture in the row)</small></span>${list(R, offRows, rowNames, 'row', 'row')}</div>` : ''}
+      ${C ? `<datalist id="sl-heads">${heads().all.map((h) => `<option value="${esc(h)}">`).join('')}</datalist><div class="field"><span>Headings from a list</span><div class="head-sets"><select class="input" data-headset>${Object.entries(heads().sets).map(([n, l]) => `<option value="${esc(n)}">${esc(n)} (${l.length})</option>`).join('')}</select><button class="btn outline sm" type="button" data-sl="useset">Use</button></div>
+        <div class="btns"><button class="btn ghost sm" type="button" data-sl="saveset">Save these headings as a list…</button><button class="btn ghost sm" type="button" data-sl="delset">Remove the list</button>${heads().last.some(Boolean) ? `<button class="btn ghost sm" type="button" data-sl="lastheads" title="${esc(heads().last.filter(Boolean).join(' · '))}">The last sheet’s (${heads().last.filter(Boolean).length})</button>` : ''}</div></div>` : ''}
       ${C ? `<div class="field"><span>Columns <small class="hint">(the heading becomes a tag, like the style)</small></span>${list(C, offCols, colNames, 'col', 'column')}</div>` : ''}
       <label class="field"><span>Sheet title <small class="hint">(kept with every picture as its collection)</small></span><input class="input" data-title value="${esc(sheetTitle)}" placeholder="${esc(sheetName)}"></label>
       ${chk('autoread', 'Read them by itself when a sheet opens (when the AI is downloaded)')}
@@ -789,6 +799,7 @@
   async function addReviewed(btn) {
     const keep = review.filter((r) => r.keep), category = String(S.category || '').trim(); if (!keep.length) return;
     btn.disabled = true;
+    rememberHeads();
     try { await L.guard(async () => {
       // the sheet first (to the working area), so if the page is closed half way it can simply be sliced again
       const src = sheetFile && window.CraftWork ? await window.CraftWork.add(sheetFile, { used: 0 }) : null;
@@ -1075,7 +1086,7 @@
       }
       opts.toast && opts.toast(`${jobs.length} label${jobs.length === 1 ? '' : 's'} read${quiet ? ' by itself' : ''}: check them in the panel.`);
     } catch (e) { console.error(e); opts.toast && opts.toast('Reading failed: ' + (e.message || e)); }
-    sayReading(''); renderNames(); draw();
+    sayReading(''); rememberHeads(); renderNames(); draw();
   }
   // dragging on the sheet: the main area, ruled-out boxes and the found boxes' edges (in the sheet's pixels)
   let drag = null;
@@ -1272,6 +1283,11 @@
       if (a && a.dataset.sl === 'unzone') { zones = []; skip.clear(); renderPanel(); find(); return; }
       if (a && a.dataset.sl === 'unmove') { moved.clear(); prefs.clear(); splits.clear(); renderPanel(); find(); return; }
       if (a && a.dataset.sl === 'read') return readLabels(a);
+      if (a && a.dataset.sl === 'lastheads') { colNames = heads().last.slice(0, colCount()); renderNames(); draw(); return; }
+      const setName = () => (el.querySelector('[data-headset]') || {}).value;
+      if (a && a.dataset.sl === 'useset') { const l = heads().sets[setName()]; if (!l) return; colNames = l.slice(0, colCount()); if (l.length !== colCount()) opts.toast && opts.toast(`That list has ${l.length} headings; this sheet has ${colCount()} columns.`); renderNames(); draw(); return; }
+      if (a && a.dataset.sl === 'saveset') { const now = colNames.slice(0, colCount()).map((h) => String(h || '').trim()); if (!now.some(Boolean)) return opts.toast && opts.toast('Type or read the headings first.'); const n = prompt('Name for this list of headings:', sheetTitle || ''); if (!n || !n.trim()) return; const h = heads(); h.sets[n.trim()] = now; saveHeads(h); renderNames(); opts.toast && opts.toast(`Saved the list “${n.trim()}”.`); return; }
+      if (a && a.dataset.sl === 'delset') { const n = setName(); if (!n || !confirm(`Remove the list “${n}”?`)) return; const h = heads(); delete h.sets[n]; saveHeads(h); renderNames(); return; }
       const rc = e.target.closest('input[data-row], input[data-col]'); if (rc) { const set = rc.dataset.row !== undefined ? offRows : offCols, i = +(rc.dataset.row ?? rc.dataset.col); if (rc.checked) set.delete(i); else set.add(i); skip.clear(); find(); return; }
     });
     const cv = el.querySelector('canvas'); cv.addEventListener('dblclick', (e) => { if (poly) { poly.pts.pop(); closePoly(e.altKey); } }); cv.addEventListener('contextmenu', onMenu); cv.addEventListener('pointerdown', onDown); cv.addEventListener('pointermove', onMove); cv.addEventListener('pointerup', onUp); cv.addEventListener('pointercancel', () => { drag = null; showDrag(null); });
