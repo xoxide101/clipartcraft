@@ -100,6 +100,7 @@ class Library {
     $this->db->exec("CREATE TABLE IF NOT EXISTS items (id VARCHAR(40) PRIMARY KEY, type VARCHAR(20), name VARCHAR(200) NOT NULL, original VARCHAR(200), seen VARCHAR(200), matched VARCHAR(200), category VARCHAR(200), style VARCHAR(40), form VARCHAR(40), tags $big, description $big,
       kind VARCHAR(20), width INTEGER, height INTEGER, frames INTEGER, colours INTEGER, source VARCHAR(500), author VARCHAR(200), licence VARCHAR(200),
       hash VARCHAR(64), added VARCHAR(40), changed VARCHAR(40), files $big)" . ($this->mysql ? ' CHARACTER SET utf8mb4' : ''));
+    if ($this->mysql) $this->db->exec('CREATE TABLE IF NOT EXISTS files (item VARCHAR(40) NOT NULL, kind VARCHAR(20) NOT NULL, name VARCHAR(250), data LONGBLOB, PRIMARY KEY (item, kind))');
     // columns added since the first version: an older database gets them now
     foreach (['type VARCHAR(20)', 'style VARCHAR(40)', 'form VARCHAR(40)', 'original VARCHAR(200)', 'seen VARCHAR(200)', 'matched VARCHAR(200)'] as $c) try { $this->db->exec("ALTER TABLE items ADD COLUMN $c"); } catch (Throwable $e) { /* has it */ }
   }
@@ -126,7 +127,20 @@ class Library {
     if (!isset($taken[mb_strtolower($name)])) return $name;
     for ($n = 2; ; $n++) { $t = $base . '_' . str_pad((string) $n, 3, '0', STR_PAD_LEFT); if (!isset($taken[mb_strtolower($t)])) return $t; }
   }
-  function read_file(array $it, string $k): ?string { $f = $it['files'][$k] ?? null; return $f && is_file($this->files . '/' . $f) ? file_get_contents($this->files . '/' . $f) : null; }
+  function read_file(array $it, string $k): ?string {
+    $f = $it['files'][$k] ?? null; if (!$f) return null; if (is_file($this->files . '/' . $f)) return file_get_contents($this->files . '/' . $f);
+    // sent through another server on this database: from the database, then kept in the folder
+    if (!$this->mysql) return null; $r = $this->q('SELECT data FROM files WHERE item = ? AND kind = ?', [$it['id'], $k])[0] ?? null; if (!$r) return null;
+    @file_put_contents($this->files . '/' . $f, $r['data']); return $r['data'];
+  }
+  // every picture file in the folder that the database has not got yet, copied into it
+  function files_to_db(): int {
+    if (!$this->mysql) return 0; $have = []; foreach ($this->q('SELECT item, kind FROM files') as $r) $have[$r['item'] . '|' . $r['kind']] = 1; $n = 0;
+    for ($off = 0; ; $off += 500) { $r = $this->list('', null, 500, $off); if (!$r['items']) break;
+      foreach ($r['items'] as $it) foreach ($it['files'] as $k => $f) { if (isset($have[$it['id'] . '|' . $k]) || !is_file($this->files . '/' . $f)) continue; $this->q('REPLACE INTO files (item, kind, name, data) VALUES (?, ?, ?, ?)', [$it['id'], $k, $f, file_get_contents($this->files . '/' . $f)]); $n++; }
+      if ($off + count($r['items']) >= $r['total']) break; }
+    return $n;
+  }
   // add or change an item: fields and/or pictures ['png' => bytes, 'pngExt' => 'png', …]
   function save(array $meta, array $pics = []): array {
     if (isset($meta['type']) && !in_array($meta['type'], TYPES, true)) fail(400, 'The type is ' . implode(' or ', TYPES) . '.');
@@ -137,15 +151,16 @@ class Library {
     if (!$old || (isset($meta['name']) && $meta['name'] !== $old['name'])) $it['name'] = $this->unique_name((string) ($meta['name'] ?? ($old['name'] ?? 'Untitled')), $it['id']);
     foreach (FILE_KINDS as $k) if (array_key_exists($k, $pics)) {
       if (!empty($it['files'][$k])) @unlink($this->files . '/' . $it['files'][$k]);
-      if ($pics[$k] === null) { unset($it['files'][$k]); continue; }
+      if ($pics[$k] === null) { unset($it['files'][$k]); if ($this->mysql) $this->q('DELETE FROM files WHERE item = ? AND kind = ?', [$it['id'], $k]); continue; }
       $it['files'][$k] = $it['id'] . ".$k." . preg_replace('/[^a-z0-9]/', '', strtolower($pics[$k . 'Ext'] ?? ($k === 'svg' ? 'svg' : 'png')));
       file_put_contents($this->files . '/' . $it['files'][$k], $pics[$k]);
+      if ($this->mysql) $this->q('REPLACE INTO files (item, kind, name, data) VALUES (?, ?, ?, ?)', [$it['id'], $k, $it['files'][$k], $pics[$k]]);
     }
     $r = []; foreach (COLS as $c) $r[] = $c === 'tags' ? (is_array($it['tags'] ?? null) ? implode(', ', $it['tags']) : ($it['tags'] ?? '')) : ($c === 'files' ? json_encode((object) $it['files']) : ($it[$c] ?? null));
     $this->q(($this->mysql ? 'REPLACE' : 'INSERT OR REPLACE') . ' INTO items (' . implode(',', COLS) . ') VALUES (' . implode(',', array_fill(0, count(COLS), '?')) . ')', $r);
     return $this->get($it['id']);
   }
-  function remove(string $id): bool { $it = $this->get($id); if (!$it) return false; foreach ($it['files'] as $f) @unlink($this->files . '/' . $f); $this->q('DELETE FROM items WHERE id = ?', [$id]); return true; }
+  function remove(string $id): bool { $it = $this->get($id); if (!$it) return false; foreach ($it['files'] as $f) @unlink($this->files . '/' . $f); if ($this->mysql) $this->q('DELETE FROM files WHERE item = ?', [$id]); $this->q('DELETE FROM items WHERE id = ?', [$id]); return true; }
 }
 
 // ------------------------------------------------------------------ http
@@ -203,6 +218,10 @@ if (($p[0] ?? '') === 'api' && ($p[1] ?? '') === 'setup') {
     $c = $with_password((array) ($j['connection'] ?? []));
     try { $l = new Library((string) ($c['name'] ?? 'test'), $c); $r = $l->list('', null, 1, 0); out(200, ['ok' => true, 'items' => $r['total'], 'where' => $l->where, 'database' => $l->mysql ? 'mysql' : 'sqlite']); }
     catch (Throwable $e) { out(200, ['ok' => false, 'error' => $e->getMessage()]); }
+  }
+  if (($p[2] ?? '') === 'filesdb' && $method === 'POST') {
+    $done = []; foreach ($C['connections'] as $c) { if (($c['db'] ?? '') !== 'mysql') continue; try { $done[] = ['name' => $c['name'], 'copied' => $lib_of($c['name'])->files_to_db()]; } catch (Throwable $e) { $done[] = ['name' => $c['name'], 'error' => $e->getMessage()]; } }
+    out(200, ['libraries' => $done]);
   }
   if (($p[2] ?? '') === 'copy' && $method === 'POST') {
     if (($j['from'] ?? '') === ($j['to'] ?? '')) fail(400, 'Choose two different libraries.');

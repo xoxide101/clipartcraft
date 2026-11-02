@@ -132,7 +132,7 @@ function mysqlDb(url) {
     catch (e) { const [rows] = await c.query('SHOW DATABASES LIKE ?', [dbName]); if (!rows.length) throw new Error(`The database “${dbName}” does not exist yet, and this login may not make it (${e.message}). Make it in phpMyAdmin, or use a login that may create databases.`); }
     finally { await c.end(); }
   })();
-  const pool = mysql.createPool(how(dbName)), ready = made.then(() => pool.query(SCHEMA('MEDIUMTEXT'))).then(() => Promise.all(ADDED.map((c) => pool.query(`ALTER TABLE items ADD COLUMN ${c}`).catch(() => {})))).catch((e) => { throw new Error('The MySQL/MariaDB database could not be opened: ' + e.message); });
+  const pool = mysql.createPool(how(dbName)), ready = made.then(() => pool.query(SCHEMA('MEDIUMTEXT'))).then(() => pool.query(FILES_TABLE)).then(() => Promise.all(ADDED.map((c) => pool.query(`ALTER TABLE items ADD COLUMN ${c}`).catch(() => {})))).catch((e) => { throw new Error('The MySQL/MariaDB database could not be opened: ' + e.message); });
   const q = async (sql, a = []) => { await ready; return (await pool.query(sql, a))[0]; };
   return {
     kind: 'mysql', where: `${u.host}${u.pathname}`, filesDir,
@@ -143,9 +143,15 @@ function mysqlDb(url) {
     async put(it) { const r = toRow(it); await q(`REPLACE INTO items (${COLS.join(',')}) VALUES (${COLS.map(() => '?').join(',')})`, COLS.map((c) => r[c])); return it; },
     async remove(id) { await q('DELETE FROM items WHERE id = ?', [id]); },
     async categories() { return q("SELECT COALESCE(category, '') category, COUNT(*) n FROM items GROUP BY COALESCE(category, '') ORDER BY category"); },
+    // the picture files kept in the database too (every server on it can hand them over, whichever one was sent them)
+    async putBlob(item, kind, name, data) { await q('REPLACE INTO files (item, kind, name, data) VALUES (?, ?, ?, ?)', [item, kind, name, data]); },
+    async getBlob(item, kind) { const r = (await q('SELECT name, data FROM files WHERE item = ? AND kind = ?', [item, kind]))[0]; return r ? { name: r.name, data: Buffer.from(r.data) } : null; },
+    async delBlobs(item, kind) { await q(kind ? 'DELETE FROM files WHERE item = ? AND kind = ?' : 'DELETE FROM files WHERE item = ?', kind ? [item, kind] : [item]); },
+    async blobKeys() { return new Set((await q('SELECT item, kind FROM files')).map((r) => `${r.item}|${r.kind}`)); },
     async close() { await pool.end(); },
   };
 }
+const FILES_TABLE = 'CREATE TABLE IF NOT EXISTS files (item VARCHAR(40) NOT NULL, kind VARCHAR(20) NOT NULL, name VARCHAR(250), data LONGBLOB, PRIMARY KEY (item, kind))';
 
 // JSON + files: library.json beside the pictures (named after the items). The format for export, import and moving.
 function jsonDb(dir) {
@@ -180,30 +186,44 @@ function library(name, spec) {
   const fileName = (it, k, ext) => db.named ? `${slug(it.name)}${k === 'png' || k === 'svg' ? '' : '.' + k}.${ext}` : `${it.id}.${k}.${ext}`;
   async function setFile(it, k, bytes, ext) {
     if (it.files[k]) try { fs.unlinkSync(path.join(db.filesDir, it.files[k])); } catch (e) { /* gone */ }
-    if (!bytes) { delete it.files[k]; return; }
+    if (!bytes) { delete it.files[k]; if (db.delBlobs) await db.delBlobs(it.id, k); return; }
     it.files[k] = fileName(it, k, ext); fs.writeFileSync(path.join(db.filesDir, it.files[k]), bytes);
+    if (db.putBlob) await db.putBlob(it.id, k, it.files[k], bytes);
   }
-  const readFile = (it, k) => it.files && it.files[k] ? fs.readFileSync(path.join(db.filesDir, it.files[k])) : null;
+  const readFile = (it, k) => { if (!it.files || !it.files[k]) return null; try { return fs.readFileSync(path.join(db.filesDir, it.files[k])); } catch (e) { return null; } };
+  // a picture from the folder, or (sent through another server on this database) from the database, then kept in the folder
+  async function readFileAny(it, k) {
+    const b = readFile(it, k); if (b || !db.getBlob || !it.files || !it.files[k]) return b;
+    const r = await db.getBlob(it.id, k); if (!r) return null; try { fs.writeFileSync(path.join(db.filesDir, it.files[k]), r.data); } catch (e) { /* read-only folder */ } return r.data;
+  }
+  // every picture file in the folder that the database has not got yet, copied into it (the ones sent before it kept them)
+  async function filesToDb(log = () => {}) {
+    if (!db.putBlob) return 0; const have = await db.blobKeys(); let n = 0;
+    for (let off = 0; ; off += 1000) { const r = await db.list({ limit: 1000, offset: off }); if (!r.items.length) break;
+      for (const it of r.items) for (const k of Object.keys(it.files || {})) { if (have.has(`${it.id}|${k}`)) continue; const b = readFile(it, k); if (!b) continue; await db.putBlob(it.id, k, it.files[k], b); n++; if (n % 100 === 0) log(`${n} copied`); }
+      if (off + r.items.length >= r.total) break; }
+    return n;
+  }
   // add or change an item: meta fields and/or pictures { png: Buffer, svg: Buffer|string, … } with { ext }
   async function save(meta, pics = {}) {
     const old = meta.id ? await db.get(meta.id) : null, now = new Date().toISOString();
     const it = { ...(old || { id: meta.id || uid(), type: 'clipart', added: now, files: {} }), ...pick(meta), changed: now };
     it.files = { ...(old ? old.files : {}) };
     if (!old || (meta.name !== undefined && meta.name !== old.name)) it.name = await uniqueName(db, meta.name || (old && old.name) || 'Untitled', it.id);
-    if (db.named && old && old.name !== it.name) for (const k of Object.keys(it.files)) { const b = readFile(old, k); if (b) await setFile(it, k, b, extOf(old.files[k])); }
+    if (db.named && old && old.name !== it.name) for (const k of Object.keys(it.files)) { const b = await readFileAny(old, k); if (b) await setFile(it, k, b, extOf(old.files[k])); }
     for (const k of FILE_KINDS) if (pics[k] !== undefined) await setFile(it, k, pics[k] && Buffer.from(pics[k]), pics[k + 'Ext'] || (k === 'svg' ? 'svg' : 'png'));
     return db.put(it);
   }
   const pick = (m) => m.type !== undefined && !TYPES.includes(m.type) ? (() => { throw Object.assign(new Error(`The type is ${TYPES.join(' or ')}.`), { code: 400 }); })() : Object.fromEntries(COLS.filter((c) => !['id', 'files', 'added', 'changed'].includes(c) && m[c] !== undefined).map((c) => [c, m[c]]));
-  async function remove(id) { const it = await db.get(id); if (!it) return false; for (const k of Object.keys(it.files)) try { fs.unlinkSync(path.join(db.filesDir, it.files[k])); } catch (e) { /* gone */ } await db.remove(id); return true; }
-  return { name, spec, db, save, remove, readFile };
+  async function remove(id) { const it = await db.get(id); if (!it) return false; for (const k of Object.keys(it.files)) try { fs.unlinkSync(path.join(db.filesDir, it.files[k])); } catch (e) { /* gone */ } if (db.delBlobs) await db.delBlobs(id); await db.remove(id); return true; }
+  return { name, spec, db, save, remove, readFile, readFileAny, filesToDb };
 }
 
 // copy every item (and its pictures) from one library to another: the way to move between SQLite, MySQL/MariaDB and JSON
 async function copyLibrary(from, to, log = console.log) {
   let n = 0; for (let off = 0; ; off += 500) {
     const { items, total } = await from.db.list({ limit: 500, offset: off }); if (!items.length) break;
-    for (const it of items) { const pics = {}; for (const k of Object.keys(it.files || {})) { pics[k] = from.readFile(it, k); pics[k + 'Ext'] = extOf(it.files[k]); }
+    for (const it of items) { const pics = {}; for (const k of Object.keys(it.files || {})) { pics[k] = await from.readFileAny(it, k); pics[k + 'Ext'] = extOf(it.files[k]); }
       const { files, ...meta } = it; await to.save(meta, pics); n++; }
     log(`  ${Math.min(off + items.length, total)} of ${total}`);
   }
@@ -234,7 +254,7 @@ async function exportZip(lib, opts = {}) {
   const files = [], list = [], used = new Set();
   for (let off = 0; ; off += 500) { const { items } = await lib.db.list({ ...opts, limit: 500, offset: off }); if (!items.length) break;
     for (const it of items) { let base = slug(it.name), k = 2; while (used.has(base.toLowerCase())) base = `${slug(it.name)}_${k++}`; used.add(base.toLowerCase());
-      const e = { ...it, files: undefined }; for (const fk of Object.keys(it.files || {})) { const ext = extOf(it.files[fk]), nm = `${base}${fk === 'png' || fk === 'svg' ? '' : '.' + fk}.${ext}`; const bytes = lib.readFile(it, fk); if (bytes) { files.push({ name: nm, bytes }); e[fk] = nm; } }
+      const e = { ...it, files: undefined }; for (const fk of Object.keys(it.files || {})) { const ext = extOf(it.files[fk]), nm = `${base}${fk === 'png' || fk === 'svg' ? '' : '.' + fk}.${ext}`; const bytes = await lib.readFileAny(it, fk); if (bytes) { files.push({ name: nm, bytes }); e[fk] = nm; } }
       list.push(e); } }
   files.push({ name: 'library.json', bytes: Buffer.from(JSON.stringify({ library: lib.name, made: new Date().toISOString(), by: 'Craft clip-art server', items: list }, null, 1)) });
   return zip(files);
@@ -305,7 +325,7 @@ function serve(S) {
       if (p[0] === 'clipart' && p.length >= 2) {
         const lib = p.length > 2 ? libOf(p[1]) : libOf(S.main), f = p[p.length - 1], m = f.match(/^(.*?)(?:\.(thumb|anim|orig|model))?\.([a-z0-9]+)$/i); if (!m) return send(res, 404, { error: 'No such picture.' });
         const it = (await lib.db.byName(m[1])) || (await lib.db.get(m[1])), k = m[2] || (m[3].toLowerCase() === 'svg' ? 'svg' : 'png');
-        const b = it && (lib.readFile(it, k) || (k === 'thumb' && lib.readFile(it, 'png'))); if (!b) return send(res, 404, { error: 'No such picture.' });
+        const b = it && ((await lib.readFileAny(it, k)) || (k === 'thumb' && (await lib.readFileAny(it, 'png')))); if (!b) return send(res, 404, { error: 'No such picture.' });
         return send(res, 200, b, MIME[extOf((it.files[k] || it.files.png))] || 'application/octet-stream', { 'Cache-Control': 'no-cache' });
       }
       if (p[0] === 'setup' && p.length === 1) return send(res, 200, fs.readFileSync(path.join(HERE, 'setup.html')), 'text/html; charset=utf-8', { 'Cache-Control': 'no-cache' });
@@ -342,6 +362,7 @@ function serve(S) {
           try { l = library(c.name || 'test', specOf(c)); const r = await l.db.list({ limit: 1 }); dlog('test', `${c.name}: connected, ${r.total} items (${l.db.where})`, what); return send(res, 200, { ok: true, items: r.total, where: l.db.where, database: l.db.kind }); }
           catch (e) { dlog('test', `${c.name}: FAILED ${e.message || e}`, { ...what, code: e.code, errno: e.errno }); return send(res, 200, { ok: false, error: String(e.message || e) }); } finally { if (l) try { await l.db.close(); } catch (e) { /* gone */ } }
         }
+        if (p[2] === 'filesdb' && req.method === 'POST') { const done = []; for (const c of S.connections) { if (c.db !== 'mysql') continue; try { done.push({ name: c.name, copied: await libOf(c.name).filesToDb() }); } catch (e) { done.push({ name: c.name, error: String(e.message || e) }); } } return send(res, 200, { libraries: done }); }
         if (p[2] === 'copy' && req.method === 'POST') {
           if (j.from === j.to) return send(res, 400, { error: 'Choose two different libraries.' });
           for (const w of ['from', 'to']) if (!S.connections.some((c) => c.name === j[w])) return send(res, 400, { error: `There is no library called “${j[w] || ''}” (save the libraries first).` });
@@ -393,6 +414,8 @@ if (require.main === module) {
     const S = settings(); if (a.includes('--share')) S.share = true; const pi = a.indexOf('--port'); if (pi >= 0 && +a[pi + 1] > 0) S.port = +a[pi + 1];
     if (pi >= 0 || a.includes('--share')) saveSettings(S);
     const srv = serve(S); srv.listen(S.port, S.share ? '0.0.0.0' : '127.0.0.1', () => {
+      // (MySQL/MariaDB libraries keep the picture files in the database too: any picture it has not got yet goes in now)
+      setTimeout(async () => { for (const c of S.connections) if (c.db === 'mysql') { try { const l = library(c.name, specOf(c)), n = await l.filesToDb((m) => console.log(`  ${c.name}: pictures into the database: ${m}`)); if (n) console.log(`  ${c.name}: ${n} picture files copied into the database (every server on it has them now)`); dlog('files', `${c.name}: ${n} picture files copied into the database`); await l.db.close(); } catch (e) { console.log(`  ${c.name}: copying the pictures into the database failed: ${e.message}`); dlog('files', `${c.name}: FAILED ${e.message}`); } } }, 500);
       console.log(`Craft clip-art server ${VERSION}: http://localhost:${S.port}/`);
       for (const c of S.connections) console.log(`  library “${c.name}”${c.name === S.main ? ' (main)' : ''}: ${c.db === 'mysql' ? `MySQL/MariaDB ${c.host}:${c.port}/${c.database}` : `${c.db} ${c.path}`}`);
       console.log(`  set up the databases: http://localhost:${S.port}/setup${S.admin ? '' : ' (make the admin login there first)'}`);
