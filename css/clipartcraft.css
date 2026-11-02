@@ -330,3 +330,9 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 .statusbar .size-cell .pct { min-width: 42px; text-align: right; color: var(--fg); font-weight: 600; }
 
 .statusbar .grow { flex: 1; }
+#grid .srv-more { grid-column: 1 / -1; justify-self: center; margin: 8px; }
+/* the left list never scrolls sideways (long names are cut with … instead) */
+#cats { overflow-x: hidden; }
+#cats .cat span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.side.left { overflow-x: hidden; }
+.cats .cat { min-width: 0; }

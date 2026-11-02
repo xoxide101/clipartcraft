@@ -73,20 +73,67 @@
     if ((await CraftNamer.downloaded()) && (!describeOn() || (await CraftNamer.describerDownloaded()))) { await sortWithAI(todo, { quiet: true }); await reload(); toast(`${todo.length} new picture${todo.length === 1 ? '' : 's'} sorted into categories by the AI.`); }
   }
   async function reload() { items = await L.all(); work = WA ? await WA.all() : []; [...sel].forEach((id) => { if (!items.some((it) => it.id === id)) sel.delete(id); }); render(); }
+  // ------------------------------------------------------------------ On the server: the server's pictures, looked at where
+  // they are (its thumbnails); only what is kept (or touched up) is copied into this browser
+  const srv = { items: [], total: 0, cats: [], loading: false, at: '' };
+  let srvSel = null, srvTimer = 0;
+  const onServer = () => cat === '#server' || cat.startsWith('#server:');
+  async function loadServer(more) {
+    if (!serverUrl || !serverOk) { srv.items = []; srv.total = 0; render(); return; }
+    const c = cat.startsWith('#server:') ? cat.slice(8) : '', key = `${serverUrl}|${c}|${query}`; if (!more && srv.at === key && srv.items.length) return; srv.loading = true;
+    try {
+      const r = await (await fetch(`${serverUrl}/api/items?limit=200&offset=${more ? srv.items.length : 0}&q=${encodeURIComponent(query.trim())}${c ? `&category=${encodeURIComponent(c)}` : ''}`)).json();
+      srv.items = more ? [...srv.items, ...r.items] : r.items; srv.total = r.total; srv.at = key;
+      if (!srv.cats.length) try { srv.cats = (await (await fetch(serverUrl + '/api/categories')).json()).filter((x) => x.category); } catch (e) { /* none */ }
+    } catch (e) { toast('The server’s pictures could not be read: ' + (e.message || e)); }
+    srv.loading = false; render();
+  }
+  const keptOf = (s2) => items.find((it) => it.serverId === s2.id);
+  // one of the server's pictures copied into this browser (to touch up, or to have without the server)
+  async function keepFromServer(s2) {
+    const have = keptOf(s2); if (have) return have;
+    busy(`Getting “${s2.name}”…`);
+    try {
+      const l = s2.links || {}, png = l.png ? await (await fetch(l.png)).blob() : null; let svg = null; if (l.svg) { try { const r = await fetch(l.svg); if (r.ok) svg = await r.text(); } catch (e) { /* the PNG will do */ } }
+      const it = await L.makeItem({ name: s2.name, category: s2.category || '', tags: s2.tags || [], png, svg, source: s2.source || 'Clip-art server' });
+      for (const k of ['style', 'form', 'description', 'original', 'seen', 'matched', 'collection', 'place', 'kind']) if (s2[k]) it[k] = s2[k];
+      it.serverId = s2.id; it.links = s2.links; it.checked = true; await L.put(it); busy(); await reload(); return it;
+    } catch (e) { busy(); fail(e); return null; }
+  }
+  function serverDetails() {
+    const d = $('details'), s2 = srv.items.find((x) => x.id === srvSel);
+    if (!s2) { d.innerHTML = `<div class="props-head">On the server</div><div class="sec"><p class="hint"><b>${srv.total}</b> picture${srv.total === 1 ? '' : 's'} on ${esc(serverUrl.replace(/^https?:\/\//, ''))}. They are looked at where they are: only the ones you keep (or touch up) are copied into this browser.</p><p class="hint">Click a picture to see it.</p></div>`; return; }
+    const l = s2.links || {}, kept = keptOf(s2), subj = (x) => String(x.original || x.name || '').replace(/\s*[–-]\s.*$/, '').replace(/_\d{3,}$/, '').trim().toLowerCase(), sib = srv.items.filter((x) => x !== s2 && subj(x) === subj(s2) && (x.source || '') === (s2.source || ''));
+    d.innerHTML = `<div class="props-head">On the server</div><div class="sec">
+      <div class="big check-bg"><img src="${esc(l.png || l.thumb || '')}" alt=""></div>
+      <p><b>${esc(s2.name)}</b></p><p class="hint">${[s2.category || 'Not sorted yet', s2.style, s2.form, s2.width && `${s2.width} × ${s2.height} pixels`].filter(Boolean).map(esc).join(' · ')}</p>
+      ${s2.description ? `<p class="hint">${esc(s2.description)}</p>` : ''}${(s2.tags || []).length ? `<p class="hint">Tags: ${esc(s2.tags.join(', '))}</p>` : ''}
+      ${sib.length ? `<div class="field"><span>Same DNA / style</span><div class="dna-row">${[s2, ...sib].map((x) => `<button type="button" class="dna${x === s2 ? ' on' : ''}" data-srv="${esc(x.id)}" title="${esc(x.name)}"><img src="${esc((x.links || {}).thumb || '')}" alt=""><small>${esc(x.style || '')}</small></button>`).join('')}</div></div>` : ''}
+      <div class="btns">${kept ? `<button class="btn outline" type="button" data-sa="show">Kept here: show it</button>` : `<button class="btn primary" type="button" data-sa="keep" title="Copy it into this browser's library (to have it without the server)">Keep a copy here</button>`}<button class="btn outline" type="button" data-sa="touchup" title="A copy is kept here and opened to touch up">Touch up…</button></div>
+      <div class="btns">${l.png ? `<a class="btn outline" href="${esc(l.png)}" target="_blank" rel="noopener" download>PNG</a>` : ''}${l.svg ? `<a class="btn outline" href="${esc(l.svg)}" target="_blank" rel="noopener" download>SVG</a>` : ''}<button type="button" class="btn ghost sm" data-copy="${esc(l.png || '')}">Copy its link</button></div></div>`;
+  }
+  $('details').addEventListener('click', async (e) => {
+    const sb = e.target.closest('[data-srv]'); if (sb) { srvSel = sb.dataset.srv; render(); return; }
+    const a = e.target.closest('[data-sa]'); if (!a) return; const s2 = srv.items.find((x) => x.id === srvSel); if (!s2) return;
+    if (a.dataset.sa === 'keep') { const it = await keepFromServer(s2); if (it) toast(`Kept “${it.name}” in this browser.`); render(); return; }
+    if (a.dataset.sa === 'show') { const it = keptOf(s2); if (it) { cat = '*'; sel = new Set([it.id]); render(); } return; }
+    if (a.dataset.sa === 'touchup') { const it = await keepFromServer(s2); if (it && window.ClipArtEditor) ClipArtEditor.open(it, { toast, done: async () => { await reload(); } }); }
+  });
   function render() {
     const C = cats(); const catBtn = ([k, l, n]) => `<button type="button" class="cat" data-cat="${esc(k)}" aria-current="${cat === k}"><span>${esc(l)}</span><b>${n}</b></button>`;
     const branch = (key, label, n, kids, dim) => { const open = openTree.has(key) && kids.length; return `<div class="tree-row">${kids.length ? `<button type="button" class="tw" data-tree="${esc(key)}" aria-expanded="${!!open}" aria-label="${open ? 'Close' : 'Open'} ${esc(label)}">${open ? '▾' : '▸'}</button>` : '<span class="tw"></span>'}${catBtn([key, label, n]).replace('class="cat"', `class="cat${dim ? ' empty' : ''}"`)}</div>${open ? `<div class="tree-kids">${kids.map(([k, l, c]) => `<div class="tree-row"><span class="tw"></span>${catBtn([k, l, c])}</div>`).join('')}</div>` : ''}`; };
     const count = new Map(C), unsorted = items.filter((it) => !KNOWN().includes(it.category || '')).length, toSort = items.filter(needsSort).length, srcs = sources();
-    $('cats').innerHTML = catBtn(['*', 'All clip art', items.length])
+    $('cats').innerHTML = (serverUrl && serverOk ? catBtn(['#server', 'On the server', srv.total || '…']) + (onServer() ? `<div class="tree-kids">${srv.cats.map((c) => `<div class="tree-row"><span class="tw"></span>${catBtn(['#server:' + c.category, c.category, c.n])}</div>`).join('')}</div>` : '') : '')
+      + catBtn(['*', 'Kept in this browser', items.length])
       + `<div class="work-head">Categories</div>` + KNOWN().map((c) => branch(c, c, count.get(c) || 0, count.get(c) ? groupBy(items.filter((it) => it.category === c), subjectOf).map(([sj, n]) => ['#sub:' + c + '|' + sj, sj, n]) : [], !count.get(c))).join('')
       + (unsorted ? catBtn(['#unsorted', 'Not sorted yet', unsorted]) : '')
       + (toSort ? `<button type="button" class="btn outline sort-ai" data-act="sort-ai" title="The AI looks at each picture and gives it a category, style, form and tags (and a name, where it only has a number)">Sort ${toSort} with AI</button>` : '')
       + (srcs.length ? `<div class="work-head">From sheets and files</div>` + srcs.map(([k, l, n]) => branch('#src:' + k, l, n, groupBy(items.filter((it) => srcOf(it) === k), (it) => (KNOWN().includes(it.category || '') ? it.category : 'Not sorted yet')).map(([c, m]) => ['#srcat:' + k + '|' + c, c, m]))).join('') : '')
       + `<div class="work-head">Working area</div>` + catBtn(['#work', 'Files imported from', work.length]);
     const S = shown(), g = $('grid'), keepY = g.scrollTop; g.style.setProperty('--tile', size + 'px');
-    g.innerHTML = cat === '#work' ? S.map((w) => `<button type="button" class="tile" role="option" data-id="${w.id}" aria-selected="${sel.has(w.id)}" title="${esc(w.fileName)}"><span class="pic">${w.thumb ? `<img src="${w.thumb}" alt="" loading="lazy">` : ''}</span><span class="nm">${esc(w.name)}</span>${w.used ? `<i class="used">${w.used} made</i>` : ''}<i class="fmt">${esc((w.fileName.split('.').pop() || '').toUpperCase())}</i></button>`).join('') : S.map((it) => `<button type="button" class="tile" role="option" data-id="${it.id}" aria-selected="${sel.has(it.id)}" title="${esc(it.name)}${it.category ? ' · ' + esc(it.category) : ''}"><span class="pic"><img src="${it.thumb}" alt="" loading="lazy"></span><span class="nm">${esc(it.name)}</span>${it.anim ? '<i class="fmt">▶</i>' : it.svg ? '<i class="fmt">SVG</i>' : ''}</button>`).join('');
+    g.innerHTML = onServer() ? (srv.items.map((x) => `<button type="button" class="tile" role="option" data-srv-id="${esc(x.id)}" aria-selected="${srvSel === x.id}" title="${esc(x.name)}${x.category ? ' · ' + esc(x.category) : ''}"><span class="pic"><img src="${esc((x.links || {}).thumb || '')}" alt="" loading="lazy"></span><span class="nm">${esc(x.name)}</span>${keptOf(x) ? '<i class="used">kept</i>' : ''}${(x.links || {}).svg ? '<i class="fmt">SVG</i>' : ''}</button>`).join('') + (srv.items.length < srv.total ? `<button type="button" class="btn outline srv-more" data-srv-more>Show more (${srv.items.length} of ${srv.total})</button>` : '') || `<p class="hint" style="padding:16px">${srv.loading ? 'Asking the server…' : 'Nothing on the server matches.'}</p>`) : cat === '#work' ? S.map((w) => `<button type="button" class="tile" role="option" data-id="${w.id}" aria-selected="${sel.has(w.id)}" title="${esc(w.fileName)}"><span class="pic">${w.thumb ? `<img src="${w.thumb}" alt="" loading="lazy">` : ''}</span><span class="nm">${esc(w.name)}</span>${w.used ? `<i class="used">${w.used} made</i>` : ''}<i class="fmt">${esc((w.fileName.split('.').pop() || '').toUpperCase())}</i></button>`).join('') : S.map((it) => `<button type="button" class="tile" role="option" data-id="${it.id}" aria-selected="${sel.has(it.id)}" title="${esc(it.name)}${it.category ? ' · ' + esc(it.category) : ''}"><span class="pic"><img src="${it.thumb}" alt="" loading="lazy"></span><span class="nm">${esc(it.name)}</span>${it.anim ? '<i class="fmt">▶</i>' : it.svg ? '<i class="fmt">SVG</i>' : ''}</button>`).join('');
     g.scrollTop = keepY; // (redrawn in place: choosing a picture does not jump the grid)
-    const showIt = startOpen || (!items.length && cat !== '#work'); $('start').hidden = !showIt; if (showIt) renderStart();
+    const showIt = startOpen || (!items.length && cat !== '#work' && !onServer()); $('start').hidden = !showIt; if (showIt) renderStart();
     renderDetails(); syncProps(); status(); lightUp(g); lightUp($('details')); if (propsBox && !propsBox.hidden) lightUp(propsBox);
   }
   function renderStart() {
@@ -119,6 +166,7 @@
       <button class="btn ghost sm" type="button" data-dna-all="${it.id}">Choose all ${sib.length + 1}</button></div>`;
   }
   function renderDetails() {
+    if (onServer()) return serverDetails();
     if (cat === '#work') return renderWork();
     const d = $('details'), S = items.filter((it) => sel.has(it.id));
     if (!S.length) { d.innerHTML = `<div class="props-head">Library</div><div class="sec"><p class="hint"><b>${items.length}</b> item${items.length === 1 ? '' : 's'} in ${cats().length} categor${cats().length === 1 ? 'y' : 'ies'}.</p><p class="hint">Click a picture to see it and name it; Ctrl-click or Shift-click picks several (to give them a category together).</p><button class="btn ghost sm" type="button" data-act="edit-lists">Edit the lists…</button></div>`; return; }
@@ -159,7 +207,7 @@
     const dot = serverUrl ? (serverOk ? 'ok' : 'bad') : 'off';
     $('status').innerHTML = `<span class="cell" title="${serverUrl ? esc(`The clip-art server at ${serverUrl}. “On it”: how many of the pictures in this browser have been sent to it (Send to the server or Sync sends the rest).`) : 'No clip-art server: the library is kept in this browser (Server › Connect…)'}"><i class="dot ${dot}"></i>${serverUrl ? `${serverOk ? 'Connected' : 'Not answering'}: ${esc(serverUrl.replace(/^https?:\/\//, '').replace(/\/clipart-server\.php$/, ''))} · <b>${onIt}</b> of ${items.length} on it` : 'No server'}</span>
       <span class="cell"><b>${items.length}</b> picture${items.length === 1 ? '' : 's'} · <b>${cats}</b> categor${cats === 1 ? 'y' : 'ies'}</span>
-      ${cat === '*' && !query ? '' : `<span class="cell"><b>${S.length}</b> shown</span>`}
+      ${onServer() ? `<span class="cell">On the server: <b>${srv.items.length}</b> of ${srv.total} shown</span>` : cat === '*' && !query ? '' : `<span class="cell"><b>${S.length}</b> shown</span>`}
       <span class="cell">${sel.size ? `<b>${sel.size}</b> chosen` : 'none chosen'}</span><span class="grow"></span>
       <span class="cell size-cell" title="The size of the pictures"><button type="button" data-sz="-" aria-label="Smaller">−</button><input type="range" id="size" min="80" max="320" value="${size}" aria-label="Size of the pictures"><button type="button" data-sz="+" aria-label="Bigger">+</button><button type="button" class="pct" data-sz="0" title="Back to 100%">${pct}%</button></span>`;
     const setSize = (v) => { size = Math.max(80, Math.min(320, Math.round(v))); $('grid').style.setProperty('--tile', size + 'px'); try { localStorage.setItem('clipartcraft-size', size); } catch (err) { /* blocked */ } const p = $('status').querySelector('.pct'); if (p) p.textContent = Math.round((size / SIZE0) * 100) + '%'; const r = $('size'); if (r && +r.value !== size) r.value = size; };
@@ -432,7 +480,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
 `;
         download(new Blob([text], { type: 'text/javascript' }), 'config.js'); toast('Saved config.js: put it beside ClipArtCraft’s index.html.'); return; }
       if (c === 'none') { await L.server(''); await checkServer(); draw(); toast('Not using a server now (the pictures stay here).'); return; }
-      if (c === 'use') { const pl = P.list[i]; pl.url = tidyUrl(pl.url); if (!pl.url) return toast('Type its address first.'); savePlaces(P); await L.server(pl.url); await L.serverKey(pl.key || ''); await checkServer(true); await probeAll([pl.url]); fillFromServer(); return; }
+      if (c === 'use') { const pl = P.list[i]; pl.url = tidyUrl(pl.url); if (!pl.url) return toast('Type its address first.'); savePlaces(P); await L.server(pl.url); await L.serverKey(pl.key || ''); await checkServer(true); await probeAll([pl.url]); srv.items = []; srv.cats = []; srv.at = ''; fillFromServer(); return; }
       if (c === 'look') { b.disabled = true; b.textContent = 'Looking…';
         const cands = [...P.list.map((pl) => pl.url), 'http://localhost:3370', 'http://localhost:8790', ...besideUs()];
         await probeAll(cands);
@@ -446,9 +494,11 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
   async function need() {
     if (!serverUrl || !serverOk) { if (await autoPlace(true)) return; }
     if (!serverUrl) { connectWindow(); throw Object.assign(new Error('No clip-art server answers yet: choose or add one in the window (Server › Connect…).'), { quiet: true }); } if (!serverOk) await checkServer(); if (!serverOk) throw new Error(`The clip-art server at ${serverUrl} did not answer (is it running?).`); }
-  $('cats').onclick = (e) => { const t = e.target.closest('[data-tree]'); if (t) { const k = t.dataset.tree; if (openTree.has(k)) openTree.delete(k); else openTree.add(k); keepTree(); render(); return; } const b = e.target.closest('[data-cat]'); if (!b) return; cat = b.dataset.cat; sel.clear(); render(); };
-  $('search').oninput = (e) => { query = e.target.value; render(); };
+  $('cats').onclick = (e) => { const t = e.target.closest('[data-tree]'); if (t) { const k = t.dataset.tree; if (openTree.has(k)) openTree.delete(k); else openTree.add(k); keepTree(); render(); return; } const b = e.target.closest('[data-cat]'); if (!b) return; cat = b.dataset.cat; sel.clear(); srvSel = null; render(); if (onServer()) loadServer(); };
+  $('search').oninput = (e) => { query = e.target.value; if (onServer()) { clearTimeout(srvTimer); srvTimer = setTimeout(() => loadServer(), 300); return; } render(); };
   $('grid').addEventListener('click', (e) => {
+    if (e.target.closest('[data-srv-more]')) return loadServer(true);
+    const st = e.target.closest('[data-srv-id]'); if (st) { srvSel = st.dataset.srvId; render(); return; }
     const t = e.target.closest('.tile'); if (!t) { if (e.target === $('grid')) { sel.clear(); render(); } return; } const id = t.dataset.id, S = shown();
     if (e.shiftKey && last) { const a = S.findIndex((x) => x.id === last), b = S.findIndex((x) => x.id === id); S.slice(Math.min(a, b), Math.max(a, b) + 1).forEach((x) => sel.add(x.id)); }
     else if (e.ctrlKey || e.metaKey) { if (sel.has(id)) sel.delete(id); else sel.add(id); }
@@ -605,10 +655,9 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
   }
   // a browser whose library is still empty, connected to a server: its pictures are fetched straight away (otherwise a new
   // browser looks as if it could not read the server)
+  // (the server's pictures are not copied: they are looked at On the server, and only the ones kept or touched up come here)
   async function fillFromServer() {
-    if (!serverOk || items.length) return;
-    try { const r = await L.pull((n, t) => busy(`Getting the server’s pictures: ${n} of ${t}…`)); busy(); await reload(); if (r.made.length) toast(`Got ${r.made.length} pictures from the server.`); }
-    catch (e) { busy(); console.warn('Getting the server’s pictures failed', e); }
+    if (!serverOk) return; await loadServer(); if (!items.length) { cat = '#server'; render(); }
   }
   loadLists().then(reload).then(() => checkServer()).then(autoPlace).then(fillFromServer).then(offerResume).catch(fail);
   window.ClipArtCraft = { reload, items: () => items };
