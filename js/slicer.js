@@ -214,6 +214,7 @@
   // rows and columns left out, their names (row labels, column headings), captions read, and boxes moved by hand
   // (keyed by where the box was found). `work` is the main area with ruled-out parts and left-out text painted over as
   // page: everything is found and cut from it; (wx, wy) is where it sits on the sheet.
+  let boxAnchor = null; // the box clicked last (where a Shift-click range starts)
   let area = null, outs = [], table = null, offRows = new Set(), offCols = new Set(), rowNames = [], colNames = [], captions = [], readText = new Map(), moved = new Map(), prefs = new Map(), splits = new Map(), zones = [], marks = [], joins = [], chosenBoxes = new Set(), sheetTitle = '', tool = 'pick', work = null, wx = 0, wy = 0;
   const keyOf = (b) => `${Math.round(b.x + wx)},${Math.round(b.y + wy)},${Math.round(b.w)},${Math.round(b.h)}`;
   function prep() {
@@ -314,7 +315,7 @@
       <p class="hint">Click a box on the sheet to leave that picture out (or put it back); drag its edges to make it bigger or smaller.</p></div>`;
   }
   // the main area, ruled-out parts and text: what a drag on the sheet does, and the margins as numbers
-  const TOOLS = { pick: 'Click a box to leave it out; Ctrl-click several to join them (right-click); drag a box’s edge to move it (to trim off a name, or take in a bit that was missed).', area: 'Drag a box round the part to cut: everything outside it is left out. Drag its edges to move them.', out: 'Drag a box over anything to leave out (a title, a label, a watermark, a picture). Click one to take it away again.', solid: 'Draw a box, an ellipse or a lasso on a picture (lasso: drag to draw freehand, click or Shift-click for straight corners, close on the first corner, a double-click or Enter; Backspace takes a corner off, Escape cancels; hold Alt to erase with that one). Keep puts that part back exactly as on the sheet (a face the colour of the page); Erase makes it see-through. Outside does it to the rest of that picture instead. They are done after everything automatic, in order; click one to take it away.', grid: 'Drag a box over a row or a part that came out wrong, then say how many pictures across and down: it is cut as that grid. Right-click one of its pictures to change or remove it.' };
+  const TOOLS = { pick: 'Click a box to leave it out; Ctrl-click several to choose them, Ctrl+Shift-click to choose every box from the last one clicked to this one (rows and columns); right-click for what to do with them (join, leave out…); drag a box’s edge to move it (to trim off a name, or take in a bit that was missed).', area: 'Drag a box round the part to cut: everything outside it is left out. Drag its edges to move them.', out: 'Drag a box over anything to leave out (a title, a label, a watermark, a picture). Click one to take it away again.', solid: 'Draw a box, an ellipse or a lasso on a picture (lasso: drag to draw freehand, click or Shift-click for straight corners, close on the first corner, a double-click or Enter; Backspace takes a corner off, Escape cancels; hold Alt to erase with that one). Keep puts that part back exactly as on the sheet (a face the colour of the page); Erase makes it see-through. Outside does it to the rest of that picture instead. They are done after everything automatic, in order; click one to take it away.', grid: 'Drag a box over a row or a part that came out wrong, then say how many pictures across and down: it is cut as that grid. Right-click one of its pictures to change or remove it.' };
   function areaHtml() {
     if (!sheet) return '';
     const a = area || { x: 0, y: 0, w: sheet.width, h: sheet.height }, m = { t: a.y, l: a.x, b: sheet.height - a.y - a.h, r: sheet.width - a.x - a.w };
@@ -1195,10 +1196,17 @@
       if (tool === 'solid') { let i = -1; marks.forEach((mk, j) => { if (inPoly(mk.pts, p.x, p.y)) i = j; }); if (i >= 0) { marks.splice(i, 1); renderPanel(); draw(); } return; }
       if (tool !== 'pick') return;
       const i = boxes.findIndex((b) => { const sb = sheetBox(b); return p.x >= sb.x && p.x <= sb.x + sb.w && p.y >= sb.y && p.y <= sb.y + sb.h; });
-      // Ctrl-click: choose several (to join them); a plain click leaves a picture out (or puts it back)
-      if (i >= 0 && (e.ctrlKey || e.metaKey)) { const k = boxes[i].key; if (chosenBoxes.has(k)) chosenBoxes.delete(k); else chosenBoxes.add(k); draw(); if (chosenBoxes.size === 2) opts.toast && opts.toast('Right-click to join the chosen boxes into one picture.'); return; }
+      // Ctrl-click: choose several (to join them); Ctrl+Shift-click (or Shift-click): every box between the last one
+      // clicked and this one, across rows and down columns, added to those chosen; a plain click leaves a picture out
+      if (i >= 0 && e.shiftKey && !e.altKey) {
+        const a = boxes.find((b) => b.key === boxAnchor) || boxes[i], ca = sheetBox(a), cb = sheetBox(boxes[i]), mid = (b) => [b.x + b.w / 2, b.y + b.h / 2], [ax, ay] = mid(ca), [bx, by] = mid(cb);
+        const x0 = Math.min(ax, bx), x1 = Math.max(ax, bx), y0 = Math.min(ay, by), y1 = Math.max(ay, by); let n = 0;
+        boxes.forEach((b) => { const [mx, my] = mid(sheetBox(b)); if (mx >= x0 - 1 && mx <= x1 + 1 && my >= y0 - 1 && my <= y1 + 1 && !chosenBoxes.has(b.key)) { chosenBoxes.add(b.key); n++; } });
+        boxAnchor = boxes[i].key; draw(); opts.toast && opts.toast(`${chosenBoxes.size} chosen (${n} added): right-click for what to do with them, Escape to let them go.`); return;
+      }
+      if (i >= 0 && (e.ctrlKey || e.metaKey)) { const k = boxes[i].key; boxAnchor = k; if (chosenBoxes.has(k)) chosenBoxes.delete(k); else chosenBoxes.add(k); draw(); if (chosenBoxes.size === 2) opts.toast && opts.toast('Right-click to join the chosen boxes into one picture.'); return; }
       if (chosenBoxes.size) { chosenBoxes.clear(); draw(); }
-      if (i >= 0) { if (skip.has(i)) skip.delete(i); else skip.add(i); draw(); count(); return; }
+      if (i >= 0) { boxAnchor = boxes[i].key; if (skip.has(i)) skip.delete(i); else skip.add(i); draw(); count(); return; }
       // a table's row label or column heading: that whole row or column out (or back)
       if (S.mode === 'table' && table) { const pr = table.rows.map((r, j) => j).filter((j) => table.rowKind[j] === 'pic'), pc = table.cols.map((c, j) => j).filter((j) => table.colKind[j] === 'pic');
         const ci = table.cols.findIndex((c) => p.x >= c[0] && p.x <= c[1]), ri = table.rows.findIndex((r) => p.y >= r[0] && p.y <= r[1]);
