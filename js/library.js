@@ -274,21 +274,21 @@
     for (let off = 0; ; off += 500) {
       const r = await call(`/api/items?limit=500&offset=${off}&q=${encodeURIComponent(q)}${category !== undefined ? '&category=' + encodeURIComponent(category) : ''}${since ? '&since=' + encodeURIComponent(since) : ''}&order=changed`); total = r.total; if (!r.items.length) break;
       for (const s of r.items) {
-        const old = here.get(s.id); seen.add(s.id); progress(++n, total); if ((s.changed || '') > newestSeen) newestSeen = s.changed; // (in step already: its thumbnail remade once if it was made from an older copy, as a pull before this kept the old one)
+        const old = here.get(s.id); seen.add(s.id); progress(++n, total, 'list'); if ((s.changed || '') > newestSeen) newestSeen = s.changed; // (in step already: its thumbnail remade once if it was made from an older copy, as a pull before this kept the old one)
         if (old && old.serverChanged === s.changed) { if (old.thumbFrom !== s.changed && (old.png || old.svg)) { try { const t = await thumbOf(old.png ? URL.createObjectURL(old.png) : svgUrl(old.svg)); old.thumb = t.thumb; old.thumbFrom = s.changed; await tx('items', 'readwrite', (st) => req(st.put(old))); thumbs.push(old); } catch (e) { /* unreadable */ } } continue; }
         if (!old && (skip.has(s.id) || gone.has(s.id))) continue;
         // changed here and on the server too: the newer one wins (a change here older than the server's copy gives way)
         if (old && old.changed && Date.parse(old.edited || old.added || 0) >= Date.parse(s.changed || 0)) continue;
         if (!old) { fresh.push(s); continue; }
         // (a picture here as data only: its data again; one here with its files: those again too)
-        if (old.remote) { old.why = await whyOf(old, s, null, null); note(s, old); } else await take(s, old);
+        if (old.remote) { old.why = await whyOf(old, s, null, null); note(s, old); } else { progress(n, total, 'files'); await take(s, old); }
       }
     }
     // new on the server: brought down only when they are few (a big collection there, an archive of thousands, is browsed
     // on the server a page at a time: brought into this browser it would be too much for the page)
     for (const s of fresh) note(s, null).why = 'new on the server (its details; the picture comes when it is used)';
     // (the data saved a few hundred to a transaction: thousands, one by one, would take minutes)
-    for (let i = 0; i < datas.length; i += 500) { const part = datas.slice(i, i + 500); await tx('items', 'readwrite', (st) => Promise.all(part.map((x) => req(st.put(x))))); }
+    for (let i = 0; i < datas.length; i += 500) { const part = datas.slice(i, i + 500); await tx('items', 'readwrite', (st) => Promise.all(part.map((x) => req(st.put(x))))); progress(Math.min(datas.length, i + 500), datas.length, 'save'); }
     // (a whole pull: pictures here that the server had but no longer has were deleted there, from another machine: they go here too)
     const removed = []; if (!q && !since && category === undefined && seen.size === total) { for (const [sid, it] of here) if (!seen.has(sid)) removed.push(it); if (removed.length) await remove(removed.map((it) => it.id)); }
     changed(); return { made, updated, thumbs, total, missing, removed, leftNew, newest: newestSeen };

@@ -141,6 +141,23 @@
     box.addEventListener('click', async (e) => { if (e.target === box || e.target.closest('[data-s=close]')) return box.remove(); if (e.target.closest('[data-s=server]')) { box.remove(); cat = '#server'; render(); loadServer(); return; } const b = e.target.closest('[data-s]'); if (!b) return; const l = rows[+b.dataset.s][2]; box.remove(); cat = '*'; query = ''; sel = new Set(l.map((x) => x.id)); render(); document.querySelector('#grid [aria-selected=true]')?.scrollIntoView({ block: 'nearest' }); toast(`${l.length} chosen.`); });
     document.body.append(box);
   }
+  // A progress strip for a long server job (Sync, Get, the opening check): only what it is doing now, step by step (how
+  // many of how many, how fast, how long so far), apart from the picture totals in the count line
+  function jobStrip(title) {
+    document.querySelectorAll('.job-strip').forEach((x) => x.remove());
+    const el = document.createElement('div'); el.className = 'arc-strip job-strip'; el.innerHTML = '<div class="arc-bar"><i></i></div><span class="arc-strip-t"></span><button class="btn ghost sm" type="button" data-job="hide">Hide</button>'; document.body.append(el);
+    el.addEventListener('click', (e) => { if (e.target.closest('[data-job=hide]')) el.hidden = true; });
+    const t0 = performance.now(); let ph0 = '', p0 = 0, n0 = 0, last = 0;
+    const secs = () => (performance.now() - t0) / 1000, dur = (x) => (x >= 90 ? `${Math.round(x / 60)} min` : `${Math.max(1, Math.round(x))} s`);
+    const step = (phase, n, of) => {
+      const t = performance.now(); if (phase !== ph0) { ph0 = phase; p0 = t; n0 = n || 0; } if (t - last < 200 && n !== of) return; last = t;
+      const rate = n && t - p0 > 500 ? (n - n0) / ((t - p0) / 1000) : 0, left = rate && of ? (of - n) / rate : 0;
+      el.querySelector('.arc-strip-t').textContent = `${title}: ${phase}${of ? ` · ${(n || 0).toLocaleString()} of ${of.toLocaleString()} (${((100 * (n || 0)) / of).toFixed(1)}%)` : ''}${rate ? ` · ${Math.round(rate).toLocaleString()} a second` : ''}${left > 2 ? ` · about ${dur(left)} left` : ''} · ${dur(secs())} so far`;
+      el.querySelector('.arc-bar i').style.width = of ? `${(100 * (n || 0)) / of}%` : '0%';
+    };
+    const WORDS = { list: 'reading the server’s list', save: 'saving the details', files: 'updating pictures kept with their files' };
+    return { step, pullStep: (n, t, ph) => step(WORDS[ph] || 'getting', n, t), end(text) { el.hidden = false; el.querySelector('.arc-strip-t').textContent = `${title}: ${text} · ${dur(secs())}`; el.querySelector('.arc-bar i').style.width = '100%'; const b = el.querySelector('[data-job]'); b.textContent = 'Close'; setTimeout(() => el.remove(), 12000); } };
+  }
   // Send to the server now (right-click): the chosen pictures sent as they are here, whatever is marked (a force update)
   async function forceSend(S) { if (!S.length) return; try { busy(`Sending ${S.length}…`); const d = await L.push(S, (k, t) => busy(`Sending ${k} of ${t}…`)); busy(); await reload(); if (onServer()) loadServer(); toast(`Sent to the server: ${d.length === 1 ? `“${d[0].name}”` : `${d.length} pictures`}.`); } catch (e) { busy(); fail(e); } }
   const keptOf = (s2) => items.find((it) => it.serverId === s2.id);
@@ -506,8 +523,8 @@
         const u = URL.createObjectURL(b), ln = document.createElement('a'); ln.href = u; ln.download = name; document.body.append(ln); ln.click(); ln.remove(); setTimeout(() => URL.revokeObjectURL(u), 60000);
         busy(); toast(`Saved “${name}” (${(b.size / 1048576).toFixed(1)} MB) to your downloads.`); return;
       }
-      if (a === 'pull') { await need(); const r = await L.pull((n, t) => busy(`Getting ${n} of ${t}…`)); busy(); await reload(); syncReport(r, [], 0, 'Got from the server'); if (!r.made.length && !r.thumbs.length && !r.leftNew) toast(`Already up to date (the server has ${r.total.toLocaleString()}).`); return; }
-      if (a === 'sync') { await need(); const del = await L.sendDeletes(); const r = await L.pull((n, t) => busy(`Getting ${n} of ${t}…`)); const fresh = (await L.all()).filter((it) => !it.serverId || it.changed); const d = await L.push(fresh, (n, t) => busy(`Sending ${n} of ${t}…`)); busy(); await reload(); syncReport(r, d, del); return; }
+      if (a === 'pull') { await need(); const J = jobStrip('Get from the server'); let r; try { r = await L.pull(J.pullStep); J.end(`done: ${r.made.length.toLocaleString()} brought in`); } catch (e) { J.end('stopped: ' + e.message); throw e; } await reload(); syncReport(r, [], 0, 'Got from the server'); if (!r.made.length && !r.thumbs.length && !r.leftNew) toast(`Already up to date (the server has ${r.total.toLocaleString()}).`); return; }
+      if (a === 'sync') { await need(); const J = jobStrip('Sync'); try { J.step('sending deletions waiting here'); const del = await L.sendDeletes(); const r = await L.pull(J.pullStep); const fresh = (await L.all()).filter((it) => !it.serverId || it.changed); J.step('sending changes from here', 0, fresh.length); const d = await L.push(fresh, (n, t) => J.step('sending changes from here', n, t)); await reload(); J.end(`done: ${(r.made.length - r.updated.length).toLocaleString()} new (details), ${r.updated.length.toLocaleString()} updated, ${d.length.toLocaleString()} sent${del ? `, ${del} deleted` : ''}`); syncReport(r, d, del); } catch (e) { J.end('stopped: ' + e.message); throw e; } return; }
       if (a === 'unserver') { const S = chosen().filter((it) => it.serverId); if (!S.length) return toast('Choose something that is on the server.'); if (!confirm(`Take ${S.length === 1 ? `“${S[0].name}”` : `${S.length} items`} off the server? (They stay in this library.)`)) return; await L.removeFromServer(S); await reload(); toast('Taken off the server.'); return; }
       if (a === 'open-server') { if (!serverUrl) return toast('Connect to a server first.'); window.open(serverUrl + '/', '_blank'); return; }
       const one = chosen()[0]; if (!one) return;
@@ -761,7 +778,8 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     if (!serverUrl || !serverOk) return; let since = ''; try { since = localStorage.getItem(SEEN()) || ''; } catch (e) { /* blocked */ }
     const mark = (t) => { try { localStorage.setItem(SEEN(), t); } catch (e) { /* blocked */ } };
     if (!since) { const r = await L.pull(() => {}, { since: new Date(Date.now() - 864e5).toISOString(), newMax: 50 }).catch(() => null); mark((r && r.newest) || new Date().toISOString()); if (r && (r.made.length || r.thumbs.length)) { await reload(); syncReport(r, [], 0, 'Changed on the server in the last day'); } return; }
-    try { const r = await L.pull(() => {}, { since, newMax: 50 }); if (r.newest) mark(r.newest > since ? r.newest : since); if (r.made.length || r.thumbs.length || r.leftNew) { await reload(); if (onServer()) loadServer(); syncReport(r, [], 0, 'Changed on the server since you were last here'); } } catch (e) { /* the next look */ }
+    let J = null; const big = (n, t, ph) => { if (!J && t > 200) J = jobStrip('Since you were last here'); if (J) J.pullStep(n, t, ph); };
+    try { const r = await L.pull(big, { since, newMax: 50 }); if (J) J.end(`done: ${r.made.length.toLocaleString()} brought in`); if (r.newest) mark(r.newest > since ? r.newest : since); if (r.made.length || r.thumbs.length || r.leftNew) { await reload(); if (onServer()) loadServer(); syncReport(r, [], 0, 'Changed on the server since you were last here'); } } catch (e) { /* the next look */ }
   }
   async function checkServer(say) { serverUrl = await L.server(); serverOk = false; if (serverUrl) { try { const i = await L.serverInfo(); serverOk = true; if (say) toast(`Connected to the clip-art server (${i.libraries.map((l) => `${l.name}: ${l.database}`).join(', ')}).${i.writable ? '' : ' It can only be read from here.'}`); } catch (e) { if (say) toast(e.message); } } status(); if (serverOk) { sinceLast(); serverCount(); } }
   async function need() {
