@@ -21,7 +21,7 @@
   const letterOf = (n) => { const c = String(n || '').trim().charAt(0).toUpperCase(); return /[A-Z]/.test(c) ? c : /[0-9]/.test(c) ? '0-9' : '#'; };
   const azOk = (it) => (!letter || letterOf(it.name) === letter) && (!pre3 || String(it.name || '').trim().slice(0, 3).toLowerCase() === pre3);
   const shown = () => allShown().filter(azOk);
-  const allShown = () => { const q = query.trim().toLowerCase(); const words = q.split(/\s+/).filter(Boolean); if (cat === '#work') return work.filter((w) => words.every((x) => w.name.toLowerCase().includes(x))); return items.filter((it) => (cat === '*' || (cat === '#unsorted' ? !KNOWN().includes(it.category || '') : cat.startsWith('#src:') ? srcOf(it) === cat.slice(5) : cat.startsWith('#book:') ? it.id.startsWith(`!${cat.slice(6).split('|')[0]}~${cat.slice(6).split('|')[1].padStart(3, '0')}~`) : cat.startsWith('#fmt:') ? fmtIs(it, cat.slice(5)) : cat.startsWith('#sub:') ? (() => { const [c, sj] = cat.slice(5).split('|'); return it.category === c && subjectOf(it) === sj; })() : cat.startsWith('#srcat:') ? (() => { const [k, c] = cat.slice(7).split('|'); return srcOf(it) === k && (c === 'Not sorted yet' ? !KNOWN().includes(it.category || '') : it.category === c); })() : (it.category || '') === cat)) && words.every((x) => [it.name, it.original, it.seen, it.matched, (it.tags || []).join(' '), it.category, it.style, it.form, it.kind === 'bw' ? 'black and white' : it.kind, it.anim ? 'animated animation' : '', it.description].join(' ').toLowerCase().includes(x))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })); };
+  const allShown = () => { const q = query.trim().toLowerCase(); const words = q.split(/\s+/).filter(Boolean); if (cat === '#work') return work.filter((w) => words.every((x) => w.name.toLowerCase().includes(x))); return items.filter((it) => (cat === '*' || (cat === '#unsorted' ? !KNOWN().includes(it.category || '') : cat.startsWith('#src:') ? srcOf(it) === cat.slice(5) : cat === '#mine' ? !L.inBook(it.id) : cat.startsWith('#book:') ? it.id.startsWith(`!${cat.slice(6).split('|')[0]}~${cat.slice(6).split('|')[1].padStart(3, '0')}~`) : cat.startsWith('#fmt:') ? fmtIs(it, cat.slice(5)) : cat.startsWith('#sub:') ? (() => { const [c, sj] = cat.slice(5).split('|'); return it.category === c && subjectOf(it) === sj; })() : cat.startsWith('#srcat:') ? (() => { const [k, c] = cat.slice(7).split('|'); return srcOf(it) === k && (c === 'Not sorted yet' ? !KNOWN().includes(it.category || '') : it.category === c); })() : (it.category || '') === cat)) && words.every((x) => [it.name, it.original, it.seen, it.matched, (it.tags || []).join(' '), it.category, it.style, it.form, it.kind === 'bw' ? 'black and white' : it.kind, it.anim ? 'animated animation' : '', it.description].join(' ').toLowerCase().includes(x))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })); };
   // the agreed categories (the AI's), and which pictures still need sorting: no category from them, or a name that
   // only says where it came from (Sheet 6 – 3, IMG_2041, clip art 12)
   const KNOWN = () => (window.CraftNamer ? CraftNamer.CATEGORIES : []);
@@ -293,7 +293,7 @@
   // How this browser stands with the server, above the pages (here and On the server): the server's count asked every 30
   // seconds (one tiny request), so an import growing there shows; a Sync button when the server has pictures this has not
   const live = { total: null, was: null, at: 0 };
-  async function serverCount() { if (!serverUrl || !serverOk) return; try { const r = await (await keyFetch(`${serverUrl}/api/items?limit=1`)).json(); if (live.total !== null && r.total !== live.total) live.was = { n: live.total, t: live.at }; live.total = r.total; live.at = Date.now(); const c = $('grid').querySelector('.countline'); if (c) c.outerHTML = countLine(); } catch (e) { /* the next time */ } }
+  async function serverCount() { if (!serverUrl || !serverOk) return; try { const r = await (await keyFetch(`${serverUrl}/api/items?limit=1`)).json(); if (live.total !== null && r.total !== live.total) live.was = { n: live.total, t: live.at }; live.total = r.total; live.at = Date.now(); const c = $('gridnav').querySelector('.countline'); if (c) c.outerHTML = countLine(); status(); } catch (e) { /* the next time */ } }
   setInterval(() => { if (!document.hidden) serverCount(); }, 30000);
   function countLine() {
     if (!serverUrl || !serverOk || live.total === null) return '';
@@ -313,6 +313,27 @@
     const b = (k, label) => `<button type="button" class="az${letter === k ? ' on' : ''}" data-az="${esc(k)}" ${k && !n.get(k) ? 'disabled' : ''} title="${k ? `${(n.get(k) || 0).toLocaleString()} beginning with ${k === '#' ? 'neither a letter nor a digit' : k === '0-9' ? 'a digit' : k}` : 'All'}">${label}</button>`;
     const inLetter = letter ? n.get(letter) || 0 : 0;
     return `<div class="azbar">${b('', 'All')}${keys.map((k) => b(k, k === '0-9' ? '0–9' : k)).join('')}</div>${letter && letter.length === 1 && inLetter > PAGE && three.length > 1 ? `<div class="azbar az3"><button type="button" class="az${pre3 ? '' : ' on'}" data-az3="">All ${esc(letter)}</button>${three.map(([k, c]) => `<button type="button" class="az${pre3 === k ? ' on' : ''}" data-az3="${esc(k)}" title="${c.toLocaleString()}">${esc(k.charAt(0).toUpperCase() + k.slice(1))} <small>${c.toLocaleString()}</small></button>`).join('')}</div>` : ''}`;
+  }
+  // The fixed bar above the pictures (it stays while they scroll): Set ▾ (your own pictures, each big set, the server),
+  // Book ▾ (that set's books), the page (sheet) ▾ with ‹ ›, and Next book › / Next set › at the end of one
+  const setNow = () => (onServer() ? 'server' : cat.startsWith('#book:') ? cat.slice(6).split('|')[0] : 'mine');
+  function navBar(total) {
+    const sets = [...new Set(bookRows.map((r) => r.set))], set = setNow(), rows = bookRows.filter((r) => r.set === set), no = cat.startsWith('#book:') ? +cat.slice(6).split('|')[1] : 0;
+    const pages = Math.max(1, Math.ceil(total / PAGE)), last = page >= pages - 1, bi = rows.findIndex((r) => r.no === no), nextBook = rows[bi + 1], nextSet = !nextBook && set !== 'server' ? (set === 'mine' ? sets[0] : sets[sets.indexOf(set) + 1]) : null;
+    const setOpt = (v, l) => `<option value="${esc(v)}" ${set === v ? 'selected' : ''}>${esc(l)}</option>`;
+    return `<div class="navbar">
+      <label class="nav-sel"><span>Set</span><select class="input" data-nav="set">${setOpt('mine', `Your pictures (${items.filter((it) => !L.inBook(it.id)).length.toLocaleString()})`)}${sets.map((k) => { const r = bookRows.filter((x) => x.set === k); return setOpt(k, `${r[0].name} (${r.reduce((a, x) => a + x.n, 0).toLocaleString()})`); }).join('')}${serverUrl && serverOk ? setOpt('server', `On the server${live.total !== null ? ` (${live.total.toLocaleString()})` : ''}`) : ''}</select></label>
+      <label class="nav-sel"><span>Book</span><select class="input" data-nav="book" ${rows.length ? '' : 'disabled'}>${rows.length ? rows.map((r) => `<option value="${r.no}" ${r.no === no ? 'selected' : ''}>Book ${r.no} (${r.from.toLocaleString()}–${(r.from + r.n - 1).toLocaleString()})</option>`).join('') : '<option>—</option>'}</select></label>
+      <span class="nav-pages"><button type="button" class="btn outline sm" data-page="prev" ${page ? '' : 'disabled'} title="The previous page">‹</button><label class="nav-sel"><span>Page</span><select class="input" data-nav="page" ${pages > 1 ? '' : 'disabled'}>${Array.from({ length: pages }, (_, i) => `<option value="${i}" ${i === page ? 'selected' : ''}>${i + 1} of ${pages} (${(i * PAGE + 1).toLocaleString()}–${Math.min(total, (i + 1) * PAGE).toLocaleString()})</option>`).join('')}</select></label><button type="button" class="btn outline sm" data-page="next" ${last ? 'disabled' : ''} title="The next page">›</button></span>
+      ${last && nextBook ? `<button type="button" class="btn primary sm" data-nav-go="book" title="Book ${nextBook.no} of this set, at its first page">Next book ›</button>` : ''}${last && nextSet ? `<button type="button" class="btn outline sm" data-nav-go="set" title="The next set">Next set ›</button>` : ''}
+      <span class="hint nav-n">${total.toLocaleString()} shown</span></div>`;
+  }
+  async function goSet(set, no) {
+    sel.clear(); page = 0;
+    if (set === 'server') { cat = '#server'; render(); return loadServer(); }
+    if (set === 'mine') { cat = '#mine'; return render(); }
+    const rows = bookRows.filter((r) => r.set === set); const r = rows.find((x) => x.no === no) || rows[0]; if (!r) return;
+    busy('Opening the book…'); cat = '#book:' + bookKey(r); await openBookOf({ set: r.set, no: r.no }); busy();
   }
   function pageBar(total) {
     const pages = Math.max(1, Math.ceil(total / PAGE)); if (pages < 2) return '';
@@ -336,7 +357,7 @@
       + `<div class="work-head">Working area</div>` + catBtn(['#work', 'Files imported from', work.length]);
     const S = shown(), g = $('grid'), keepY = g.scrollTop; g.style.setProperty('--tile', size + 'px');
     g.innerHTML = onServer() ? (srv.items.map((x) => `<button type="button" class="tile" role="option" data-srv-id="${esc(x.id)}" aria-selected="${srvSel === x.id}" title="${esc(x.name)}${x.category ? ' · ' + esc(x.category) : ''}"><span class="pic"><img src="${esc((x.links || {}).thumb || (x.links || {}).png || (x.links || {}).svg || '')}" alt="" loading="lazy"></span><span class="nm">${esc(x.name)}</span>${x.privacy === 'me' ? LOCK : ''}${keptOf(x) ? '<i class="used">kept</i>' : ''}${fmtBadge(x)}</button>`).join('')  || `<p class="hint" style="padding:16px">${srv.loading ? 'Asking the server…' : 'Nothing on the server matches.'}</p>`) : cat === '#work' ? S.map((w) => `<button type="button" class="tile" role="option" data-id="${w.id}" aria-selected="${sel.has(w.id)}" title="${esc(w.fileName)}"><span class="pic">${w.thumb ? `<img src="${w.thumb}" alt="" loading="lazy">` : ''}</span><span class="nm">${esc(w.name)}</span>${w.used ? `<i class="used">${w.used} made</i>` : ''}<i class="fmt">${esc((w.fileName.split('.').pop() || '').toUpperCase())}</i></button>`).join('') : S.slice(page * PAGE, (page + 1) * PAGE).map((it) => `<button type="button" class="tile" role="option" data-id="${it.id}" aria-selected="${sel.has(it.id)}" title="${esc(it.name)}${it.category ? ' · ' + esc(it.category) : ''}"><span class="pic"><img src="${it.thumb}" alt="" loading="lazy"></span><span class="nm">${esc(it.name)}</span>${it.privacy === 'me' ? LOCK : ''}${fmtBadge(it)}</button>`).join('');
-    { const bar = pageBar(onServer() ? srv.total : cat === '#work' ? 0 : S.length); if (bar) { g.insertAdjacentHTML('afterbegin', bar); g.insertAdjacentHTML('beforeend', bar); } if (cat !== '#work') { g.insertAdjacentHTML('afterbegin', azBar()); g.insertAdjacentHTML('afterbegin', countLine()); } }
+    { const total = onServer() ? srv.total : cat === '#work' ? 0 : S.length, bar = pageBar(total); if (bar) g.insertAdjacentHTML('beforeend', bar); $('gridnav').innerHTML = cat === '#work' ? '' : navBar(total) + azBar() + countLine(); $('gridnav').hidden = cat === '#work'; }
     g.scrollTop = keepY; // (redrawn in place: choosing a picture does not jump the grid)
     const showIt = startOpen || (!items.length && cat !== '#work' && !onServer()); $('start').hidden = !showIt; if (showIt) renderStart();
     renderDetails(); syncProps(); status(); lightUp(g); lightUp($('details')); if (propsBox && !propsBox.hidden) lightUp(propsBox);
@@ -454,8 +475,11 @@
   function status() {
     const S = shown(), onIt = items.filter((it) => it.serverId).length, cats = new Set(items.map((it) => it.category).filter(Boolean)).size, pct = Math.round((size / SIZE0) * 100);
     const dot = serverUrl ? (serverOk ? 'ok' : 'bad') : 'off';
-    $('status').innerHTML = `<span class="cell" title="${serverUrl ? esc(`The clip-art server at ${serverUrl}. “On it”: how many of the pictures in this browser have been sent to it (Send to the server or Sync sends the rest).`) : 'No clip-art server: the library is kept in this browser (Server › Connect…)'}"><i class="dot ${dot}"></i>${serverUrl ? `${serverOk ? 'Connected' : 'Not answering'}: ${esc(serverUrl.replace(/^https?:\/\//, '').replace(/\/clipart-server\.php$/, ''))} · <b>${onIt}</b> of ${items.length} on it` : 'No server'}</span>
-      <span class="cell"><b>${items.length}</b> picture${items.length === 1 ? '' : 's'} · <b>${cats}</b> categor${cats === 1 ? 'y' : 'ies'}</span>
+    // (the same numbers as the line above the pictures: the server's count, what this browser knows (its own pictures and
+    // every book), and what is open now)
+    const own = items.filter((it) => !L.inBook(it.id)), inBooks = bookRows.reduce((a, r) => a + r.n, 0), known = own.filter((it) => it.serverId).length + inBooks, open = openBook && bookRows.find((r) => bookKey(r) === bookKey(openBook));
+    $('status').innerHTML = `<span class="cell" title="${serverUrl ? esc(`The clip-art server at ${serverUrl}: how many pictures it has, and how many of them this browser knows (its own pictures sent there, and every book).`) : 'No clip-art server: the library is kept in this browser (Server › Connect…)'}"><i class="dot ${dot}"></i>${serverUrl ? `${serverOk ? 'Connected' : 'Not answering'}: ${esc(serverUrl.replace(/^https?:\/\//, '').replace(/\/clipart-server\.php$/, ''))}${live.total !== null ? ` · server <b>${live.total.toLocaleString()}</b> · this browser knows <b>${known.toLocaleString()}</b>` : ''}` : 'No server'}</span>
+      <span class="cell" title="Your own pictures (with their files), the books kept here (one open at a time), and how many are open in the page now"><b>${own.length.toLocaleString()}</b> your own${inBooks ? ` · <b>${inBooks.toLocaleString()}</b> in ${bookRows.length} book${bookRows.length === 1 ? '' : 's'}` : ''}${open ? ` · open: ${esc(open.name)} book ${open.no} (${open.n.toLocaleString()})` : ''} · <b>${cats}</b> categor${cats === 1 ? 'y' : 'ies'}</span>
       ${onServer() ? `<span class="cell">On the server: <b>${srv.items.length}</b> of ${srv.total} shown</span>` : cat === '*' && !query ? '' : `<span class="cell"><b>${S.length}</b> shown</span>`}
       <span class="cell">${sel.size ? `<b>${sel.size}</b> chosen` : 'none chosen'}</span><span class="grow"></span>
       <span class="cell size-cell" title="The size of the pictures"><button type="button" data-sz="-" aria-label="Smaller">−</button><input type="range" id="size" min="80" max="320" value="${size}" aria-label="Size of the pictures"><button type="button" data-sz="+" aria-label="Bigger">+</button><button type="button" class="pct" data-sz="0" title="Back to 100%">${pct}%</button></span>`;
@@ -633,6 +657,14 @@
   });
   // right-click a category, a sheet or file, or a branch under one on the left: the same for all the pictures in it
   $('cats').addEventListener('contextmenu', (e) => {
+    // a book: open it, sort it with the AI, choose all in it
+    const bk = e.target.closest('[data-book]'); if (bk && window.CraftMenu) { e.preventDefault(); const [set, no] = bk.dataset.book.split('|'), r = bookRows.find((x) => x.set === set && x.no === +no); if (!r) return;
+      const inIt = () => items.filter((it) => it.id.startsWith(`!${set}~${String(no).padStart(3, '0')}~`));
+      return CraftMenu.show(e.clientX, e.clientY, [{ info: `${r.name}: book ${r.no}`, strong: true }, { info: `${r.n.toLocaleString()} pictures (${r.from.toLocaleString()}–${(r.from + r.n - 1).toLocaleString()})` }, '-',
+        { label: 'Open this book', run: () => goSet(set, +no) },
+        { label: 'Sort this book with AI', run: async () => { await goSet(set, +no); sel = new Set(inIt().map((it) => it.id)); render(); act('ai-again'); } },
+        { label: 'Ask an AI about this book…', run: async () => { await goSet(set, +no); sel = new Set(inIt().map((it) => it.id)); render(); act('cloud-ask'); } },
+        { label: 'Choose all in this book', run: async () => { await goSet(set, +no); sel = new Set(inIt().map((it) => it.id)); render(); toast(`${sel.size.toLocaleString()} chosen.`); } }]); }
     const b = e.target.closest('[data-cat]'); if (!b || !window.CraftMenu) return; e.preventDefault(); const key = b.dataset.cat, label = b.querySelector('span')?.textContent || key;
     if (key === '#server') return CraftMenu.show(e.clientX, e.clientY, [{ label: 'Show the server’s pictures', run: () => { cat = '#server'; render(); loadServer(); } }, { label: 'Find copies on the server…', run: () => findCopies(true) }]);
     if (key === '#work') return CraftMenu.show(e.clientX, e.clientY, [{ label: 'Show the working area', run: () => { cat = key; sel.clear(); render(); } }, { label: 'Delete the used files…', disabled: !work.some((w) => w.used), run: () => act('work-del-used') }]);
@@ -818,6 +850,14 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     const bk = e.target.closest('[data-book]'); if (bk) { const [set, no] = bk.dataset.book.split('|'); busy('Opening the book…'); sel.clear(); cat = '#book:' + bk.dataset.book; await openBookOf({ set, no: +no }); busy(); return; } const t = e.target.closest('[data-tree]'); if (t) { const k = t.dataset.tree; if (openTree.has(k)) openTree.delete(k); else openTree.add(k); keepTree(); render(); return; } const b = e.target.closest('[data-cat]'); if (!b) return; cat = b.dataset.cat; sel.clear(); srvSel = null; render(); if (onServer()) loadServer(); };
   $('search').oninput = (e) => { query = e.target.value; if (onServer()) { clearTimeout(srvTimer); srvTimer = setTimeout(() => loadServer(), 300); return; } render(); };
   $('grid').addEventListener('change', (e) => { if (e.target.matches('[data-page-to]')) goPage((+e.target.value || 1) - 1); });
+  $('gridnav').addEventListener('change', (e) => { const k = e.target.dataset.nav; if (k === 'set') goSet(e.target.value); if (k === 'book') goSet(setNow(), +e.target.value); if (k === 'page') goPage(+e.target.value); });
+  $('gridnav').addEventListener('click', (e) => {
+    const pg = e.target.closest('[data-page]'); if (pg) return goPage(page + (pg.dataset.page === 'next' ? 1 : -1));
+    const az = e.target.closest('[data-az]'); if (az) { letter = az.dataset.az; pre3 = ''; page = 0; sel.clear(); if (onServer()) { srvSel = null; loadServer(); } else render(); return; }
+    const a3 = e.target.closest('[data-az3]'); if (a3) { pre3 = a3.dataset.az3; page = 0; sel.clear(); if (onServer()) { srvSel = null; loadServer(); } else render(); return; }
+    const go = e.target.closest('[data-nav-go]'); if (go) { const set = setNow(), rows = bookRows.filter((r) => r.set === set), no = cat.startsWith('#book:') ? +cat.slice(6).split('|')[1] : 0;
+      if (go.dataset.navGo === 'book') { const r = rows[rows.findIndex((x) => x.no === no) + 1]; if (r) goSet(set, r.no); } else { const sets = [...new Set(bookRows.map((r) => r.set))]; const nx = set === 'mine' ? sets[0] : sets[sets.indexOf(set) + 1]; if (nx) goSet(nx); } }
+  });
   $('grid').addEventListener('click', (e) => {
     const pg = e.target.closest('[data-page]'); if (pg) return goPage(page + (pg.dataset.page === 'next' ? 1 : -1));
     const az = e.target.closest('[data-az]'); if (az) { letter = az.dataset.az; pre3 = ''; page = 0; sel.clear(); if (onServer()) { srvSel = null; loadServer(); } else render(); return; }

@@ -170,7 +170,7 @@ textarea.input { height: auto; padding: 6px 8px; resize: vertical; line-height: 
 .rv-card .hint { font-size: 11.5px; }
 
 /* a send cut short by a refresh: finish it */
-.resume { position: sticky; top: 0; z-index: 4; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 10px 10px 0; padding: 10px 12px; border: 1px solid #f59e0b; border-radius: 10px; background: var(--panel); }
+.resume { position: relative; z-index: 4; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 10px 10px 0; padding: 10px 12px; border: 1px solid #f59e0b; border-radius: 10px; background: var(--panel); }
 .resume span { flex: 1; min-width: 200px; }
 
 /* the slicer's room at the edges: a box whose sides are clicked through yellow (auto), blue (always) and grey (none) */
@@ -459,3 +459,11 @@ label.ed-sw input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .azbar .az:disabled { opacity: .3; cursor: default; }
 .azbar .az.on { background: var(--accent, #7c3aed); border-color: var(--accent, #7c3aed); color: #fff; }
 .azbar.az3 .az { font-weight: 500; } .azbar.az3 small { opacity: .7; }
+.gridnav { position: sticky; top: 0; z-index: 6; display: grid; gap: 6px; padding: 8px 14px; background: var(--desk, #16171d); border-bottom: 1px solid var(--line, #333); }
+.gridnav[hidden] { display: none; }
+.navbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.nav-sel { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.nav-sel .input { height: 28px; padding: 2px 6px; max-width: 280px; }
+.nav-pages { display: inline-flex; align-items: center; gap: 4px; }
+.nav-n { margin-left: auto; }
+.gridnav .countline { justify-content: flex-start; }
