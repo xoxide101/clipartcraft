@@ -100,7 +100,7 @@ function sqliteDb(dir) {
   const q = (sql, ...a) => d.prepare(sql).all(...a), one = (sql, ...a) => d.prepare(sql).get(...a);
   return {
     kind: 'sqlite', where: dir, filesDir: path.join(dir, 'files'),
-    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0, all = true } = {}) { const [w, a] = filter(text, category, type, all); return { total: one(`SELECT COUNT(*) n FROM items ${w}`, ...a).n, items: q(`SELECT * FROM items ${w} ORDER BY name COLLATE NOCASE LIMIT ? OFFSET ?`, ...a, +limit, +offset).map(fromRow) }; },
+    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0, all = true, since = '' } = {}) { const [w, a] = filter(text, category, type, all, since); return { total: one(`SELECT COUNT(*) n FROM items ${w}`, ...a).n, items: q(`SELECT * FROM items ${w} ORDER BY name COLLATE NOCASE LIMIT ? OFFSET ?`, ...a, +limit, +offset).map(fromRow) }; },
     async get(id) { return fromRow(one('SELECT * FROM items WHERE id = ?', id)); },
     async byName(name) { return fromRow(one('SELECT * FROM items WHERE name = ? COLLATE NOCASE', name)); },
     async namesLike(base) { return q("SELECT id, name FROM items WHERE name = ? COLLATE NOCASE OR name LIKE ? ESCAPE '\\'", base, base.replace(/[\\%_]/g, '\\$&') + '\\_%'); },
@@ -111,8 +111,8 @@ function sqliteDb(dir) {
   };
 }
 // a search: every word must be found in the name, tags, category or description
-function filter(text, category, type, all = true) {
-  const w = [], a = []; if (!all) w.push("COALESCE(privacy, '') <> 'me'"); if (type) { w.push("COALESCE(type, 'clipart') = ?"); a.push(type); } for (const word of String(text).toLowerCase().split(/\s+/).filter(Boolean)) { w.push("LOWER(CONCAT_WS(' ', name, original, seen, matched, tags, category, style, form, description)) LIKE ?"); a.push(`%${word}%`); }
+function filter(text, category, type, all = true, since = '') {
+  const w = [], a = []; if (!all) w.push("COALESCE(privacy, '') <> 'me'"); if (since) { w.push('changed > ?'); a.push(String(since)); } if (type) { w.push("COALESCE(type, 'clipart') = ?"); a.push(type); } for (const word of String(text).toLowerCase().split(/\s+/).filter(Boolean)) { w.push("LOWER(CONCAT_WS(' ', name, original, seen, matched, tags, category, style, form, description)) LIKE ?"); a.push(`%${word}%`); }
   if (category !== null && category !== undefined) { w.push("COALESCE(category, '') = ?"); a.push(category); }
   return [w.length ? 'WHERE ' + w.join(' AND ') : '', a];
 }
@@ -136,7 +136,7 @@ function mysqlDb(url) {
   const q = async (sql, a = []) => { await ready; return (await pool.query(sql, a))[0]; };
   return {
     kind: 'mysql', where: `${u.host}${u.pathname}`, filesDir,
-    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0, all = true } = {}) { const [w, a] = filter(text, category, type, all); return { total: (await q(`SELECT COUNT(*) n FROM items ${w}`, a))[0].n, items: (await q(`SELECT * FROM items ${w} ORDER BY name LIMIT ? OFFSET ?`, [...a, +limit, +offset])).map(fromRow) }; },
+    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0, all = true, since = '' } = {}) { const [w, a] = filter(text, category, type, all, since); return { total: (await q(`SELECT COUNT(*) n FROM items ${w}`, a))[0].n, items: (await q(`SELECT * FROM items ${w} ORDER BY name LIMIT ? OFFSET ?`, [...a, +limit, +offset])).map(fromRow) }; },
     async get(id) { return fromRow((await q('SELECT * FROM items WHERE id = ?', [id]))[0]); },
     async byName(name) { return fromRow((await q('SELECT * FROM items WHERE name = ?', [name]))[0]); },
     async namesLike(base) { return q("SELECT id, name FROM items WHERE name = ? OR name LIKE ?", [base, base.replace(/[\\%_]/g, '\\$&') + '\\_%']); },
@@ -162,7 +162,7 @@ function jsonDb(dir) {
   const save = () => fs.writeFileSync(f, JSON.stringify({ library: lib.library, made: new Date().toISOString(), by: 'Craft clip-art server', items: items.map((it) => ({ ...it, ...it.files, files: undefined })) }, null, 1));
   return {
     kind: 'json', where: dir, filesDir: dir, named: true,
-    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0, all = true } = {}) { const words = String(text).toLowerCase().split(/\s+/).filter(Boolean), m = items.filter((it) => (all || it.privacy !== 'me') && (category === null || category === undefined || (it.category || '') === category) && words.every((w) => [it.name, it.original, it.seen, it.matched, (it.tags || []).join(' '), it.category, it.style, it.form, it.description].join(' ').toLowerCase().includes(w))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })); return { total: m.length, items: m.slice(+offset, +offset + +limit) }; },
+    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0, all = true, since = '' } = {}) { const words = String(text).toLowerCase().split(/\s+/).filter(Boolean), m = items.filter((it) => (all || it.privacy !== 'me') && (!since || String(it.changed || '') > since) && (category === null || category === undefined || (it.category || '') === category) && words.every((w) => [it.name, it.original, it.seen, it.matched, (it.tags || []).join(' '), it.category, it.style, it.form, it.description].join(' ').toLowerCase().includes(w))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })); return { total: m.length, items: m.slice(+offset, +offset + +limit) }; },
     async get(id) { return items.find((it) => it.id === id); },
     async byName(name) { return items.find((it) => it.name.toLowerCase() === String(name).toLowerCase()); },
     async namesLike(base) { const b = base.toLowerCase(); return items.filter((it) => it.name.toLowerCase() === b || it.name.toLowerCase().startsWith(b + '_')); },
@@ -215,6 +215,8 @@ function library(name, spec) {
     it.files = { ...(old ? old.files : {}) };
     if (!old || (meta.name !== undefined && meta.name !== old.name)) it.name = await uniqueName(db, meta.name || (old && old.name) || 'Untitled', it.id);
     if (db.named && old && old.name !== it.name) for (const k of Object.keys(it.files)) { const b = await readFileAny(old, k); if (b) await setFile(it, k, b, extOf(old.files[k])); }
+    // the picture changed without a new thumbnail: the old one dropped (no picture library here: the picture is shown instead)
+    if ((pics.png !== undefined || pics.svg !== undefined) && pics.thumb === undefined && old) pics.thumb = null;
     for (const k of FILE_KINDS) if (pics[k] !== undefined) await setFile(it, k, pics[k] && Buffer.from(pics[k]), pics[k + 'Ext'] || (k === 'svg' ? 'svg' : 'png'));
     return db.put(it);
   }
@@ -416,7 +418,7 @@ function serve(S) {
       if (p[1] === 'import' && req.method === 'POST') { const made = await importEntries(lib, unzip(await body(req)), { category: Q.category, privacy: Q.privacy }); return send(res, 200, { added: made.length, items: made.map((it) => shown(req, lib, it)) }); }
       if (p[1] === 'items') {
         const id = p[2];
-        if (!id && req.method === 'GET') { const r = await db.list({ q: Q.q || '', category: Q.category, type: Q.type, limit: Math.min(+Q.limit || 200, 5000), offset: +Q.offset || 0, all: mayWrite(req) }); return send(res, 200, { total: r.total, items: r.items.map((it) => shown(req, lib, it)) }); }
+        if (!id && req.method === 'GET') { const r = await db.list({ q: Q.q || '', category: Q.category, type: Q.type, limit: Math.min(+Q.limit || 200, 5000), offset: +Q.offset || 0, all: mayWrite(req), since: Q.since || '' }); return send(res, 200, { total: r.total, items: r.items.map((it) => shown(req, lib, it)) }); }
         // POST: a new item (or PATCH an old one) as JSON; pictures inside as base64: { png: 'base64', pngExt: 'png', svg: '<svg…' }
         if ((!id && req.method === 'POST') || (id && req.method === 'PATCH')) {
           const j = JSON.parse((await body(req)).toString('utf8') || '{}'), pics = {};

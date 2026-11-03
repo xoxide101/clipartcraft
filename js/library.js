@@ -230,29 +230,40 @@
   }
   // bring the server's items into this browser (ones already here are updated if the server's copy is newer)
   async function pull(progress = () => {}, opts = {}) { return guard(() => pullNow(progress, opts)); }
-  async function pullNow(progress, { q = '', category } = {}) {
+  // why a picture came down again: its picture (PNG), its drawing (SVG) or its details changed on the server
+  const DETAIL = ['name', 'category', 'style', 'form', 'description', 'source', 'author', 'licence', 'privacy'];
+  async function whyOf(old, s, png, svg) {
+    const w = [];
+    try { if (!!old.png !== !!png || (png && (await coreSum(old.png, 'png')) !== (await coreSum(png, 'png')))) w.push('picture changed'); } catch (e) { /* unreadable */ }
+    if (!!old.svg !== !!svg || (svg && (await coreSum(old.svg, 'svg')) !== (await coreSum(svg, 'svg')))) w.push(!svg ? 'drawing taken off' : !old.svg ? 'drawing added' : 'drawing changed');
+    const d = DETAIL.filter((k) => String(old[k] ?? '') !== String(s[k] ?? '')); if ((old.tags || []).join(',') !== (s.tags || []).join(',')) d.push('tags');
+    if (d.length) w.push(`details changed (${d.join(', ')})`);
+    return w.length ? w.join('; ') : 'changed on the server';
+  }
+  async function pullNow(progress, { q = '', category, since = '' } = {}) {
     // (a picture the server lists but cannot hand over, its file missing there, is skipped and counted, not the end of it)
-    const here = new Map((await all()).filter((it) => it.serverId).map((it) => [it.serverId, it])), made = [], missing = [], skip = await notHere(), gone = new Set((await meta('deleteQueue')) || []), seen = new Set(); let n = 0, total = 0;
+    const here = new Map((await all()).filter((it) => it.serverId).map((it) => [it.serverId, it])), made = [], updated = [], thumbs = [], missing = [], skip = await notHere(), gone = new Set((await meta('deleteQueue')) || []), seen = new Set(); let n = 0, total = 0;
     for (let off = 0; ; off += 500) {
-      const r = await call(`/api/items?limit=500&offset=${off}&q=${encodeURIComponent(q)}${category !== undefined ? '&category=' + encodeURIComponent(category) : ''}`); total = r.total; if (!r.items.length) break;
+      const r = await call(`/api/items?limit=500&offset=${off}&q=${encodeURIComponent(q)}${category !== undefined ? '&category=' + encodeURIComponent(category) : ''}${since ? '&since=' + encodeURIComponent(since) : ''}`); total = r.total; if (!r.items.length) break;
       for (const s of r.items) {
         const old = here.get(s.id); seen.add(s.id); progress(++n, total); // (in step already: its thumbnail remade once if it was made from an older copy, as a pull before this kept the old one)
-        if (old && old.serverChanged === s.changed) { if (old.thumbFrom !== s.changed && (old.png || old.svg)) { try { const t = await thumbOf(old.png ? URL.createObjectURL(old.png) : svgUrl(old.svg)); old.thumb = t.thumb; old.thumbFrom = s.changed; await tx('items', 'readwrite', (st) => req(st.put(old))); } catch (e) { /* unreadable */ } } continue; }
+        if (old && old.serverChanged === s.changed) { if (old.thumbFrom !== s.changed && (old.png || old.svg)) { try { const t = await thumbOf(old.png ? URL.createObjectURL(old.png) : svgUrl(old.svg)); old.thumb = t.thumb; old.thumbFrom = s.changed; await tx('items', 'readwrite', (st) => req(st.put(old))); thumbs.push(old); } catch (e) { /* unreadable */ } } continue; }
         if (!old && (skip.has(s.id) || gone.has(s.id))) continue;
         // changed here and on the server too: the newer one wins (a change here older than the server's copy gives way)
         if (old && old.changed && Date.parse(old.edited || old.added || 0) >= Date.parse(s.changed || 0)) continue;
         const get = async (k) => { if (!s.links[k]) return null; const r = await fetch(s.links[k]); return r.ok ? r.blob() : null; };
         let png = null, svg = null, anim = null; try { png = await get('png'); if (s.links.svg) { const r = await fetch(s.links.svg); if (r.ok) svg = await r.text(); } anim = await get('anim'); } catch (e) { /* counted below */ }
         if (!png && !svg) { missing.push(s.name); continue; }
-        const it = old || { id: uid(), added: s.added || new Date().toISOString() };
+        const why = old ? await whyOf(old, s, png, svg) : 'new on the server';
+        const it = old || { id: uid(), added: s.added || new Date().toISOString() }; it.why = why;
         Object.assign(it, Object.fromEntries(META.map((k) => [k, s[k] ?? it[k] ?? (k === 'tags' ? [] : NUMS.includes(k) ? null : '')])), { png, svg, anim, serverId: s.id, links: s.links, serverChanged: s.changed, source: s.source || 'clip-art server' }); delete it.changed;
         try { const t = await thumbOf(png ? URL.createObjectURL(png) : svgUrl(svg)); it.thumb = t.thumb; it.width = t.width; it.height = t.height; it.thumbFrom = s.changed; } /* (always: a newer picture needs its own thumbnail) */ catch (e) { missing.push(s.name); continue; }
-        await tx('items', 'readwrite', (st) => req(st.put(it))); made.push(it);
+        await tx('items', 'readwrite', (st) => req(st.put(it))); made.push(it); if (old) updated.push(it);
       }
     }
     // (a whole pull: pictures here that the server had but no longer has were deleted there, from another machine: they go here too)
-    const removed = []; if (!q && category === undefined && seen.size === total) { for (const [sid, it] of here) if (!seen.has(sid)) removed.push(it); if (removed.length) await remove(removed.map((it) => it.id)); }
-    changed(); return { made, total, missing, removed };
+    const removed = []; if (!q && !since && category === undefined && seen.size === total) { for (const [sid, it] of here) if (!seen.has(sid)) removed.push(it); if (removed.length) await remove(removed.map((it) => it.id)); }
+    changed(); return { made, updated, thumbs, total, missing, removed, newest: [...made, ...thumbs].reduce((m, x) => (x.serverChanged > m ? x.serverChanged : m), '') };
   }
   // deleting: from the server too (queued until the server answers; Sync sends what is left), or from this browser only
   // (remembered, so Sync and Get do not bring it back; keeping it again from the server forgets that)

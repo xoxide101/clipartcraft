@@ -9,6 +9,13 @@ declare(strict_types=1);
 const VERSION = '1.0';
 const COLS = ['id', 'type', 'name', 'original', 'seen', 'matched', 'category', 'style', 'form', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash', 'privacy', 'added', 'changed', 'files'];
 const FILE_KINDS = ['png', 'svg', 'anim', 'orig', 'thumb', 'model']; // model: a 3D mesh
+// a thumbnail (at most 160 pixels, see-through kept) made from a picture, when this PHP has GD; else null
+function make_thumb(string $b): ?string {
+  if (!function_exists('imagecreatefromstring') || $b === '') return null; $im = @imagecreatefromstring($b); if (!$im) return null;
+  $w = imagesx($im); $h = imagesy($im); $k = min(1, 160 / max($w, $h, 1)); $tw = max(1, (int) round($w * $k)); $th = max(1, (int) round($h * $k));
+  $t = imagecreatetruecolor($tw, $th); imagealphablending($t, false); imagesavealpha($t, true); imagefill($t, 0, 0, imagecolorallocatealpha($t, 0, 0, 0, 127));
+  imagecopyresampled($t, $im, 0, 0, 0, 0, $tw, $th, $w, $h); ob_start(); imagepng($t); $out = (string) ob_get_clean(); imagedestroy($im); imagedestroy($t); return $out !== '' ? $out : null;
+}
 const TYPES = ['clipart', 'model'];
 const MIME = ['png' => 'image/png', 'svg' => 'image/svg+xml', 'gif' => 'image/gif', 'webp' => 'image/webp', 'apng' => 'image/apng', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'avif' => 'image/avif', 'bmp' => 'image/bmp', 'ico' => 'image/x-icon', 'tif' => 'image/tiff', 'tiff' => 'image/tiff', 'glb' => 'model/gltf-binary', 'gltf' => 'model/gltf+json', 'obj' => 'model/obj', 'stl' => 'model/stl', 'ply' => 'application/ply', '3mf' => 'model/3mf'];
 
@@ -107,14 +114,14 @@ class Library {
   private function q(string $sql, array $a = []): array { $s = $this->db->prepare($sql); $s->execute($a); return $s->fetchAll(); }
   private function row(?array $r): ?array { if (!$r) return null; $r['tags'] = array_values(array_filter(array_map('trim', explode(',', (string) $r['tags'])), 'strlen')); $r['files'] = json_decode($r['files'] ?: '{}', true) ?: []; foreach (['width', 'height', 'frames', 'colours'] as $k) if ($r[$k] !== null) $r[$k] = (int) $r[$k]; return $r; }
   private function nocase(): string { return $this->mysql ? '' : ' COLLATE NOCASE'; }
-  function filter(string $text, ?string $cat, ?string $type = null, bool $everyone = true): array {
-    $w = []; $a = []; if (!$everyone) $w[] = "COALESCE(privacy, '') <> 'me'"; if ($type) { $w[] = "COALESCE(type, 'clipart') = ?"; $a[] = $type; } $all = $this->mysql ? "CONCAT_WS(' ', name, original, seen, matched, tags, category, style, form, description)" : "(COALESCE(name,'') || ' ' || COALESCE(original,'') || ' ' || COALESCE(seen,'') || ' ' || COALESCE(matched,'') || ' ' || COALESCE(tags,'') || ' ' || COALESCE(category,'') || ' ' || COALESCE(style,'') || ' ' || COALESCE(form,'') || ' ' || COALESCE(description,''))";
+  function filter(string $text, ?string $cat, ?string $type = null, bool $everyone = true, ?string $since = null): array {
+    $w = []; $a = []; if (!$everyone) $w[] = "COALESCE(privacy, '') <> 'me'"; if ($since) { $w[] = 'changed > ?'; $a[] = $since; } if ($type) { $w[] = "COALESCE(type, 'clipart') = ?"; $a[] = $type; } $all = $this->mysql ? "CONCAT_WS(' ', name, original, seen, matched, tags, category, style, form, description)" : "(COALESCE(name,'') || ' ' || COALESCE(original,'') || ' ' || COALESCE(seen,'') || ' ' || COALESCE(matched,'') || ' ' || COALESCE(tags,'') || ' ' || COALESCE(category,'') || ' ' || COALESCE(style,'') || ' ' || COALESCE(form,'') || ' ' || COALESCE(description,''))";
     foreach (preg_split('/\s+/', mb_strtolower($text), -1, PREG_SPLIT_NO_EMPTY) as $word) { $w[] = "LOWER($all) LIKE ?"; $a[] = "%$word%"; }
     if ($cat !== null) { $w[] = "COALESCE(category, '') = ?"; $a[] = $cat; }
     return [$w ? 'WHERE ' . implode(' AND ', $w) : '', $a];
   }
-  function list(string $text = '', ?string $cat = null, int $limit = 200, int $offset = 0, ?string $type = null, bool $all = true): array {
-    [$w, $a] = $this->filter($text, $cat, $type, $all);
+  function list(string $text = '', ?string $cat = null, int $limit = 200, int $offset = 0, ?string $type = null, bool $all = true, ?string $since = null): array {
+    [$w, $a] = $this->filter($text, $cat, $type, $all, $since);
     return ['total' => (int) $this->q("SELECT COUNT(*) n FROM items $w", $a)[0]['n'], 'items' => array_map([$this, 'row'], $this->q("SELECT * FROM items $w ORDER BY name{$this->nocase()} LIMIT $limit OFFSET $offset", $a))];
   }
   function get(string $id): ?array { return $this->row($this->q('SELECT * FROM items WHERE id = ?', [$id])[0] ?? null); }
@@ -153,6 +160,8 @@ class Library {
     foreach (['width', 'height', 'frames', 'colours'] as $c) if (isset($it[$c]) && !is_numeric($it[$c])) $it[$c] = null; // ('' is not a number: MySQL refuses it)
     $it['changed'] = $t;
     if (!$old || (isset($meta['name']) && $meta['name'] !== $old['name'])) $it['name'] = $this->unique_name((string) ($meta['name'] ?? ($old['name'] ?? 'Untitled')), $it['id']);
+    // the picture changed without a new thumbnail: one made here (GD), else the old one dropped (the picture is shown instead)
+    if ((array_key_exists('png', $pics) || array_key_exists('svg', $pics)) && !array_key_exists('thumb', $pics) && ($old || !empty($pics['png']))) { $pics['thumb'] = isset($pics['png']) ? make_thumb((string) $pics['png']) : null; $pics['thumbExt'] = 'png'; }
     foreach (FILE_KINDS as $k) if (array_key_exists($k, $pics)) {
       if (!empty($it['files'][$k])) @unlink($this->files . '/' . $it['files'][$k]);
       if ($pics[$k] === null) { unset($it['files'][$k]); if ($this->mysql) $this->q('DELETE FROM files WHERE item = ? AND kind = ?', [$it['id'], $k]); continue; }
@@ -316,7 +325,7 @@ try {
   }
   if ($what === 'items') {
     $id = $p[2] ?? null;
-    if (!$id && $method === 'GET') { $r = $lib->list($Q['q'] ?? '', $Q['category'] ?? null, min((int) ($Q['limit'] ?? 200) ?: 200, 5000), (int) ($Q['offset'] ?? 0), $Q['type'] ?? null, $may_write); out(200, ['total' => $r['total'], 'items' => array_map(fn ($it) => $shown($lib, $it), $r['items'])]); }
+    if (!$id && $method === 'GET') { $r = $lib->list($Q['q'] ?? '', $Q['category'] ?? null, min((int) ($Q['limit'] ?? 200) ?: 200, 5000), (int) ($Q['offset'] ?? 0), $Q['type'] ?? null, $may_write, ($Q['since'] ?? '') !== '' ? (string) $Q['since'] : null); out(200, ['total' => $r['total'], 'items' => array_map(fn ($it) => $shown($lib, $it), $r['items'])]); }
     if ((!$id && $method === 'POST') || ($id && $method === 'PATCH')) {
       $j = json_decode($body() ?: '{}', true) ?: []; $pics = [];
       foreach (FILE_KINDS as $k) if (array_key_exists($k, $j)) { $pics[$k] = $j[$k] === null ? null : ($k === 'svg' && empty($j['svgBase64']) ? $j[$k] : base64_decode($j[$k])); $pics[$k . 'Ext'] = $j[$k . 'Ext'] ?? null; unset($j[$k]); }
