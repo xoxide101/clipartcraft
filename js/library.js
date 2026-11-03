@@ -57,11 +57,11 @@
     const mean = n ? s / n : 0, wrong = n ? (100 * bad) / n : 0;
     return { mean: Math.round(mean * 10) / 10, wrong: Math.round(wrong * 10) / 10, ok: mean <= MATCH.mean && wrong <= MATCH.wrong };
   }
-  // a trace that matches the picture (ImageData), or none: the usual setting, then a finer one; not one many times
-  // bigger than the PNG it stands for
-  async function traceMatched(img, profiles = ['icon', 'balanced']) {
+  // a trace that matches the picture (ImageData), or none: the usual setting, then a finer one, then pixel-exact (it keeps
+  // small glossy pictures that the others smooth away); not one many times bigger than the PNG it stands for
+  async function traceMatched(img, profiles = ['icon', 'balanced', 'pixelExact']) {
     if (!window.CRAFT_RASTERTRACE) return { svg: null };
-    const most = Math.max(120000, img.width * img.height * 8); let best = null;
+    const most = Math.max(160000, img.width * img.height * 10); let best = null;
     for (const profile of profiles) {
       let svg; try { svg = CRAFT_RASTERTRACE.traceImage(img, { profile }).svg; } catch (e) { continue; }
       if (svg.length > most) continue;

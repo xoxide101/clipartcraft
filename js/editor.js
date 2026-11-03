@@ -589,7 +589,7 @@
     try {
       const F = flat(), png = await new Promise((ok) => canvasOf(F).toBlob(ok, 'image/png')); let svg = vec && !vec.stale ? vec.svg : item.svg || null, saved = null;
       if (svg && !(await L.svgMatch(svg, F)).ok) svg = null;
-      if (!svg && F.width * F.height <= 4e6) svg = (await L.traceMatched(F, [T.vprofile || 'icon', 'balanced'])).svg;
+      if (!svg && F.width * F.height <= 4e6) svg = (await L.traceMatched(F, [...new Set([T.vprofile || 'icon', 'balanced', 'pixelExact'])])).svg;
       const lost = !!item.svg && !svg;
       const fresh = await L.makeItem({ name: item.name, png, svg });
       if (asCopy) { const o = offOf(cur), it = { ...item, ...fresh, id: fresh.id, cutAt: item.cutAt && !sized ? { x: item.cutAt.x + o.x, y: item.cutAt.y + o.y, w: cur.width, h: cur.height } : undefined, name: item.name, serverId: undefined, links: undefined, pngFirst: undefined, edited: new Date().toISOString() }; delete it.serverId; delete it.links; delete it.pngFirst; await L.put(it); toast(`Saved as a copy: “${it.name}”.`); saved = it; }
