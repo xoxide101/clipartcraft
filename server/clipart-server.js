@@ -100,19 +100,23 @@ function sqliteDb(dir) {
   const q = (sql, ...a) => d.prepare(sql).all(...a), one = (sql, ...a) => d.prepare(sql).get(...a);
   return {
     kind: 'sqlite', where: dir, filesDir: path.join(dir, 'files'),
-    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0, all = true, since = '', order = '' } = {}) { const [w, a] = filter(text, category, type, all, since); return { total: one(`SELECT COUNT(*) n FROM items ${w}`, ...a).n, items: q(`SELECT * FROM items ${w} ORDER BY ${order === 'changed' ? 'changed, id' : 'name COLLATE NOCASE'} LIMIT ? OFFSET ?`, ...a, +limit, +offset).map(fromRow) }; },
+    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0, all = true, since = '', order = '', starts = '' } = {}) { const [w, a] = filter(text, category, type, all, since, starts); return { total: one(`SELECT COUNT(*) n FROM items ${w}`, ...a).n, items: q(`SELECT * FROM items ${w} ORDER BY ${order === 'changed' ? 'changed, id' : 'name COLLATE NOCASE'} LIMIT ? OFFSET ?`, ...a, +limit, +offset).map(fromRow) }; },
     async get(id) { return fromRow(one('SELECT * FROM items WHERE id = ?', id)); },
     async byName(name) { return fromRow(one('SELECT * FROM items WHERE name = ? COLLATE NOCASE', name)); },
     async namesLike(base) { return q("SELECT id, name FROM items WHERE name = ? COLLATE NOCASE OR name LIKE ? ESCAPE '\\'", base, base.replace(/[\\%_]/g, '\\$&') + '\\_%'); },
     async put(it) { const r = toRow(it); d.prepare(`INSERT OR REPLACE INTO items (${COLS.join(',')}) VALUES (${COLS.map(() => '?').join(',')})`).run(...COLS.map((c) => r[c])); return it; },
     async remove(id) { d.prepare('DELETE FROM items WHERE id = ?').run(id); },
+    async letters({ q: text = '', category = null, all = true, starts = '', depth = 1 } = {}) { const [w, a] = filter(text, category, null, all, '', starts), e = depth >= 3 ? 'LOWER(SUBSTR(name, 1, 3))' : 'UPPER(SUBSTR(name, 1, 1))'; return q(`SELECT ${e} k, COUNT(*) n FROM items ${w} GROUP BY ${e} ORDER BY ${e}`, ...a); },
     async categories(all = true) { return q(`SELECT COALESCE(category, '') category, COUNT(*) n FROM items ${all ? '' : "WHERE COALESCE(privacy, '') <> 'me' "}GROUP BY COALESCE(category, '') ORDER BY category`); },
     async close() { d.close(); },
   };
 }
 // a search: every word must be found in the name, tags, category or description
-function filter(text, category, type, all = true, since = '') {
-  const w = [], a = []; if (!all) w.push("COALESCE(privacy, '') <> 'me'"); if (since) { w.push('changed > ?'); a.push(String(since)); } if (type) { w.push("COALESCE(type, 'clipart') = ?"); a.push(type); } for (const word of String(text).toLowerCase().split(/\s+/).filter(Boolean)) { w.push("LOWER(CONCAT_WS(' ', name, original, seen, matched, tags, category, style, form, description)) LIKE ?"); a.push(`%${word}%`); }
+// (starts: names beginning with these letters, or '0-9' (a digit) or '#' (neither a letter nor a digit): the A–Z bar)
+const startsOk = (name, s) => { if (!s) return true; const c = String(name || '').charAt(0); return s === '0-9' ? /[0-9]/.test(c) : s === '#' ? !/[a-z0-9]/i.test(c) : String(name || '').toLowerCase().startsWith(String(s).toLowerCase()); };
+function filter(text, category, type, all = true, since = '', starts = '') {
+  const w = [], a = [];
+  if (starts === '0-9') w.push("(SUBSTR(name, 1, 1) BETWEEN '0' AND '9')"); else if (starts === '#') w.push("NOT (UPPER(SUBSTR(name, 1, 1)) BETWEEN 'A' AND 'Z' OR SUBSTR(name, 1, 1) BETWEEN '0' AND '9')"); else if (starts) { w.push("LOWER(name) LIKE ? ESCAPE '!'"); a.push(String(starts).toLowerCase().replace(/[!%_]/g, (c) => '!' + c) + '%'); } if (!all) w.push("COALESCE(privacy, '') <> 'me'"); if (since) { w.push('changed > ?'); a.push(String(since)); } if (type) { w.push("COALESCE(type, 'clipart') = ?"); a.push(type); } for (const word of String(text).toLowerCase().split(/\s+/).filter(Boolean)) { w.push("LOWER(CONCAT_WS(' ', name, original, seen, matched, tags, category, style, form, description)) LIKE ?"); a.push(`%${word}%`); }
   if (category !== null && category !== undefined) { w.push("COALESCE(category, '') = ?"); a.push(category); }
   return [w.length ? 'WHERE ' + w.join(' AND ') : '', a];
 }
@@ -136,12 +140,13 @@ function mysqlDb(url) {
   const q = async (sql, a = []) => { await ready; return (await pool.query(sql, a))[0]; };
   return {
     kind: 'mysql', where: `${u.host}${u.pathname}`, filesDir,
-    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0, all = true, since = '', order = '' } = {}) { const [w, a] = filter(text, category, type, all, since); return { total: (await q(`SELECT COUNT(*) n FROM items ${w}`, a))[0].n, items: (await q(`SELECT * FROM items ${w} ORDER BY ${order === 'changed' ? 'changed, id' : 'name'} LIMIT ? OFFSET ?`, [...a, +limit, +offset])).map(fromRow) }; },
+    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0, all = true, since = '', order = '', starts = '' } = {}) { const [w, a] = filter(text, category, type, all, since, starts); return { total: (await q(`SELECT COUNT(*) n FROM items ${w}`, a))[0].n, items: (await q(`SELECT * FROM items ${w} ORDER BY ${order === 'changed' ? 'changed, id' : 'name'} LIMIT ? OFFSET ?`, [...a, +limit, +offset])).map(fromRow) }; },
     async get(id) { return fromRow((await q('SELECT * FROM items WHERE id = ?', [id]))[0]); },
     async byName(name) { return fromRow((await q('SELECT * FROM items WHERE name = ?', [name]))[0]); },
     async namesLike(base) { return q("SELECT id, name FROM items WHERE name = ? OR name LIKE ?", [base, base.replace(/[\\%_]/g, '\\$&') + '\\_%']); },
     async put(it) { const r = toRow(it); await q(`REPLACE INTO items (${COLS.join(',')}) VALUES (${COLS.map(() => '?').join(',')})`, COLS.map((c) => r[c])); return it; },
     async remove(id) { await q('DELETE FROM items WHERE id = ?', [id]); },
+    async letters({ q: text = '', category = null, all = true, starts = '', depth = 1 } = {}) { const [w, a] = filter(text, category, null, all, '', starts), e = depth >= 3 ? 'LOWER(SUBSTR(name, 1, 3))' : 'UPPER(SUBSTR(name, 1, 1))'; return (await q(`SELECT ${e} k, COUNT(*) n FROM items ${w} GROUP BY ${e} ORDER BY ${e}`, a)).map((r) => ({ k: String(r.k), n: Number(r.n) })); },
     async categories(all = true) { return q(`SELECT COALESCE(category, '') category, COUNT(*) n FROM items ${all ? '' : "WHERE COALESCE(privacy, '') <> 'me' "}GROUP BY COALESCE(category, '') ORDER BY category`); },
     // the picture files kept in the database too (every server on it can hand them over, whichever one was sent them)
     async putBlob(item, kind, name, data) { await q('REPLACE INTO files (item, kind, name, data) VALUES (?, ?, ?, ?)', [item, kind, name, data]); },
@@ -162,12 +167,13 @@ function jsonDb(dir) {
   const save = () => fs.writeFileSync(f, JSON.stringify({ library: lib.library, made: new Date().toISOString(), by: 'Craft clip-art server', items: items.map((it) => ({ ...it, ...it.files, files: undefined })) }, null, 1));
   return {
     kind: 'json', where: dir, filesDir: dir, named: true,
-    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0, all = true, since = '', order = '' } = {}) { const words = String(text).toLowerCase().split(/\s+/).filter(Boolean), m = items.filter((it) => (all || it.privacy !== 'me') && (!since || String(it.changed || '') > since) && (category === null || category === undefined || (it.category || '') === category) && words.every((w) => [it.name, it.original, it.seen, it.matched, (it.tags || []).join(' '), it.category, it.style, it.form, it.description].join(' ').toLowerCase().includes(w))).sort((a, b) => (order === 'changed' ? String(a.changed || '').localeCompare(String(b.changed || '')) || String(a.id).localeCompare(String(b.id)) : a.name.localeCompare(b.name, undefined, { numeric: true }))); return { total: m.length, items: m.slice(+offset, +offset + +limit) }; },
+    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0, all = true, since = '', order = '', starts = '' } = {}) { const words = String(text).toLowerCase().split(/\s+/).filter(Boolean), m = items.filter((it) => (all || it.privacy !== 'me') && (!since || String(it.changed || '') > since) && startsOk(it.name, starts) && (category === null || category === undefined || (it.category || '') === category) && words.every((w) => [it.name, it.original, it.seen, it.matched, (it.tags || []).join(' '), it.category, it.style, it.form, it.description].join(' ').toLowerCase().includes(w))).sort((a, b) => (order === 'changed' ? String(a.changed || '').localeCompare(String(b.changed || '')) || String(a.id).localeCompare(String(b.id)) : a.name.localeCompare(b.name, undefined, { numeric: true }))); return { total: m.length, items: m.slice(+offset, +offset + +limit) }; },
     async get(id) { return items.find((it) => it.id === id); },
     async byName(name) { return items.find((it) => it.name.toLowerCase() === String(name).toLowerCase()); },
     async namesLike(base) { const b = base.toLowerCase(); return items.filter((it) => it.name.toLowerCase() === b || it.name.toLowerCase().startsWith(b + '_')); },
     async put(it) { const i = items.findIndex((x) => x.id === it.id); if (i >= 0) items[i] = it; else items.push(it); save(); return it; },
     async remove(id) { const i = items.findIndex((x) => x.id === id); if (i >= 0) items.splice(i, 1); save(); },
+    async letters({ q: text = '', category = null, all = true, starts = '', depth = 1 } = {}) { const { items: l } = await this.list({ q: text, category, all, starts, limit: 1e9 }), m = new Map(); for (const it of l) { const k = depth >= 3 ? String(it.name).slice(0, 3).toLowerCase() : String(it.name).charAt(0).toUpperCase(); m.set(k, (m.get(k) || 0) + 1); } return [...m].sort().map(([k, n]) => ({ k, n })); },
     async categories(all = true) { const m = new Map(); items.filter((it) => all || it.privacy !== 'me').forEach((it) => m.set(it.category || '', (m.get(it.category || '') || 0) + 1)); return [...m].sort().map(([category, n]) => ({ category, n })); },
     async close() { save(); },
   };
@@ -407,6 +413,7 @@ function serve(S) {
         return send(res, 200, { server: 'Craft clip-art server', version: VERSION, api: 1, writable: mayWrite(req), main: S.main, libraries: S.connections.map((c) => ({ name: c.name, database: c.db })),
           reach: { kind: 'node', host: os.hostname(), port: S.port, shared: !!S.share, here: base(req), addresses: [`http://localhost:${S.port}`, ...ips.map((ip) => `http://${ip}:${S.port}`)] } }); }
       if (p[1] === 'categories') return send(res, 200, await db.categories(mayWrite(req)));
+      if (p[1] === 'letters') return send(res, 200, await db.letters({ q: Q.q || '', category: Q.category, all: mayWrite(req), starts: Q.starts || '', depth: +Q.depth || 1 }));
       // a SQL copy of the library, pictures included (only this computer, or with the key)
       if (p[1] === 'export.sql') {
         if (!mayWrite(req)) return send(res, 403, { error: 'A copy of the database needs the key (on the server’s setup page).' });
@@ -418,7 +425,7 @@ function serve(S) {
       if (p[1] === 'import' && req.method === 'POST') { const made = await importEntries(lib, unzip(await body(req)), { category: Q.category, privacy: Q.privacy }); return send(res, 200, { added: made.length, items: made.map((it) => shown(req, lib, it)) }); }
       if (p[1] === 'items') {
         const id = p[2];
-        if (!id && req.method === 'GET') { const r = await db.list({ q: Q.q || '', category: Q.category, type: Q.type, limit: Math.min(+Q.limit || 200, 5000), offset: +Q.offset || 0, all: mayWrite(req), since: Q.since || '', order: Q.order || '' }); return send(res, 200, { total: r.total, items: r.items.map((it) => shown(req, lib, it)) }); }
+        if (!id && req.method === 'GET') { const r = await db.list({ q: Q.q || '', category: Q.category, type: Q.type, limit: Math.min(+Q.limit || 200, 5000), offset: +Q.offset || 0, all: mayWrite(req), since: Q.since || '', order: Q.order || '', starts: Q.starts || '' }); return send(res, 200, { total: r.total, items: r.items.map((it) => shown(req, lib, it)) }); }
         // POST: a new item (or PATCH an old one) as JSON; pictures inside as base64: { png: 'base64', pngExt: 'png', svg: '<svg…' }
         if ((!id && req.method === 'POST') || (id && req.method === 'PATCH')) {
           const j = JSON.parse((await body(req)).toString('utf8') || '{}'), pics = {};

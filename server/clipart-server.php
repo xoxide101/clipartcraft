@@ -114,20 +114,24 @@ class Library {
   private function q(string $sql, array $a = []): array { $s = $this->db->prepare($sql); $s->execute($a); return $s->fetchAll(); }
   private function row(?array $r): ?array { if (!$r) return null; $r['tags'] = array_values(array_filter(array_map('trim', explode(',', (string) $r['tags'])), 'strlen')); $r['files'] = json_decode($r['files'] ?: '{}', true) ?: []; foreach (['width', 'height', 'frames', 'colours'] as $k) if ($r[$k] !== null) $r[$k] = (int) $r[$k]; return $r; }
   private function nocase(): string { return $this->mysql ? '' : ' COLLATE NOCASE'; }
-  function filter(string $text, ?string $cat, ?string $type = null, bool $everyone = true, ?string $since = null): array {
-    $w = []; $a = []; if (!$everyone) $w[] = "COALESCE(privacy, '') <> 'me'"; if ($since) { $w[] = 'changed > ?'; $a[] = $since; } if ($type) { $w[] = "COALESCE(type, 'clipart') = ?"; $a[] = $type; } $all = $this->mysql ? "CONCAT_WS(' ', name, original, seen, matched, tags, category, style, form, description)" : "(COALESCE(name,'') || ' ' || COALESCE(original,'') || ' ' || COALESCE(seen,'') || ' ' || COALESCE(matched,'') || ' ' || COALESCE(tags,'') || ' ' || COALESCE(category,'') || ' ' || COALESCE(style,'') || ' ' || COALESCE(form,'') || ' ' || COALESCE(description,''))";
+  // (starts: names beginning with these letters, or '0-9' (a digit) or '#' (neither a letter nor a digit): the A–Z bar)
+  function filter(string $text, ?string $cat, ?string $type = null, bool $everyone = true, ?string $since = null, string $starts = ''): array {
+    $w = []; $a = [];
+    if ($starts === '0-9') $w[] = "(SUBSTR(name, 1, 1) BETWEEN '0' AND '9')"; elseif ($starts === '#') $w[] = "NOT (UPPER(SUBSTR(name, 1, 1)) BETWEEN 'A' AND 'Z' OR SUBSTR(name, 1, 1) BETWEEN '0' AND '9')"; elseif ($starts !== '') { $w[] = "LOWER(name) LIKE ? ESCAPE '!'"; $a[] = str_replace(['!', '%', '_'], ['!!', '!%', '!_'], mb_strtolower($starts)) . '%'; } if (!$everyone) $w[] = "COALESCE(privacy, '') <> 'me'"; if ($since) { $w[] = 'changed > ?'; $a[] = $since; } if ($type) { $w[] = "COALESCE(type, 'clipart') = ?"; $a[] = $type; } $all = $this->mysql ? "CONCAT_WS(' ', name, original, seen, matched, tags, category, style, form, description)" : "(COALESCE(name,'') || ' ' || COALESCE(original,'') || ' ' || COALESCE(seen,'') || ' ' || COALESCE(matched,'') || ' ' || COALESCE(tags,'') || ' ' || COALESCE(category,'') || ' ' || COALESCE(style,'') || ' ' || COALESCE(form,'') || ' ' || COALESCE(description,''))";
     foreach (preg_split('/\s+/', mb_strtolower($text), -1, PREG_SPLIT_NO_EMPTY) as $word) { $w[] = "LOWER($all) LIKE ?"; $a[] = "%$word%"; }
     if ($cat !== null) { $w[] = "COALESCE(category, '') = ?"; $a[] = $cat; }
     return [$w ? 'WHERE ' . implode(' AND ', $w) : '', $a];
   }
   // (order 'changed': the order they were added or changed, new ones at the end: a reader paging through while pictures are
   // being added misses none; else by name)
-  function list(string $text = '', ?string $cat = null, int $limit = 200, int $offset = 0, ?string $type = null, bool $all = true, ?string $since = null, string $order = ''): array {
-    [$w, $a] = $this->filter($text, $cat, $type, $all, $since);
+  function list(string $text = '', ?string $cat = null, int $limit = 200, int $offset = 0, ?string $type = null, bool $all = true, ?string $since = null, string $order = '', string $starts = ''): array {
+    [$w, $a] = $this->filter($text, $cat, $type, $all, $since, $starts);
     return ['total' => (int) $this->q("SELECT COUNT(*) n FROM items $w", $a)[0]['n'], 'items' => array_map([$this, 'row'], $this->q("SELECT * FROM items $w ORDER BY " . ($order === 'changed' ? 'changed, id' : "name{$this->nocase()}") . " LIMIT $limit OFFSET $offset", $a))];
   }
   function get(string $id): ?array { return $this->row($this->q('SELECT * FROM items WHERE id = ?', [$id])[0] ?? null); }
   function by_name(string $n): ?array { return $this->row($this->q("SELECT * FROM items WHERE name = ?{$this->nocase()}", [$n])[0] ?? null); }
+  // how many names begin with each letter (depth 1), or with each first three letters (depth 3): the A–Z bar
+  function letters(string $text, ?string $cat, bool $all, string $starts, int $depth): array { [$w, $a] = $this->filter($text, $cat, null, $all, null, $starts); $e = $depth >= 3 ? 'LOWER(SUBSTR(name, 1, 3))' : 'UPPER(SUBSTR(name, 1, 1))'; return array_map(fn ($r) => ['k' => (string) $r['k'], 'n' => (int) $r['n']], $this->q("SELECT $e k, COUNT(*) n FROM items $w GROUP BY $e ORDER BY $e", $a)); }
   function categories(bool $all = true): array { return array_map(fn ($r) => ['category' => $r['category'], 'n' => (int) $r['n']], $this->q("SELECT COALESCE(category, '') category, COUNT(*) n FROM items " . ($all ? '' : "WHERE COALESCE(privacy, '') <> 'me' ") . "GROUP BY COALESCE(category, '') ORDER BY category")); }
   // names stay unique: a name already used gets _002, _003… (the first one keeps its plain name)
   function unique_name(string $name, string $id): string {
@@ -282,6 +286,7 @@ try {
     'reach' => ['kind' => 'php', 'host' => gethostname() ?: '', 'shared' => true, 'here' => $base, 'addresses' => array_values(array_unique(array_filter([$base, !empty($_SERVER['SERVER_ADDR']) && $_SERVER['SERVER_ADDR'] !== '127.0.0.1' && $_SERVER['SERVER_ADDR'] !== '::1' ? preg_replace('#//[^/:]+#', '//' . (str_contains($_SERVER['SERVER_ADDR'], ':') ? '[' . $_SERVER['SERVER_ADDR'] . ']' : $_SERVER['SERVER_ADDR']), $base, 1) : ''])))]]);
   $lib = $lib_of($Q['library'] ?? null);
   if ($what === 'categories') out(200, $lib->categories($may_write));
+  if ($what === 'letters') out(200, $lib->letters((string) ($Q['q'] ?? ''), isset($Q['category']) ? (string) $Q['category'] : null, $may_write, (string) ($Q['starts'] ?? ''), (int) ($Q['depth'] ?? 1)));
   // a SQL copy of the library with the pictures themselves (files table, as hex): MySQL/MariaDB, or SQLite (to keep offline)
   if ($what === 'export.sql') {
     if (!$may_write) fail(403, 'A copy of the database needs the key (on the server’s setup page).');
@@ -327,7 +332,7 @@ try {
   }
   if ($what === 'items') {
     $id = $p[2] ?? null;
-    if (!$id && $method === 'GET') { $r = $lib->list($Q['q'] ?? '', $Q['category'] ?? null, min((int) ($Q['limit'] ?? 200) ?: 200, 5000), (int) ($Q['offset'] ?? 0), $Q['type'] ?? null, $may_write, ($Q['since'] ?? '') !== '' ? (string) $Q['since'] : null, (string) ($Q['order'] ?? '')); out(200, ['total' => $r['total'], 'items' => array_map(fn ($it) => $shown($lib, $it), $r['items'])]); }
+    if (!$id && $method === 'GET') { $r = $lib->list($Q['q'] ?? '', $Q['category'] ?? null, min((int) ($Q['limit'] ?? 200) ?: 200, 5000), (int) ($Q['offset'] ?? 0), $Q['type'] ?? null, $may_write, ($Q['since'] ?? '') !== '' ? (string) $Q['since'] : null, (string) ($Q['order'] ?? ''), (string) ($Q['starts'] ?? '')); out(200, ['total' => $r['total'], 'items' => array_map(fn ($it) => $shown($lib, $it), $r['items'])]); }
     if ((!$id && $method === 'POST') || ($id && $method === 'PATCH')) {
       $j = json_decode($body() ?: '{}', true) ?: []; $pics = [];
       foreach (FILE_KINDS as $k) if (array_key_exists($k, $j)) { $pics[$k] = $j[$k] === null ? null : ($k === 'svg' && empty($j['svgBase64']) ? $j[$k] : base64_decode($j[$k])); $pics[$k . 'Ext'] = $j[$k . 'Ext'] ?? null; unset($j[$k]); }

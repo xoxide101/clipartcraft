@@ -16,7 +16,12 @@
 
   // ------------------------------------------------------------------ what is shown
   const cats = () => { const m = new Map(); items.forEach((it) => { const c = it.category || ''; m.set(c, (m.get(c) || 0) + 1); }); return [...m].sort((a, b) => (a[0] === '' ? 1 : b[0] === '' ? -1 : a[0].localeCompare(b[0]))); };
-  const shown = () => { const q = query.trim().toLowerCase(); const words = q.split(/\s+/).filter(Boolean); if (cat === '#work') return work.filter((w) => words.every((x) => w.name.toLowerCase().includes(x))); return items.filter((it) => (cat === '*' || (cat === '#unsorted' ? !KNOWN().includes(it.category || '') : cat.startsWith('#src:') ? srcOf(it) === cat.slice(5) : cat.startsWith('#book:') ? it.id.startsWith(`!${cat.slice(6).split('|')[0]}~${cat.slice(6).split('|')[1].padStart(3, '0')}~`) : cat.startsWith('#fmt:') ? fmtIs(it, cat.slice(5)) : cat.startsWith('#sub:') ? (() => { const [c, sj] = cat.slice(5).split('|'); return it.category === c && subjectOf(it) === sj; })() : cat.startsWith('#srcat:') ? (() => { const [k, c] = cat.slice(7).split('|'); return srcOf(it) === k && (c === 'Not sorted yet' ? !KNOWN().includes(it.category || '') : it.category === c); })() : (it.category || '') === cat)) && words.every((x) => [it.name, it.original, it.seen, it.matched, (it.tags || []).join(' '), it.category, it.style, it.form, it.kind === 'bw' ? 'black and white' : it.kind, it.anim ? 'animated animation' : '', it.description].join(' ').toLowerCase().includes(x))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })); };
+  // A–Z: names beginning with a letter, a digit (0–9) or neither (#); for a big letter, the first three letters
+  let letter = '', pre3 = '';
+  const letterOf = (n) => { const c = String(n || '').trim().charAt(0).toUpperCase(); return /[A-Z]/.test(c) ? c : /[0-9]/.test(c) ? '0-9' : '#'; };
+  const azOk = (it) => (!letter || letterOf(it.name) === letter) && (!pre3 || String(it.name || '').trim().slice(0, 3).toLowerCase() === pre3);
+  const shown = () => allShown().filter(azOk);
+  const allShown = () => { const q = query.trim().toLowerCase(); const words = q.split(/\s+/).filter(Boolean); if (cat === '#work') return work.filter((w) => words.every((x) => w.name.toLowerCase().includes(x))); return items.filter((it) => (cat === '*' || (cat === '#unsorted' ? !KNOWN().includes(it.category || '') : cat.startsWith('#src:') ? srcOf(it) === cat.slice(5) : cat.startsWith('#book:') ? it.id.startsWith(`!${cat.slice(6).split('|')[0]}~${cat.slice(6).split('|')[1].padStart(3, '0')}~`) : cat.startsWith('#fmt:') ? fmtIs(it, cat.slice(5)) : cat.startsWith('#sub:') ? (() => { const [c, sj] = cat.slice(5).split('|'); return it.category === c && subjectOf(it) === sj; })() : cat.startsWith('#srcat:') ? (() => { const [k, c] = cat.slice(7).split('|'); return srcOf(it) === k && (c === 'Not sorted yet' ? !KNOWN().includes(it.category || '') : it.category === c); })() : (it.category || '') === cat)) && words.every((x) => [it.name, it.original, it.seen, it.matched, (it.tags || []).join(' '), it.category, it.style, it.form, it.kind === 'bw' ? 'black and white' : it.kind, it.anim ? 'animated animation' : '', it.description].join(' ').toLowerCase().includes(x))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })); };
   // the agreed categories (the AI's), and which pictures still need sorting: no category from them, or a name that
   // only says where it came from (Sheet 6 – 3, IMG_2041, clip art 12)
   const KNOWN = () => (window.CraftNamer ? CraftNamer.CATEGORIES : []);
@@ -113,9 +118,12 @@
   const onServer = () => cat === '#server' || cat.startsWith('#server:');
   async function loadServer(more) {
     if (!serverUrl || !serverOk) { srv.items = []; srv.total = 0; render(); return; }
-    const c = cat.startsWith('#server:') ? cat.slice(8) : '', base = `${serverUrl}|${c}|${query}`; if (srv.base !== base) { srv.base = base; page = 0; } const key = `${base}|${page}`; if (!more && srv.at === key && srv.items.length) return; srv.loading = true;
+    const c = cat.startsWith('#server:') ? cat.slice(8) : '', base = `${serverUrl}|${c}|${query}`; if (srv.base !== base) { srv.base = base; page = 0; } const key = `${base}|${page}|${letter}|${pre3}`; if (!more && srv.at === key && srv.items.length) return; srv.loading = true;
     try {
-      const r = await (await keyFetch(`${serverUrl}/api/items?limit=${PAGE}&offset=${page * PAGE}&q=${encodeURIComponent(query.trim())}${c ? `&category=${encodeURIComponent(c)}` : ''}`)).json();
+      const st = pre3 || letter, cq = `&q=${encodeURIComponent(query.trim())}${c ? `&category=${encodeURIComponent(c)}` : ''}`;
+      const r = await (await keyFetch(`${serverUrl}/api/items?limit=${PAGE}&offset=${page * PAGE}${cq}${st ? `&starts=${encodeURIComponent(st)}` : ''}`)).json();
+      // (the A–Z bar's counts: by letter, and by first three letters when a big letter is chosen)
+      try { if (srv.azFor !== base) { srv.az = await (await keyFetch(`${serverUrl}/api/letters?depth=1${cq}`)).json(); srv.azFor = base; } srv.az3 = letter && letter.length === 1 ? await (await keyFetch(`${serverUrl}/api/letters?depth=3${cq}&starts=${encodeURIComponent(letter)}`)).json() : []; } catch (e) { srv.az = srv.az || []; srv.az3 = []; }
       srv.items = r.items; srv.total = r.total; srv.at = key;
       if (!srv.cats.length) try { srv.cats = (await (await keyFetch(serverUrl + '/api/categories')).json()).filter((x) => x.category); } catch (e) { /* none */ }
     } catch (e) { toast('The server’s pictures could not be read: ' + (e.message || e)); }
@@ -295,6 +303,17 @@
       ? `<div class="countline">On the server: <b>${live.total.toLocaleString()}</b> pictures${growth} · this browser knows <b>${known.toLocaleString()}</b>${miss ? ` <button type="button" class="btn outline sm" data-act="sync">Sync: get ${miss.toLocaleString()} more</button>` : ''}</div>`
       : `<div class="countline">This browser knows <b>${known.toLocaleString()}</b> of the server’s <b>${live.total.toLocaleString()}</b> pictures${growth}${items.length > known ? ` · ${(items.length - known).toLocaleString()} only here` : ''} · ${miss ? `<button type="button" class="btn outline sm" data-act="sync">Sync: get ${miss.toLocaleString()} more</button>` : 'in step with the server'}</div>`;
   }
+  // the A–Z bar above the pages (here, a book, and On the server): All · # · 0–9 · A … Z with how many each; a letter with
+  // more than a page gets a second row of the first three letters there
+  function azBar() {
+    const keys = ['#', '0-9', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'], n = new Map(); let total = 0, three = [];
+    if (onServer()) { for (const r of srv.az || []) { const k = letterOf(r.k); n.set(k, (n.get(k) || 0) + r.n); total += r.n; } three = (srv.az3 || []).map((r) => [r.k, r.n]); }
+    else { const all = allShown(); total = all.length; for (const it of all) { const k = letterOf(it.name); n.set(k, (n.get(k) || 0) + 1); } if (letter && letter.length === 1) { const m = new Map(); for (const it of all) if (letterOf(it.name) === letter) { const k = String(it.name || '').trim().slice(0, 3).toLowerCase(); m.set(k, (m.get(k) || 0) + 1); } three = [...m].sort((a, b) => a[0].localeCompare(b[0])); } }
+    if (total < 40 && !letter) return '';
+    const b = (k, label) => `<button type="button" class="az${letter === k ? ' on' : ''}" data-az="${esc(k)}" ${k && !n.get(k) ? 'disabled' : ''} title="${k ? `${(n.get(k) || 0).toLocaleString()} beginning with ${k === '#' ? 'neither a letter nor a digit' : k === '0-9' ? 'a digit' : k}` : 'All'}">${label}</button>`;
+    const inLetter = letter ? n.get(letter) || 0 : 0;
+    return `<div class="azbar">${b('', 'All')}${keys.map((k) => b(k, k === '0-9' ? '0–9' : k)).join('')}</div>${letter && letter.length === 1 && inLetter > PAGE && three.length > 1 ? `<div class="azbar az3"><button type="button" class="az${pre3 ? '' : ' on'}" data-az3="">All ${esc(letter)}</button>${three.map(([k, c]) => `<button type="button" class="az${pre3 === k ? ' on' : ''}" data-az3="${esc(k)}" title="${c.toLocaleString()}">${esc(k.charAt(0).toUpperCase() + k.slice(1))} <small>${c.toLocaleString()}</small></button>`).join('')}</div>` : ''}`;
+  }
   function pageBar(total) {
     const pages = Math.max(1, Math.ceil(total / PAGE)); if (pages < 2) return '';
     const from = page * PAGE + 1, to = Math.min(total, (page + 1) * PAGE);
@@ -302,7 +321,7 @@
   }
   function goPage(n) { const total = onServer() ? srv.total : shown().length, pages = Math.max(1, Math.ceil(total / PAGE)); n = Math.max(0, Math.min(pages - 1, n)); if (n === page) return; page = n; sel.clear(); if (onServer()) { srvSel = null; loadServer(); } else render(); $('grid').scrollTop = 0; }
   function render() {
-    if (gridKey !== cat + '|' + query) { gridKey = cat + '|' + query; page = 0; }
+    if (gridKey !== cat + '|' + query) { gridKey = cat + '|' + query; page = 0; letter = ''; pre3 = ''; }
     const C = cats(); const catBtn = ([k, l, n]) => `<button type="button" class="cat" data-cat="${esc(k)}" aria-current="${cat === k}"><span>${esc(l)}</span><b>${n}</b></button>`;
     const branch = (key, label, n, kids, dim) => { const open = openTree.has(key) && kids.length; return `<div class="tree-row">${kids.length ? `<button type="button" class="tw" data-tree="${esc(key)}" aria-expanded="${!!open}" aria-label="${open ? 'Close' : 'Open'} ${esc(label)}">${open ? '▾' : '▸'}</button>` : '<span class="tw"></span>'}${catBtn([key, label, n]).replace('class="cat"', `class="cat${dim ? ' empty' : ''}"`)}</div>${open ? `<div class="tree-kids">${kids.map(([k, l, c]) => `<div class="tree-row"><span class="tw"></span>${catBtn([k, l, c])}</div>`).join('')}</div>` : ''}`; };
     const count = new Map(C), unsorted = items.filter((it) => !KNOWN().includes(it.category || '')).length, toSort = items.filter(needsSort).length, srcs = sources();
@@ -317,7 +336,7 @@
       + `<div class="work-head">Working area</div>` + catBtn(['#work', 'Files imported from', work.length]);
     const S = shown(), g = $('grid'), keepY = g.scrollTop; g.style.setProperty('--tile', size + 'px');
     g.innerHTML = onServer() ? (srv.items.map((x) => `<button type="button" class="tile" role="option" data-srv-id="${esc(x.id)}" aria-selected="${srvSel === x.id}" title="${esc(x.name)}${x.category ? ' · ' + esc(x.category) : ''}"><span class="pic"><img src="${esc((x.links || {}).thumb || (x.links || {}).png || (x.links || {}).svg || '')}" alt="" loading="lazy"></span><span class="nm">${esc(x.name)}</span>${x.privacy === 'me' ? LOCK : ''}${keptOf(x) ? '<i class="used">kept</i>' : ''}${fmtBadge(x)}</button>`).join('')  || `<p class="hint" style="padding:16px">${srv.loading ? 'Asking the server…' : 'Nothing on the server matches.'}</p>`) : cat === '#work' ? S.map((w) => `<button type="button" class="tile" role="option" data-id="${w.id}" aria-selected="${sel.has(w.id)}" title="${esc(w.fileName)}"><span class="pic">${w.thumb ? `<img src="${w.thumb}" alt="" loading="lazy">` : ''}</span><span class="nm">${esc(w.name)}</span>${w.used ? `<i class="used">${w.used} made</i>` : ''}<i class="fmt">${esc((w.fileName.split('.').pop() || '').toUpperCase())}</i></button>`).join('') : S.slice(page * PAGE, (page + 1) * PAGE).map((it) => `<button type="button" class="tile" role="option" data-id="${it.id}" aria-selected="${sel.has(it.id)}" title="${esc(it.name)}${it.category ? ' · ' + esc(it.category) : ''}"><span class="pic"><img src="${it.thumb}" alt="" loading="lazy"></span><span class="nm">${esc(it.name)}</span>${it.privacy === 'me' ? LOCK : ''}${fmtBadge(it)}</button>`).join('');
-    { const bar = pageBar(onServer() ? srv.total : cat === '#work' ? 0 : S.length); if (bar) { g.insertAdjacentHTML('afterbegin', bar); g.insertAdjacentHTML('beforeend', bar); } if (cat !== '#work') g.insertAdjacentHTML('afterbegin', countLine()); }
+    { const bar = pageBar(onServer() ? srv.total : cat === '#work' ? 0 : S.length); if (bar) { g.insertAdjacentHTML('afterbegin', bar); g.insertAdjacentHTML('beforeend', bar); } if (cat !== '#work') { g.insertAdjacentHTML('afterbegin', azBar()); g.insertAdjacentHTML('afterbegin', countLine()); } }
     g.scrollTop = keepY; // (redrawn in place: choosing a picture does not jump the grid)
     const showIt = startOpen || (!items.length && cat !== '#work' && !onServer()); $('start').hidden = !showIt; if (showIt) renderStart();
     renderDetails(); syncProps(); status(); lightUp(g); lightUp($('details')); if (propsBox && !propsBox.hidden) lightUp(propsBox);
@@ -801,6 +820,8 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
   $('grid').addEventListener('change', (e) => { if (e.target.matches('[data-page-to]')) goPage((+e.target.value || 1) - 1); });
   $('grid').addEventListener('click', (e) => {
     const pg = e.target.closest('[data-page]'); if (pg) return goPage(page + (pg.dataset.page === 'next' ? 1 : -1));
+    const az = e.target.closest('[data-az]'); if (az) { letter = az.dataset.az; pre3 = ''; page = 0; sel.clear(); if (onServer()) { srvSel = null; loadServer(); } else render(); return; }
+    const a3 = e.target.closest('[data-az3]'); if (a3) { pre3 = a3.dataset.az3; page = 0; sel.clear(); if (onServer()) { srvSel = null; loadServer(); } else render(); return; }
     // a double-click (the first click redraws the grid, so the click's own count is used): Touch up
     if (e.detail === 2 && e.target.closest('.tile') && !e.shiftKey && !e.ctrlKey && !e.metaKey) return cat === '#work' && !onServer() ? act('work-import') : touchUp();
     const st = e.target.closest('[data-srv-id]'); if (st) { srvSel = st.dataset.srvId; render(); return; }

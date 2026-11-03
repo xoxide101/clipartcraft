@@ -454,3 +454,8 @@ label.ed-sw input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .book-set { display: flex; justify-content: space-between; padding: 6px 10px 2px; font-size: 12px; font-weight: 600; opacity: .85; }
 .cat.book { padding-left: 22px; }
 .cat.book.open span::after { content: ' · open'; color: var(--accent, #7c3aed); font-size: 11px; }
+.azbar { grid-column: 1 / -1; display: flex; flex-wrap: wrap; justify-content: center; gap: 3px; }
+.azbar .az { min-width: 28px; height: 26px; padding: 0 6px; border-radius: 6px; border: 1px solid var(--line, #444); background: var(--panel-2, #2a2a2a); color: inherit; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.azbar .az:disabled { opacity: .3; cursor: default; }
+.azbar .az.on { background: var(--accent, #7c3aed); border-color: var(--accent, #7c3aed); color: #fff; }
+.azbar.az3 .az { font-weight: 500; } .azbar.az3 small { opacity: .7; }
