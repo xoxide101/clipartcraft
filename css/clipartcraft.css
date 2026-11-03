@@ -430,3 +430,5 @@ label.ed-sw input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .mk-pic img { max-width: 100%; max-height: 100%; }
 .mk-err:empty { display: none; }
 .mk-err { color: #f87171; }
+.idline { display: grid; gap: 2px; width: 100%; margin: 6px 0; padding: 6px 8px; border-radius: 7px; border: 1px dashed var(--line, #444); background: transparent; color: var(--muted, #9aa); font: 11px ui-monospace, Consolas, monospace; text-align: left; cursor: copy; word-break: break-all; }
+.idline:hover { border-color: var(--accent, #7c3aed); color: inherit; }

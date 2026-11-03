@@ -255,6 +255,10 @@
   const chipItem = () => { const S = chosen(); return S.length === 1 ? S[0] : null; };
   document.addEventListener('click', (e) => { const c = e.target.closest('.fchip[data-chip]'); if (!c || !e.target.closest('#details, .props-dlg')) return; const it = chipItem(); if (it) openFile(it, c.dataset.chip); });
   document.addEventListener('contextmenu', (e) => { if (!window.CraftMenu || !e.target.closest('#details, .props-dlg')) return; const c = e.target.closest('.fchip[data-chip]'), big = e.target.closest('.big'); if (!c && !big) return; const it = chipItem(); if (!it) return; e.preventDefault(); fileMenu(e, it, c ? c.dataset.chip : null); });
+  // the ID line: its fingerprints filled in once worked out; a click copies the whole line (to paste for a look-up)
+  async function idLineFill() { const S = chosen(); if (S.length !== 1) return; const it = S[0], sm = await L.sumsOf(it); for (const b of document.querySelectorAll('#details [data-idline] .sums, .props-dlg [data-idline] .sums')) b.textContent = Object.entries(sm).map(([k, v]) => `${k.toUpperCase()} ${v}`).join(' · ') || 'no files'; }
+  document.addEventListener('click', (e) => { const b = e.target.closest('[data-idline]'); if (!b) return; const it = chipItem(); if (!it) return;
+    L.sumsOf(it).then((sm) => copyText(`ClipArtCraft picture “${it.name}” id=${it.id} server=${it.serverId || '-'} ${Object.entries(sm).map(([k, v]) => `${k}=${v}`).join(' ')} changed=${it.edited || it.added}${it.changed ? ' (waiting to be sent)' : ''} serverCopy=${it.serverChanged || '-'} from=${serverUrl || '-'}`)).then(() => toast('Copied: paste it to look the picture up.')); });
   // Make with AI (js/makeai.js): words to a picture, a drawing (SVG) by default
   const likeOf = (it) => [it.description || it.seen || it.name, it.style].filter(Boolean).join(', ');
   function makeAi(prompt) { if (!window.ClipArtMake) return; ClipArtMake.open({ toast, prompt, categories: KNOWN(), done: async (it) => { await reload(); if (!onServer() && cat !== '#work') { sel = new Set([it.id]); last = it.id; render(); } } }); }
@@ -303,6 +307,7 @@
         <label class="field"><span>Matched word <small class="hint">(nearest on the lists)</small></span><input class="input" data-f="matched" value="${esc(one.matched || '')}"></label>
         <label class="field"><span>Description</span><textarea class="input" data-f="description" rows="2">${esc(one.description || '')}</textarea></label></details>` : ''}
       ${detailsMore(S, one)}
+      ${one ? `<button type="button" class="idline" data-idline title="Click to copy this line: paste it to look the picture up (its IDs, and fingerprints of its files: CRC32 and size)"><span>ID ${esc(one.id)}${one.serverId ? ` · server ${esc(one.serverId)}` : ' · not on a server'}</span><span class="sums">fingerprints…</span><span>${one.edited ? `changed here ${new Date(one.edited).toLocaleString()}` : `added ${new Date(one.added).toLocaleString()}`}${one.serverId ? (one.changed ? ' · <b>changes waiting to be sent</b>' : ' · in step with the server copy') : ''}</span></button>` : ''}
       ${one ? dnaRow(one) : ''}
       ${one ? aiChips(one) : ''}
       <div class="btns"><button class="btn outline sm" type="button" data-act="ai-again" title="The AI looks at ${one ? 'this picture' : 'these pictures'} again: new guesses to choose from">Ask the AI${one && one.ai ? ' again' : ''}</button><button class="btn outline sm" type="button" data-act="cloud-ask" title="A cloud AI (Claude, Gemini, GPT or OpenRouter, with your own key) looks at ${one ? 'it' : 'them'}: for pictures the AI here gets wrong. Costs a little per picture">Ask a cloud AI</button><button class="btn ghost sm" type="button" data-act="edit-lists" title="Add, rename or remove categories (and the words the AI knows for each), styles and forms">Edit the lists…</button></div>
@@ -311,6 +316,7 @@
       ${one.png ? `<div class="btns"><button class="btn primary" type="button" data-act="touchup" title="Fix it by hand: erase or restore with a box, ellipse or lasso, brushes, a magic wand, and clean-ups for specks, holes and halos">Touch up…</button>${one.pngFirst ? '<span class="hint">touched up</span>' : ''}</div>` : ''}
       <div class="btns">${one.png ? '<button class="btn outline" type="button" data-act="dl-png">PNG</button>' : ''}${one.anim ? '<button class="btn outline" type="button" data-act="dl-anim">Animation</button>' : ''}${one.svg ? '<button class="btn outline" type="button" data-act="dl-svg">SVG</button>' : ''}<button class="btn outline" type="button" data-act="copy">Copy</button></div>` : ''}
       <div class="btns"><button class="btn outline" type="button" data-act="export-sel">Export ${one ? 'it' : 'these'} (ZIP)</button><button class="btn outline danger" type="button" data-act="delete">Delete</button></div></div>`;
+    if (one) idLineFill();
   }
   // the working area: the files clip art came from (kept until deleted)
   function renderWork() {

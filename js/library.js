@@ -164,6 +164,16 @@
     const meta = `<metadata id="craft-meta"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:dc="http://purl.org/dc/elements/1.1/"><rdf:Description>${dc}</rdf:Description></rdf:RDF></metadata>`;
     return clean.slice(0, m.index + m[0].length) + meta + clean.slice(m.index + m[0].length);
   }
+  // A file's fingerprint: CRC32 and length of what the picture itself is, the words written into it left out (a PNG's
+  // text chunks, an SVG's <metadata id="craft-meta">): the same on both servers (core_sum / coreSum), so they can be compared
+  async function coreSum(data, k) {
+    let b = typeof data === 'string' ? new TextEncoder().encode(k === 'svg' ? data.replace(/<metadata id="craft-meta">[\s\S]*?<\/metadata>/, '') : data) : new Uint8Array(await data.arrayBuffer());
+    if (k === 'png' && b.length > 8 && b[0] === 0x89 && b[1] === 0x50) { const keep = [b.subarray(0, 8)], dv = new DataView(b.buffer, b.byteOffset, b.byteLength), dec = new TextDecoder('latin1'); let n = 8;
+      for (let at = 8; at + 12 <= b.length; ) { const len = dv.getUint32(at), t = dec.decode(b.subarray(at + 4, at + 8)); if (!['tEXt', 'iTXt', 'zTXt'].includes(t)) { keep.push(b.subarray(at, at + 12 + len)); n += 12 + len; } at += 12 + len; }
+      const o = new Uint8Array(n); let w = 0; for (const c of keep) { o.set(c, w); w += c.length; } b = o; }
+    return crc32(b).toString(16).padStart(8, '0') + '-' + b.length;
+  }
+  async function sumsOf(it) { const s = {}; if (it.png) s.png = await coreSum(it.png, 'png'); if (it.svg) s.svg = await coreSum(it.svg, 'svg'); if (it.anim) s.anim = await coreSum(it.anim, 'anim'); return s; }
   const stamped = async (it) => ({ png: it.png ? (it.png.type === 'image/png' ? await stampPng(it.png, fieldsOf(it)) : it.png) : null, svg: it.svg ? stampSvg(it.svg, fieldsOf(it)) : null });
   async function fromZip(file, opts = {}) { return fromEntries(await unzip(new Uint8Array(await file.arrayBuffer())), { source: file.name, ...opts }); }
   const safe = (s) => String(s).replace(/[\\/:*?"<>|]+/g, '-').trim() || 'item';
@@ -263,5 +273,5 @@
   async function lists(value) { return meta('lists', value); }
   // the user's corrections the AI learns from: [{ id (the picture's), vec, name, category, style, form, at }]
   async function lessons(value) { return value === undefined ? (await meta('lessons')) || [] : meta('lessons', value); }
-  window.CraftClipart = { DB, lists, lessons, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, deleteItems, deleteOnServer, sendDeletes, notHere, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip, stampPng, stampSvg, svgMatch, traceMatched, pixelsOfItem, dropServerSvg, MATCH, svgUnits, scaleFor, svgPng, TARGET };
+  window.CraftClipart = { DB, lists, lessons, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, deleteItems, deleteOnServer, sendDeletes, notHere, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip, stampPng, stampSvg, coreSum, sumsOf, svgMatch, traceMatched, pixelsOfItem, dropServerSvg, MATCH, svgUnits, scaleFor, svgPng, TARGET };
 })();

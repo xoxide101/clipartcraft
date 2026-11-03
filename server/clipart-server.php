@@ -128,9 +128,12 @@ class Library {
     for ($n = 2; ; $n++) { $t = $base . '_' . str_pad((string) $n, 3, '0', STR_PAD_LEFT); if (!isset($taken[mb_strtolower($t)])) return $t; }
   }
   function read_file(array $it, string $k): ?string {
-    $f = $it['files'][$k] ?? null; if (!$f) return null; if (is_file($this->files . '/' . $f)) return file_get_contents($this->files . '/' . $f);
+    $f = $it['files'][$k] ?? null; if (!$f) return null; $p = $this->files . '/' . $f; $have = is_file($p);
+    // a folder copy older than the item's last change: another server on this database changed it, so the database's is newer
+    $stale = $have && $this->mysql && !empty($it['changed']) && filemtime($p) < strtotime((string) $it['changed']) - 2;
+    if ($have && !$stale) return file_get_contents($p);
     // sent through another server on this database: from the database, then kept in the folder
-    if (!$this->mysql) return null; $r = $this->q('SELECT data FROM files WHERE item = ? AND kind = ?', [$it['id'], $k])[0] ?? null; if (!$r) return null;
+    if (!$this->mysql) return null; $r = $this->q('SELECT data FROM files WHERE item = ? AND kind = ?', [$it['id'], $k])[0] ?? null; if (!$r) return $have ? file_get_contents($p) : null;
     @file_put_contents($this->files . '/' . $f, $r['data']); return $r['data'];
   }
   // every picture file in the folder that the database has not got yet, copied into it

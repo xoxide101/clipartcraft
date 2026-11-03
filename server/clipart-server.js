@@ -193,8 +193,11 @@ function library(name, spec) {
   const readFile = (it, k) => { if (!it.files || !it.files[k]) return null; try { return fs.readFileSync(path.join(db.filesDir, it.files[k])); } catch (e) { return null; } };
   // a picture from the folder, or (sent through another server on this database) from the database, then kept in the folder
   async function readFileAny(it, k) {
-    const b = readFile(it, k); if (b || !db.getBlob || !it.files || !it.files[k]) return b;
-    const r = await db.getBlob(it.id, k); if (!r) return null; try { fs.writeFileSync(path.join(db.filesDir, it.files[k]), r.data); } catch (e) { /* read-only folder */ } return r.data;
+    let b = readFile(it, k), old = null;
+    // a folder copy older than the item's last change: another server on the same database changed it, so the database's is newer
+    if (b && db.getBlob && it.changed && it.files && it.files[k]) { try { if (fs.statSync(path.join(db.filesDir, it.files[k])).mtimeMs < Date.parse(it.changed) - 2000) { old = b; b = null; } } catch (e) { /* no copy */ } }
+    if (b || !db.getBlob || !it.files || !it.files[k]) return b;
+    const r = await db.getBlob(it.id, k); if (!r) return old; try { fs.writeFileSync(path.join(db.filesDir, it.files[k]), r.data); } catch (e) { /* read-only folder */ } return r.data;
   }
   // every picture file in the folder that the database has not got yet, copied into it (the ones sent before it kept them)
   async function filesToDb(log = () => {}) {
