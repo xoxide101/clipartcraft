@@ -236,12 +236,14 @@
     for (let off = 0; ; off += 500) {
       const r = await call(`/api/items?limit=500&offset=${off}&q=${encodeURIComponent(q)}${category !== undefined ? '&category=' + encodeURIComponent(category) : ''}`); total = r.total; if (!r.items.length) break;
       for (const s of r.items) {
-        const old = here.get(s.id); seen.add(s.id); progress(++n, total); if ((old && (old.serverChanged === s.changed || old.changed)) || (!old && (skip.has(s.id) || gone.has(s.id)))) continue;
+        const old = here.get(s.id); seen.add(s.id); progress(++n, total); if ((old && old.serverChanged === s.changed) || (!old && (skip.has(s.id) || gone.has(s.id)))) continue;
+        // changed here and on the server too: the newer one wins (a change here older than the server's copy gives way)
+        if (old && old.changed && Date.parse(old.edited || old.added || 0) >= Date.parse(s.changed || 0)) continue;
         const get = async (k) => { if (!s.links[k]) return null; const r = await fetch(s.links[k]); return r.ok ? r.blob() : null; };
         let png = null, svg = null, anim = null; try { png = await get('png'); if (s.links.svg) { const r = await fetch(s.links.svg); if (r.ok) svg = await r.text(); } anim = await get('anim'); } catch (e) { /* counted below */ }
         if (!png && !svg) { missing.push(s.name); continue; }
         const it = old || { id: uid(), added: s.added || new Date().toISOString() };
-        Object.assign(it, Object.fromEntries(META.map((k) => [k, s[k] ?? it[k] ?? (k === 'tags' ? [] : NUMS.includes(k) ? null : '')])), { png, svg, anim, serverId: s.id, links: s.links, serverChanged: s.changed, source: s.source || 'clip-art server' });
+        Object.assign(it, Object.fromEntries(META.map((k) => [k, s[k] ?? it[k] ?? (k === 'tags' ? [] : NUMS.includes(k) ? null : '')])), { png, svg, anim, serverId: s.id, links: s.links, serverChanged: s.changed, source: s.source || 'clip-art server' }); delete it.changed;
         try { if (!it.thumb || !old) it.thumb = (await thumbOf(png ? URL.createObjectURL(png) : svgUrl(svg))).thumb; } catch (e) { missing.push(s.name); continue; }
         await tx('items', 'readwrite', (st) => req(st.put(it))); made.push(it);
       }
