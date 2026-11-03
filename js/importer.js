@@ -83,6 +83,8 @@
 
   // ------------------------------------------------------------------ reading files
   async function addFiles(list) {
+    // many at once (a folder of thousands): the big import takes them (a batch at a time, with the size, the count and how it goes)
+    if (list.length > 300 && opts.big) { close(); opts.big(list); return; }
     busy = true; render();
     for (const file of list) {
       if (/\.zip$/i.test(file.name)) { opts.toast && opts.toast(`${file.name}: a library ZIP is added with Import a library.`); continue; }

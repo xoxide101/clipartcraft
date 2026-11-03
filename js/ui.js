@@ -408,7 +408,10 @@
   const slicer = (file) => window.ClipArtSlicer.open({ file, toast, categories: KNOWN(), done: async (made, category, sheetFile, o = {}) => {
     await reload(); offerResume(); cat = category || '*'; sel = new Set(made.map((m) => m.id)); render(); if (!o.more) toast(`${made.length} picture${made.length === 1 ? '' : 's'} added${category ? ` to “${category}”` : ''}.`); sortNew(made); } });
   // Import pictures (js/importer.js): what it added is shown and chosen
-  const importer = (files) => window.ClipArtImporter.open({ files, toast, server: !!serverUrl && serverOk, categories: KNOWN(), done: async (made) => { setTimeout(() => sortNew(made), 0); await reload(); offerResume(); cat = '*'; sel = new Set(made.map((m) => m.id)); render(); toast(`${made.length} picture${made.length === 1 ? '' : 's'} added to the library.`); } });
+  // many pictures at once (more than 300: a folder of thousands): the big import, a batch at a time (js/archive.js)
+  const rootOf = (fs) => { const r = (fs[0] && fs[0].webkitRelativePath || '').split('/')[0]; return r || `${fs.length.toLocaleString()} pictures`; };
+  function bigImport(files, name, after) { if (!window.ClipArtArchive) return; ClipArtArchive.open({ folder: name || rootOf(files), files }, { toast, categories: KNOWN(), server: !!serverUrl && serverOk, done: async (n, where) => { await reload(); if (after) await after(); if (where === 'server') { cat = '#server'; render(); loadServer(); } else { cat = '*'; render(); } toast(`${n.toLocaleString()} pictures added${where === 'server' ? ' to the server' : ''}.`); } }); }
+  const importer = (files) => (files.length > 300 ? bigImport(files) : window.ClipArtImporter.open({ files, big: (fs) => bigImport(fs), toast, server: !!serverUrl && serverOk, categories: KNOWN(), done: async (made) => { setTimeout(() => sortNew(made), 0); await reload(); offerResume(); cat = '*'; sel = new Set(made.map((m) => m.id)); render(); toast(`${made.length} picture${made.length === 1 ? '' : 's'} added to the library.`); } }));
   async function act(a) {
     try {
       if (a === 'ai-again') { const S = chosen(); if (!S.length) return; if (!(await aiOk())) return; await sortWithAI(S, { again: true }); await reload(); return; }
@@ -433,7 +436,8 @@
         if (a === 'work-dl') return download(S[0].file, S[0].fileName);
         if (a === 'work-del') { if (!confirm(`Delete ${S.length === 1 ? `“${S[0].fileName}”` : `${S.length} files`} from the working area? (The clip art made from ${S.length === 1 ? 'it' : 'them'} stays in the library.)`)) return; await WA.remove(S.map((w) => w.id)); sel.clear(); await reload(); toast('Deleted.'); return; }
       }
-      if (a === 'folder-import') { const fs3 = await pickFolderFiles(); if (!fs3.length) return; const name = (fs3[0].webkitRelativePath || '').split('/')[0] || 'Folder'; return ClipArtArchive.open({ folder: name, files: fs3 }, { toast, categories: KNOWN(), server: !!serverUrl && serverOk, done: async (n, where) => { await reload(); if (where === 'server') { cat = '#server'; render(); loadServer(); } else { cat = '*'; render(); } toast(`${n.toLocaleString()} pictures added from the folder${where === 'server' ? ' to the server' : ''}.`); } }); }
+      if (a === 'folder-import') { const fs3 = await pickFolderFiles(); if (!fs3.length) return; return bigImport(fs3); }
+      if (a === 'undone-big') { const fs4 = undone.filter((w) => w.pending !== 'slice'); return bigImport(fs4.map(WA.fileOf), `${fs4.length.toLocaleString()} files opened to import`, async () => { for (const w of fs4) await dropUndone(w); offerResume(); }); }
       if (a === 'zip') { const fs2 = await pick('.zip', false); const big = fs2.find((f) => f.size > 150e6); if (big && window.ClipArtArchive) return ClipArtArchive.open(big, { toast, categories: KNOWN(), server: !!serverUrl && serverOk, done: async (n, where) => { await reload(); if (where === 'server') { cat = '#server'; render(); loadServer(); } else { cat = '*'; render(); } toast(`${n.toLocaleString()} pictures added from the archive${where === 'server' ? ' to the server' : ''}.`); } }); return addFiles(fs2, 'Imported'); } // (a big archive: read a piece at a time, js/archive.js)
       if (a === 'slice') return slicer();
       if (a === 'export-all') { if (!items.length) return toast('The library is empty.'); download(await L.toZip(shown()), cat === '*' ? 'Clip art library.zip' : `${cat || 'No category'} clip art.zip`); return; }
@@ -452,7 +456,7 @@
       if (a === 'resume-forget') { await L.forgetPending(); await offerResume(); return; }
       if (a.startsWith('undone-go-')) { const w = undone[+a.slice(10)]; if (!w) return; return w.pending === 'slice' ? slicer(WA.fileOf(w)) : importer([WA.fileOf(w)]); }
       if (a.startsWith('undone-cancel-')) { await dropUndone(undone[+a.slice(14)]); await reload(); await offerResume(); return; }
-      if (a === 'undone-flush') { if (!confirm('Clear the whole Still to do list? (Pictures waiting to be sent stay here, just not sent; files nothing was made from leave the working area.)')) return; await L.forgetPending(); for (const w of undone) await dropUndone(w); await reload(); await offerResume(); return; }
+      if (a === 'undone-flush') { if (!confirm('Clear the whole Still to do list? (Pictures waiting to be sent stay here, just not sent; files nothing was made from leave the working area.)')) return; await L.forgetPending(); busy(`Clearing ${undone.length.toLocaleString()}…`); const gone = undone.filter((w) => !w.used); if (gone.length) await WA.remove(gone.map((w) => w.id)); for (const w of undone.filter((x) => x.used)) { w.pending = ''; await WA.put(w); } busy(); await reload(); await offerResume(); toast(`Still to do cleared (${undone.length.toLocaleString()}).`); return; } // (all at once: thousands one by one took too long)
       // the server is the master copy: deletions waiting go first, everything on it comes here, and what is here but not on
       // it (deleted there, or never sent) is asked about
       if (a === 'match') {
@@ -754,7 +758,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
   document.addEventListener('dragenter', (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { dragN++; $('drop').hidden = false; } });
   document.addEventListener('dragleave', () => { dragN = Math.max(0, dragN - 1); if (!dragN) $('drop').hidden = true; });
   document.addEventListener('dragover', (e) => e.preventDefault());
-  document.addEventListener('drop', (e) => { e.preventDefault(); dragN = 0; $('drop').hidden = true; const f = [...e.dataTransfer.files], z = f.filter((x) => /\.zip$/i.test(x.name)), p = f.filter((x) => !/\.zip$/i.test(x.name)); if (z.length) addFiles(z, 'Imported'); if (p.length) importer(p); });
+  document.addEventListener('drop', (e) => { e.preventDefault(); dragN = 0; $('drop').hidden = true; const f = [...e.dataTransfer.files], z = f.filter((x) => /\.zip$/i.test(x.name)), p = f.filter((x) => !/\.zip$/i.test(x.name)); if (z.length) addFiles(z, 'Imported'); if (p.length) importer(p); }); // (more than 300: the big import)
   document.addEventListener('keydown', (e) => { if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || document.querySelector('.slicer:not([hidden]), .imp:not([hidden]), .touch-empty:not([hidden])')) return; if (e.key === 'Delete') act('delete'); if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') { e.preventDefault(); act('select-all'); } });
   L.onChange(() => reload()); if (WA) WA.onChange(() => reload()); // another Craft app (or another tab) changed the library
 
@@ -977,7 +981,8 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     const row = (text, go, cancel, label = 'Process') => `<li><span>${text}</span><button class="btn primary sm" type="button" data-act="${go}">${label}</button><button class="btn outline sm" type="button" data-act="${cancel}">Cancel</button></li>`;
     bar.innerHTML = `<div class="resume-head"><b>Still to do</b><span class="hint">not finished when the page was last closed</span><span class="grow"></span><button class="btn outline sm" type="button" data-act="undone-flush">Flush all</button></div><ul>
       ${left.length ? row(`<b>${left.length}</b> picture${left.length === 1 ? '' : 's'} still to send to the server`, 'resume', 'resume-forget', 'Send') : ''}
-      ${files.map((w, i) => row(`<b>${esc(w.fileName)}</b>: ${w.pending === 'slice' ? 'a sheet loaded in the slicer' : 'opened to import'}, nothing added from it yet`, 'undone-go-' + i, 'undone-cancel-' + i)).join('')}</ul>`;
+      ${files.length > 8 ? (() => { const imp = files.filter((w) => w.pending !== 'slice').length, sl = files.length - imp; return `${imp ? `<li><span><b>${imp.toLocaleString()}</b> files opened to import, nothing added from them yet</span><button class="btn primary sm" type="button" data-act="undone-big">Bring them in (big import)</button><button class="btn outline sm" type="button" data-act="undone-flush">Forget them all</button></li>` : ''}${sl ? files.map((w, i) => (w.pending === 'slice' ? row(`<b>${esc(w.fileName)}</b>: a sheet loaded in the slicer, nothing added from it yet`, 'undone-go-' + i, 'undone-cancel-' + i) : '')).join('') : ''}`; })()
+        : files.map((w, i) => row(`<b>${esc(w.fileName)}</b>: ${w.pending === 'slice' ? 'a sheet loaded in the slicer' : 'opened to import'}, nothing added from it yet`, 'undone-go-' + i, 'undone-cancel-' + i)).join('')}</ul>`;
   }
   // cancel a file: off the list (and out of the working area if nothing was ever made from it)
   async function dropUndone(w) { if (!w) return; if (!w.used) await WA.remove(w.id); else { w.pending = ''; await WA.put(w); } }

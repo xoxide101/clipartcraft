@@ -445,3 +445,6 @@ label.ed-sw input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .arc-strip { position: fixed; left: 50%; bottom: 44px; transform: translateX(-50%); z-index: 2147482000; display: flex; align-items: center; gap: 8px; max-width: min(960px, 94vw); padding: 6px 10px; border-radius: 9px; border: 1px solid var(--line, #444); background: var(--panel, #1e1f26); box-shadow: 0 6px 24px rgba(0, 0, 0, .45); font-size: 12px; }
 .arc-strip .arc-bar { width: 120px; flex: none; margin: 0; }
 .arc-strip-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.resume ul { max-height: 240px; overflow: auto; margin: 0; padding: 0; list-style: none; }
+.resume li { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.resume li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
