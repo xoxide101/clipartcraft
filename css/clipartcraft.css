@@ -411,3 +411,10 @@ label.ed-sw input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .vx.vx-clipping .vx-art { cursor: crosshair; outline: 2px dashed #2563eb; }
 .vx .vx-row { display: flex; gap: 6px; align-items: center; }
 .vx .vx-row input[type=color] { width: 44px; height: 28px; padding: 0; border: 1px solid var(--line, #555); border-radius: 6px; background: none; }
+.ed-size { position: absolute; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(0, 0, 0, .5); }
+.ed-size-in { width: min(760px, 94vw); max-height: 92vh; overflow: auto; padding: 16px; border-radius: 10px; background: var(--panel, #1e1f26); border: 1px solid var(--line, #444); box-shadow: 0 12px 40px rgba(0, 0, 0, .5); }
+.ed-size-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 10px 0; }
+.ed-size-card { display: grid; justify-items: center; gap: 4px; padding: 8px; border-radius: 8px; border: 2px solid var(--line, #444); background: var(--panel-2, #2a2a2a); color: inherit; cursor: pointer; font: inherit; }
+.ed-size-card canvas { width: 150px; height: 150px; border-radius: 6px; image-rendering: pixelated; }
+.ed-size-card[aria-pressed=true] { border-color: var(--accent, #7c3aed); }
+.ed-size-card:disabled { opacity: .45; cursor: default; }

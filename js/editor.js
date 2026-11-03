@@ -144,7 +144,7 @@
   const L0 = () => layers[active];
   const snap = () => ({ layers: layers.map((l) => ({ ...l })), active });
   function restore(st) { layers = st.layers.map((l) => ({ ...l })); active = Math.min(st.active, layers.length - 1); cur = L0().img; if (maskEdit && !L0().mask) maskEdit = false; }
-  const remember = () => { past.push(snap()); if (past.length > 50) past.shift(); future = []; vec = vec && { ...vec, stale: true }; };
+  const remember = () => { past.push(snap()); const step = layers.reduce((n, l) => n + l.img.width * l.img.height * 4, 0), most = Math.max(4, Math.min(50, Math.floor(400e6 / Math.max(1, step)))); if (past.length > most) past.splice(0, past.length - most); future = []; vec = vec && { ...vec, stale: true }; };
   function change(next) {
     remember(); const o = offOf(cur); next.off = next.shift ? { x: o.x + next.shift.x, y: o.y + next.shift.y } : next.off || o;
     // a trim (or going back to the first version) moves every layer the same way
@@ -512,15 +512,81 @@
     if (a === 'only') { const o = new Uint8Array(n); for (let k = 0; k < n; k++) o[k] = sel[k] ? 0 : 1; return change(applyMask(cur, o, 'erase')); }
     change(applyMask(cur, sel, a, fromImg(), rgbOf(T.col)));
   }
+
+  // ------------------------------------------------------------------ Size up: four sizes to choose from, each shown at
+  // its real pixels before anything changes. From the picture's drawing (an SVG that matches it, nothing changed yet) the
+  // detail is new, at a whole number of pixels per unit of the drawing; otherwise the pixels are enlarged (smoother, no
+  // new detail). Taken, it is a fresh start at that size: Undo starts again, Restore takes from the picture as sized.
+  const SIZES = [600, 1200, 2400, 4800];
+  let svgGood = false, sized = false;
+  function sizeChoices() {
+    const u = item.svg && svgGood && !past.length && layers.length === 1 ? L.svgUnits(item.svg) : null, now = Math.max(cur.width, cur.height);
+    return SIZES.map((t) => {
+      if (u) { const k = L.scaleFor(u, t), w = Math.round(u.w * k), h = Math.round(u.h * k); return { t, w, h, k, svg: true, ok: Math.max(w, h) > now }; }
+      const f = t / now; return { t, w: Math.round(cur.width * f), h: Math.round(cur.height * f), f, svg: false, ok: f > 1.01 };
+    });
+  }
+  const loadPic = (src) => new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => no(new Error('That picture could not be drawn.')); i.src = src; });
+  // a picture drawn at another size (smoothly); a mask the same way
+  function enlarged(img, w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d', { willReadFrequently: true }); x.imageSmoothingQuality = 'high'; x.drawImage(canvasOf(img), 0, 0, w, h); return x.getImageData(0, 0, w, h); }
+  function enlargedMask(m, W, H, w, h) { const a = new ImageData(W, H); for (let i = 0; i < m.length; i++) a.data[i * 4 + 3] = m[i]; const b = enlarged(a, w, h), o = new Uint8Array(w * h); for (let i = 0; i < o.length; i++) o[i] = b.data[i * 4 + 3]; return o; }
+  // the middle of the part of a picture with the most edges (as fractions of its width and height)
+  function busiest(img) {
+    const W = img.width, H = img.height, d = img.data, G = 16, e = new Float64Array(G * G), v = (i) => (d[i] + d[i + 1] + d[i + 2]) * (d[i + 3] / 255);
+    for (let y = 1; y < H; y++) for (let x = 1; x < W; x++) { const i = (y * W + x) * 4; e[Math.min(G - 1, Math.floor((y * G) / H)) * G + Math.min(G - 1, Math.floor((x * G) / W))] += Math.abs(v(i) - v(i - 4)) + Math.abs(v(i) - v(i - W * 4)); }
+    let best = 0; for (let k = 1; k < e.length; k++) if (e[k] > e[best]) best = k;
+    return { x: ((best % G) + 0.5) / G, y: (Math.floor(best / G) + 0.5) / G };
+  }
+  async function sizeUp() {
+    if (!cur || busyNow) return; putDown(); closeText();
+    const list = sizeChoices(), fromSvg = list[0].svg, src = fromSvg ? await loadPic(L.svgUrl(item.svg)) : canvasOf(flat()), mb = (c) => Math.max(1, Math.round((c.w * c.h * 4 * layers.length) / 1048576));
+    const box = document.createElement('div'); box.className = 'ed-size'; box.setAttribute('role', 'dialog'); box.setAttribute('aria-label', 'Size up');
+    box.innerHTML = `<div class="ed-size-in"><div class="lists-head"><b>Size up</b><span class="grow"></span><span class="hint">now ${cur.width} × ${cur.height}</span></div>
+      <p class="hint">${fromSvg ? 'From its drawing (the SVG matches the picture): each size is drawn fresh, with new detail, at a whole number of pixels per unit.' : item.svg && past.length ? 'Enlarged from the pixels (changes made already, so not from its drawing): smoother, no new detail.' : 'Enlarged from the pixels (no drawing that matches it): smoother, no new detail.'} Each card shows the same small part, at that size’s own pixels.</p>
+      <div class="ed-size-cards">${list.map((c, i) => `<button type="button" class="ed-size-card" data-i="${i}" ${c.ok ? '' : 'disabled'}><canvas width="150" height="150" class="check-bg"></canvas><b>${c.w} × ${c.h}</b><small>${c.ok ? (c.svg ? `${c.k} px per unit · new detail` : `× ${c.f.toFixed(2).replace(/\.?0+$/, '')} · enlarged`) : 'already this big'}</small><small class="hint">Undo: about ${mb(c)} MB a step${c.t >= 4800 ? ' (a heavy picture)' : ''}</small></button>`).join('')}</div>
+      <p class="hint">Nothing changes until you choose a size and click Use this size. Undo starts again from the new size (Don’t save still goes back to how it was).</p>
+      <div class="btns"><span class="grow"></span><button class="btn outline" type="button" data-sz="cancel">Cancel</button><button class="btn primary" type="button" data-sz="go" disabled>Use this size</button></div></div>`;
+    el.append(box);
+    // the same small part of the picture on every card (where it has the most edges), at each size's own pixels shown big:
+    // what each size really holds
+    const spot = busiest(flat()), fw = 1 / 16, fh = Math.min(1, fw * (cur.width / cur.height));
+    box.querySelectorAll('.ed-size-card').forEach((b) => { const c = list[+b.dataset.i], n = Math.max(1, Math.round(fw * c.w)), m = Math.max(1, Math.round(fh * c.h)), k = document.createElement('canvas'); k.width = n; k.height = m;
+      const kx = k.getContext('2d'); kx.imageSmoothingQuality = 'high'; kx.drawImage(src, -(spot.x - fw / 2) * c.w, -(spot.y - fh / 2) * c.h, c.w, c.h);
+      const x = b.querySelector('canvas').getContext('2d'); x.imageSmoothingEnabled = false; const s2 = 150 / Math.max(n, m); x.drawImage(k, (150 - n * s2) / 2, (150 - m * s2) / 2, n * s2, m * s2); });
+    let pick = null;
+    return new Promise((done) => {
+      box.addEventListener('click', async (e) => {
+        const card = e.target.closest('.ed-size-card'); if (card && !card.disabled) { pick = list[+card.dataset.i]; box.querySelectorAll('.ed-size-card').forEach((b) => b.setAttribute('aria-pressed', b === card)); box.querySelector('[data-sz=go]').disabled = false; return; }
+        const a = e.target.closest('[data-sz]'); if (!a) return;
+        if (a.dataset.sz === 'go' && pick) { a.disabled = true; a.textContent = 'Sizing…'; await sizeTo(pick, src); }
+        box.remove(); done(a.dataset.sz === 'go' ? pick : null);
+      });
+    });
+  }
+  async function sizeTo(c, src) {
+    busy(`Sizing up to ${c.w} × ${c.h}…`); await new Promise((r) => setTimeout(r, 20));
+    try {
+      if (c.svg) { const k = document.createElement('canvas'); k.width = c.w; k.height = c.h; const x = k.getContext('2d', { willReadFrequently: true }); x.drawImage(src, 0, 0, c.w, c.h); const im = x.getImageData(0, 0, c.w, c.h); im.off = { x: 0, y: 0 }; layers = [{ ...layers[0], img: im, mask: null }]; orig = copy(im); }
+      else {
+        const f = c.w / cur.width, o = offOf(cur);
+        layers = layers.map((l) => ({ ...l, img: enlarged(l.img, c.w, c.h), mask: l.mask ? enlargedMask(l.mask, l.img.width, l.img.height, c.w, c.h) : null }));
+        layers[active].img.off = { x: Math.round(o.x * f), y: Math.round(o.y * f) }; orig = enlarged(orig, Math.round(orig.width * f), Math.round(orig.height * f));
+      }
+      active = Math.min(active, layers.length - 1); cur = L0().img; sheetFull = null; if (T.from === 'sheet') T.from = 'opened';
+      sel = null; selView = null; past = []; future = []; vec = null; sized = true; zoom = 1;
+      draw(); renderPanel(); status(); undoButtons(); toast(`Sized up to ${c.w} × ${c.h}${c.svg ? `, drawn from its SVG at ${c.k} px per unit` : ''}.`);
+    } finally { busy(); }
+  }
   async function save(asCopy) {
     putDown(); closeText(); const btns = el.querySelectorAll('[data-ed]'); btns.forEach((b) => { b.disabled = true; });
     try {
-      const F = flat(), png = await new Promise((ok) => canvasOf(F).toBlob(ok, 'image/png')); let svg = vec && !vec.stale ? vec.svg : null, saved = null;
+      const F = flat(), png = await new Promise((ok) => canvasOf(F).toBlob(ok, 'image/png')); let svg = vec && !vec.stale ? vec.svg : item.svg || null, saved = null;
       if (svg && !(await L.svgMatch(svg, F)).ok) svg = null;
-      if (!svg) svg = (await L.traceMatched(F, [T.vprofile || 'icon', 'balanced'])).svg;
+      if (!svg && F.width * F.height <= 4e6) svg = (await L.traceMatched(F, [T.vprofile || 'icon', 'balanced'])).svg;
+      const lost = !!item.svg && !svg;
       const fresh = await L.makeItem({ name: item.name, png, svg });
-      if (asCopy) { const o = offOf(cur), it = { ...item, ...fresh, id: fresh.id, cutAt: item.cutAt ? { x: item.cutAt.x + o.x, y: item.cutAt.y + o.y, w: cur.width, h: cur.height } : undefined, name: item.name, serverId: undefined, links: undefined, pngFirst: undefined, edited: new Date().toISOString() }; delete it.serverId; delete it.links; delete it.pngFirst; await L.put(it); toast(`Saved as a copy: “${it.name}”.`); saved = it; }
-      else { if (!item.pngFirst) { item.pngFirst = item.png; if (item.cutAt) item.cutAtFirst = item.cutAt; } if (item.cutAt) { const o = offOf(cur); item.cutAt = { x: item.cutAt.x + o.x, y: item.cutAt.y + o.y, w: cur.width, h: cur.height }; } Object.assign(item, { png, svg, noSvg: !svg, thumb: fresh.thumb, width: fresh.width, height: fresh.height, edited: new Date().toISOString() }); if (item.serverId) item.changed = true; await L.put(item); toast(`Saved “${item.name}”.`); saved = item; }
+      if (asCopy) { const o = offOf(cur), it = { ...item, ...fresh, id: fresh.id, cutAt: item.cutAt && !sized ? { x: item.cutAt.x + o.x, y: item.cutAt.y + o.y, w: cur.width, h: cur.height } : undefined, name: item.name, serverId: undefined, links: undefined, pngFirst: undefined, edited: new Date().toISOString() }; delete it.serverId; delete it.links; delete it.pngFirst; await L.put(it); toast(`Saved as a copy: “${it.name}”.`); saved = it; }
+      else { if (!item.pngFirst) { item.pngFirst = item.png; if (item.cutAt) item.cutAtFirst = item.cutAt; } if (item.cutAt && sized) { if (!item.cutAtFirst) item.cutAtFirst = item.cutAt; delete item.cutAt; } else if (item.cutAt) { const o = offOf(cur); item.cutAt = { x: item.cutAt.x + o.x, y: item.cutAt.y + o.y, w: cur.width, h: cur.height }; } Object.assign(item, { png, svg, noSvg: !svg, thumb: fresh.thumb, width: fresh.width, height: fresh.height, edited: new Date().toISOString() }); if (item.serverId) item.changed = true; await L.put(item); toast(`Saved “${item.name}” (${cur.width} × ${cur.height})${lost ? ': its drawing (SVG) no longer matched the picture, so it is a PNG only now (Edit the drawing keeps a drawing)' : ''}.`); saved = item; }
       past = []; future = []; close(); if (opts.done) await opts.done(saved);
     } catch (e) { console.error(e); toast('Saving failed: ' + (e.message || e)); btns.forEach((b) => { b.disabled = false; }); }
   }
@@ -528,7 +594,7 @@
 
   function build() {
     el = document.createElement('div'); el.className = 'slicer editor'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Touch up');
-    el.innerHTML = `<div class="sl-bar"><b>Touch up</b><span class="hint ed-name"></span><span class="ed-navs" hidden><button class="btn outline ed-nav" type="button" data-ed="prev" title="The previous picture (Page Up)"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="10.5" fill="currentColor" opacity=".16"/><path d="M14.5 6.5 9 12l5.5 5.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Previous</span></button><b class="ed-pos"></b><button class="btn outline ed-nav" type="button" data-ed="next" title="The next picture (Page Down)"><span>Next</span><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="10.5" fill="currentColor" opacity=".16"/><path d="M9.5 6.5 15 12l-5.5 5.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button></span><span class="grow"></span><button class="btn outline ed-drawing" type="button" data-ed="drawing" hidden title="This picture has an SVG: edit it as a drawing (its shapes and words), and Save makes the drawing the picture">Edit the drawing</button><button class="btn outline" type="button" data-ed="close">Close</button></div>
+    el.innerHTML = `<div class="sl-bar"><b>Touch up</b><span class="hint ed-name"></span><span class="ed-navs" hidden><button class="btn outline ed-nav" type="button" data-ed="prev" title="The previous picture (Page Up)"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="10.5" fill="currentColor" opacity=".16"/><path d="M14.5 6.5 9 12l5.5 5.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Previous</span></button><b class="ed-pos"></b><button class="btn outline ed-nav" type="button" data-ed="next" title="The next picture (Page Down)"><span>Next</span><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="10.5" fill="currentColor" opacity=".16"/><path d="M9.5 6.5 15 12l-5.5 5.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button></span><span class="grow"></span><button class="btn outline" type="button" data-ed="size" title="Four bigger sizes to choose from, each shown at real size first (from its drawing when it has a matching SVG: new detail)">Size up…</button><button class="btn outline ed-drawing" type="button" data-ed="drawing" hidden title="This picture has an SVG: edit it as a drawing (its shapes and words), and Save makes the drawing the picture">Edit the drawing</button><button class="btn outline" type="button" data-ed="close">Close</button></div>
       <div class="sl-main"><div class="sl-left"><div class="imp-tools sl-tools" role="toolbar"><button class="btn outline" type="button" data-hist="undo" disabled title="Undo (Ctrl+Z)">↶ Undo</button><button class="btn outline" type="button" data-hist="redo" disabled title="Redo (Ctrl+Y)">↷ Redo</button><span class="sep"></span>
         <div class="seg" role="group"><button class="btn" type="button" data-z="out">−</button><button class="btn sl-zoom" type="button" data-z="fit">Fit</button><button class="btn" type="button" data-z="in">+</button></div><button class="btn outline" type="button" data-z="100">100%</button></div>
         <div class="sl-desk"><div class="sl-stage"><canvas class="ed-canvas"></canvas></div></div><div class="sl-status"></div></div><aside class="sl-side side right"></aside></div>`;
@@ -555,6 +621,7 @@
       const c = e.target.closest('[data-clean]'); if (c) { const k = c.dataset.clean, v = +(el.querySelector(`[data-cv="${k}"]`).value) || CLEAN[k].value; T['cv_' + k] = v; keepT(); const out = CLEAN[k].run(cur, v, fromImg()); change(out); toast(`${CLEAN[k].label}: done (Undo takes it back).`); return; }
       const a = e.target.closest('[data-ed]'); if (!a) return; if (a.dataset.ed === 'close') { if (opts.onClose) return opts.onClose(); if (past.length && !confirm('Close without saving the changes?')) return; close(); return; }
       if (a.dataset.ed === 'drawing') return opts.drawing && opts.drawing();
+      if (a.dataset.ed === 'size') return sizeUp();
       if (a.dataset.ed === 'prev' || a.dataset.ed === 'next') return opts.nav && opts.nav.step(a.dataset.ed === 'next' ? 1 : -1);
       if (a.dataset.ed === 'save') return save(false); if (a.dataset.ed === 'copy') return save(true); if (a.dataset.ed === 'first') return backToFirst();
     });
@@ -584,6 +651,7 @@
     opts = o; item = it; if (!el) build(); el.classList.toggle('embedded', !!o.mount); if (o.mount) o.mount.insertBefore(el, o.before || null); else document.body.append(el);
     el.querySelector('[data-ed=close]').textContent = o.mount ? 'Back to the library' : 'Close'; el.hidden = false; past = []; future = []; zoom = 1; poly = null; sel = null; selView = null; flt = null; closeText(); maskEdit = false; vec = null;
     el.querySelectorAll('[data-ed]').forEach((b) => { b.disabled = false; });
+    sized = false; svgGood = false; if (it.svg) L.svgMatch(it.svg, it.png).then((m) => { if (item === it) svgGood = m.ok; }).catch(() => {});
     cur = await imageOf(it.png); cur.off = { x: 0, y: 0 }; orig = copy(cur); layers = [{ name: 'Picture', img: cur, vis: true, op: 1, mask: null }]; active = 0; sheetFull = await sheetOf(it); if (!sheetPart() && T.from === 'sheet') T.from = 'opened';
     el.querySelector('.ed-name').textContent = it.name; navBar(); el.querySelector('.ed-drawing').hidden = !(it.svg && o.drawing); renderPanel(); draw(); status(); const d = desk(); d.scrollLeft = d.scrollTop = 0;
   }
@@ -592,5 +660,5 @@
   function close() { if (el) el.hidden = true; poly = null; preview(null); }
   // shown again (its tab chosen again): the picture and its changes as they were
   function show() { if (el && item) { el.hidden = false; draw(); status(); } }
-  window.ClipArtEditor = { open, close, show, save, undo, redo, layerDo, bgDo, fxDo, vecDo, layers: () => layers.map((l, i) => ({ name: l.name, vis: l.vis, op: l.op, mask: !!l.mask, active: i === active })), maskEditing: () => maskEdit, busy: () => busyNow, mendSel: async (ai) => { if (!sel) return toast('Select the part to mend first.'); const h = new Float32Array(sel.length); for (let k = 0; k < sel.length; k++) h[k] = sel[k]; try { change(await mend(cur, h, ai)); } catch (e) { busy(); toast('Mending failed: ' + (e.message || e)); } }, PROFILES, _flat: () => flat(), hasVec: () => !!vec, vecShown: () => !!(vec && vec.show), T: () => T, setT, addColour, dropColour, FONTS, palette: () => (cur ? pictureColours() : []), copy: () => copySel(false), cut: () => copySel(true), paste: () => pasteNow(), selDo, hasSel: () => !!sel, floating: () => !!flt, putDown, isOpen: () => !!(el && !el.hidden && item), item: () => item, changed: () => past.length > 0, CLEAN, applyShape, wand, regionOf, applyMask, _state: () => ({ sel: selCount(), tool: T.tool, col: T.col, w: cur && cur.width, h: cur && cur.height, past: past.length, sheet: sheetPart(), off: cur ? offOf(cur) : null, solid: cur ? (() => { let n = 0; for (let i = 3; i < cur.data.length; i += 4) if (cur.data[i] >= 24) n++; return Math.round((100 * n) / (cur.width * cur.height)); })() : 0 }) };
+  window.ClipArtEditor = { open, close, show, save, undo, redo, layerDo, bgDo, fxDo, vecDo, layers: () => layers.map((l, i) => ({ name: l.name, vis: l.vis, op: l.op, mask: !!l.mask, active: i === active })), maskEditing: () => maskEdit, busy: () => busyNow, mendSel: async (ai) => { if (!sel) return toast('Select the part to mend first.'); const h = new Float32Array(sel.length); for (let k = 0; k < sel.length; k++) h[k] = sel[k]; try { change(await mend(cur, h, ai)); } catch (e) { busy(); toast('Mending failed: ' + (e.message || e)); } }, PROFILES, _flat: () => flat(), hasVec: () => !!vec, vecShown: () => !!(vec && vec.show), T: () => T, setT, addColour, dropColour, FONTS, palette: () => (cur ? pictureColours() : []), copy: () => copySel(false), cut: () => copySel(true), paste: () => pasteNow(), selDo, hasSel: () => !!sel, floating: () => !!flt, putDown, isOpen: () => !!(el && !el.hidden && item), item: () => item, changed: () => past.length > 0 || sized, sizeUp, CLEAN, applyShape, wand, regionOf, applyMask, _state: () => ({ sel: selCount(), tool: T.tool, col: T.col, w: cur && cur.width, h: cur && cur.height, past: past.length, sheet: sheetPart(), off: cur ? offOf(cur) : null, solid: cur ? (() => { let n = 0; for (let i = 3; i < cur.data.length; i += 4) if (cur.data[i] >= 24) n++; return Math.round((100 * n) / (cur.width * cur.height)); })() : 0 }) };
 })();
