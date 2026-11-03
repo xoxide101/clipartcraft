@@ -261,6 +261,19 @@
   // Pages of 600: the grid only ever holds one page (here and on the server), however big the library grows; a bar above and
   // below goes to the previous or next page or to any page typed in. Another category or search starts at page 1.
   const PAGE = 600; let page = 0, gridKey = '';
+  // How this browser stands with the server, above the pages (here and On the server): the server's count asked every 30
+  // seconds (one tiny request), so an import growing there shows; a Sync button when the server has pictures this has not
+  const live = { total: null, was: null, at: 0 };
+  async function serverCount() { if (!serverUrl || !serverOk) return; try { const r = await (await keyFetch(`${serverUrl}/api/items?limit=1`)).json(); if (live.total !== null && r.total !== live.total) live.was = { n: live.total, t: live.at }; live.total = r.total; live.at = Date.now(); const c = $('grid').querySelector('.countline'); if (c) c.outerHTML = countLine(); } catch (e) { /* the next time */ } }
+  setInterval(() => { if (!document.hidden) serverCount(); }, 30000);
+  function countLine() {
+    if (!serverUrl || !serverOk || live.total === null) return '';
+    const known = items.filter((it) => it.serverId).length, miss = Math.max(0, live.total - known), grew = live.was && live.total > live.was.n ? live.total - live.was.n : 0;
+    const growth = grew ? ` <small class="hint">(+${grew.toLocaleString()} in the last ${Math.max(1, Math.round((live.at - live.was.t) / 1000))} s)</small>` : '';
+    return onServer()
+      ? `<div class="countline">On the server: <b>${live.total.toLocaleString()}</b> pictures${growth} · this browser knows <b>${known.toLocaleString()}</b>${miss ? ` <button type="button" class="btn outline sm" data-act="sync">Sync: get ${miss.toLocaleString()} more</button>` : ''}</div>`
+      : `<div class="countline">This browser knows <b>${known.toLocaleString()}</b> of the server’s <b>${live.total.toLocaleString()}</b> pictures${growth}${items.length > known ? ` · ${(items.length - known).toLocaleString()} only here` : ''} · ${miss ? `<button type="button" class="btn outline sm" data-act="sync">Sync: get ${miss.toLocaleString()} more</button>` : 'in step with the server'}</div>`;
+  }
   function pageBar(total) {
     const pages = Math.max(1, Math.ceil(total / PAGE)); if (pages < 2) return '';
     const from = page * PAGE + 1, to = Math.min(total, (page + 1) * PAGE);
@@ -282,7 +295,7 @@
       + `<div class="work-head">Working area</div>` + catBtn(['#work', 'Files imported from', work.length]);
     const S = shown(), g = $('grid'), keepY = g.scrollTop; g.style.setProperty('--tile', size + 'px');
     g.innerHTML = onServer() ? (srv.items.map((x) => `<button type="button" class="tile" role="option" data-srv-id="${esc(x.id)}" aria-selected="${srvSel === x.id}" title="${esc(x.name)}${x.category ? ' · ' + esc(x.category) : ''}"><span class="pic"><img src="${esc((x.links || {}).thumb || (x.links || {}).png || (x.links || {}).svg || '')}" alt="" loading="lazy"></span><span class="nm">${esc(x.name)}</span>${x.privacy === 'me' ? LOCK : ''}${keptOf(x) ? '<i class="used">kept</i>' : ''}${fmtBadge(x)}</button>`).join('')  || `<p class="hint" style="padding:16px">${srv.loading ? 'Asking the server…' : 'Nothing on the server matches.'}</p>`) : cat === '#work' ? S.map((w) => `<button type="button" class="tile" role="option" data-id="${w.id}" aria-selected="${sel.has(w.id)}" title="${esc(w.fileName)}"><span class="pic">${w.thumb ? `<img src="${w.thumb}" alt="" loading="lazy">` : ''}</span><span class="nm">${esc(w.name)}</span>${w.used ? `<i class="used">${w.used} made</i>` : ''}<i class="fmt">${esc((w.fileName.split('.').pop() || '').toUpperCase())}</i></button>`).join('') : S.slice(page * PAGE, (page + 1) * PAGE).map((it) => `<button type="button" class="tile" role="option" data-id="${it.id}" aria-selected="${sel.has(it.id)}" title="${esc(it.name)}${it.category ? ' · ' + esc(it.category) : ''}"><span class="pic"><img src="${it.thumb}" alt="" loading="lazy"></span><span class="nm">${esc(it.name)}</span>${it.privacy === 'me' ? LOCK : ''}${fmtBadge(it)}</button>`).join('');
-    { const bar = pageBar(onServer() ? srv.total : cat === '#work' ? 0 : S.length); if (bar) { g.insertAdjacentHTML('afterbegin', bar); g.insertAdjacentHTML('beforeend', bar); } }
+    { const bar = pageBar(onServer() ? srv.total : cat === '#work' ? 0 : S.length); if (bar) { g.insertAdjacentHTML('afterbegin', bar); g.insertAdjacentHTML('beforeend', bar); } if (cat !== '#work') g.insertAdjacentHTML('afterbegin', countLine()); }
     g.scrollTop = keepY; // (redrawn in place: choosing a picture does not jump the grid)
     const showIt = startOpen || (!items.length && cat !== '#work' && !onServer()); $('start').hidden = !showIt; if (showIt) renderStart();
     renderDetails(); syncProps(); status(); lightUp(g); lightUp($('details')); if (propsBox && !propsBox.hidden) lightUp(propsBox);
@@ -750,7 +763,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     if (!since) { const r = await L.pull(() => {}, { since: new Date(Date.now() - 864e5).toISOString(), newMax: 50 }).catch(() => null); mark((r && r.newest) || new Date().toISOString()); if (r && (r.made.length || r.thumbs.length)) { await reload(); syncReport(r, [], 0, 'Changed on the server in the last day'); } return; }
     try { const r = await L.pull(() => {}, { since, newMax: 50 }); if (r.newest) mark(r.newest > since ? r.newest : since); if (r.made.length || r.thumbs.length || r.leftNew) { await reload(); if (onServer()) loadServer(); syncReport(r, [], 0, 'Changed on the server since you were last here'); } } catch (e) { /* the next look */ }
   }
-  async function checkServer(say) { serverUrl = await L.server(); serverOk = false; if (serverUrl) { try { const i = await L.serverInfo(); serverOk = true; if (say) toast(`Connected to the clip-art server (${i.libraries.map((l) => `${l.name}: ${l.database}`).join(', ')}).${i.writable ? '' : ' It can only be read from here.'}`); } catch (e) { if (say) toast(e.message); } } status(); if (serverOk) sinceLast(); }
+  async function checkServer(say) { serverUrl = await L.server(); serverOk = false; if (serverUrl) { try { const i = await L.serverInfo(); serverOk = true; if (say) toast(`Connected to the clip-art server (${i.libraries.map((l) => `${l.name}: ${l.database}`).join(', ')}).${i.writable ? '' : ' It can only be read from here.'}`); } catch (e) { if (say) toast(e.message); } } status(); if (serverOk) { sinceLast(); serverCount(); } }
   async function need() {
     if (!serverUrl || !serverOk) { if (await autoPlace(true)) return; }
     if (!serverUrl) { connectWindow(); throw Object.assign(new Error('No clip-art server answers yet: choose or add one in the window (Server › Connect…).'), { quiet: true }); } if (!serverOk) await checkServer(); if (!serverOk) throw new Error(`The clip-art server at ${serverUrl} did not answer (is it running?).`); }

@@ -270,8 +270,9 @@
       delete it.changed; datas.push(it); made.push(it); if (old) updated.push(it); return it;
     };
     const fresh = []; let leftNew = 0, newestSeen = '';
+    // (read in the order added or changed: pictures added while this reads come at the end, so none are missed)
     for (let off = 0; ; off += 500) {
-      const r = await call(`/api/items?limit=500&offset=${off}&q=${encodeURIComponent(q)}${category !== undefined ? '&category=' + encodeURIComponent(category) : ''}${since ? '&since=' + encodeURIComponent(since) : ''}&order=changed`); total = r.total; // (in the order added or changed: pictures added while this reads come at the end, none missed) if (!r.items.length) break;
+      const r = await call(`/api/items?limit=500&offset=${off}&q=${encodeURIComponent(q)}${category !== undefined ? '&category=' + encodeURIComponent(category) : ''}${since ? '&since=' + encodeURIComponent(since) : ''}&order=changed`); total = r.total; if (!r.items.length) break;
       for (const s of r.items) {
         const old = here.get(s.id); seen.add(s.id); progress(++n, total); if ((s.changed || '') > newestSeen) newestSeen = s.changed; // (in step already: its thumbnail remade once if it was made from an older copy, as a pull before this kept the old one)
         if (old && old.serverChanged === s.changed) { if (old.thumbFrom !== s.changed && (old.png || old.svg)) { try { const t = await thumbOf(old.png ? URL.createObjectURL(old.png) : svgUrl(old.svg)); old.thumb = t.thumb; old.thumbFrom = s.changed; await tx('items', 'readwrite', (st) => req(st.put(old))); thumbs.push(old); } catch (e) { /* unreadable */ } } continue; }

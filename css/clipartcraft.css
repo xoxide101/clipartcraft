@@ -450,3 +450,4 @@ label.ed-sw input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .resume li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pagebar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; gap: 12px; padding: 6px 0; }
 .pagebar .input { width: 72px; height: 28px; padding: 2px 6px; text-align: center; }
+.countline { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; padding: 6px 10px; border-radius: 8px; background: var(--panel-2, #23242c); font-size: 13px; }
