@@ -16,7 +16,7 @@
 
   // ------------------------------------------------------------------ what is shown
   const cats = () => { const m = new Map(); items.forEach((it) => { const c = it.category || ''; m.set(c, (m.get(c) || 0) + 1); }); return [...m].sort((a, b) => (a[0] === '' ? 1 : b[0] === '' ? -1 : a[0].localeCompare(b[0]))); };
-  const shown = () => { const q = query.trim().toLowerCase(); const words = q.split(/\s+/).filter(Boolean); if (cat === '#work') return work.filter((w) => words.every((x) => w.name.toLowerCase().includes(x))); return items.filter((it) => (cat === '*' || (cat === '#unsorted' ? !KNOWN().includes(it.category || '') : cat.startsWith('#src:') ? srcOf(it) === cat.slice(5) : cat.startsWith('#sub:') ? (() => { const [c, sj] = cat.slice(5).split('|'); return it.category === c && subjectOf(it) === sj; })() : cat.startsWith('#srcat:') ? (() => { const [k, c] = cat.slice(7).split('|'); return srcOf(it) === k && (c === 'Not sorted yet' ? !KNOWN().includes(it.category || '') : it.category === c); })() : (it.category || '') === cat)) && words.every((x) => [it.name, it.original, it.seen, it.matched, (it.tags || []).join(' '), it.category, it.style, it.form, it.kind === 'bw' ? 'black and white' : it.kind, it.anim ? 'animated animation' : '', it.description].join(' ').toLowerCase().includes(x))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })); };
+  const shown = () => { const q = query.trim().toLowerCase(); const words = q.split(/\s+/).filter(Boolean); if (cat === '#work') return work.filter((w) => words.every((x) => w.name.toLowerCase().includes(x))); return items.filter((it) => (cat === '*' || (cat === '#unsorted' ? !KNOWN().includes(it.category || '') : cat.startsWith('#src:') ? srcOf(it) === cat.slice(5) : cat.startsWith('#fmt:') ? fmtIs(it, cat.slice(5)) : cat.startsWith('#sub:') ? (() => { const [c, sj] = cat.slice(5).split('|'); return it.category === c && subjectOf(it) === sj; })() : cat.startsWith('#srcat:') ? (() => { const [k, c] = cat.slice(7).split('|'); return srcOf(it) === k && (c === 'Not sorted yet' ? !KNOWN().includes(it.category || '') : it.category === c); })() : (it.category || '') === cat)) && words.every((x) => [it.name, it.original, it.seen, it.matched, (it.tags || []).join(' '), it.category, it.style, it.form, it.kind === 'bw' ? 'black and white' : it.kind, it.anim ? 'animated animation' : '', it.description].join(' ').toLowerCase().includes(x))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })); };
   // the agreed categories (the AI's), and which pictures still need sorting: no category from them, or a name that
   // only says where it came from (Sheet 6 – 3, IMG_2041, clip art 12)
   const KNOWN = () => (window.CraftNamer ? CraftNamer.CATEGORIES : []);
@@ -226,6 +226,36 @@
     if (here ? it.anim : ln.anim) f.push(`${here ? extOfType(it.anim) : extOfLink(ln.anim)} ▶`);
     return f.length ? `<i class="fmt">${f.join(' · ')}</i>` : '';
   }
+  // By format (the left list): what files a picture has
+  const FMTS = [['both', 'PNG and SVG'], ['png', 'PNG only (no SVG)'], ['svgonly', 'SVG only'], ['jpg', 'JPG'], ['anim', 'Moving (GIF, animated)']];
+  function fmtIs(it, f) {
+    const jpg = it.png && it.png.type === 'image/jpeg';
+    return f === 'both' ? !!(it.png && it.svg) && !jpg : f === 'png' ? !!it.png && !it.svg && !jpg : f === 'svgonly' ? !!it.svg && !it.png : f === 'jpg' ? jpg : f === 'anim' ? !!it.anim : false;
+  }
+  // Convert to (right-click, the details): the chosen pictures saved in another format (one: a file; several: a ZIP),
+  // an SVG added (traced, kept only when it matches), or the PNG drawn again from the SVG (whole scale, ~2400 px)
+  const CONVERT = ['jpg', 'webp', 'gif', 'bmp', 'tif', 'ico', 'pdf', 'tga', 'pcx', 'iff', 'ppm'];
+  function convertMenu() {
+    const F = window.CraftFormats ? CraftFormats.FORMATS : {};
+    return [...CONVERT.filter((k) => F[k]).map((k) => ({ label: `${F[k].name}…`, run: () => convertSave(k) })), '-', { label: 'Add an SVG (traced; kept if it matches)', run: () => convertAdd('svg') }, { label: 'Redraw the PNG from its SVG (about 2,400 pixels)', run: () => convertAdd('png') }];
+  }
+  async function pixelsFor(it) { if (it.png) return L.pixelsOfItem(it); const p = await L.svgPng(it.svg); return L.pixelsOfItem({ png: p.blob }); }
+  async function convertSave(fmt) {
+    const S = chosen().filter((it) => it.png || it.svg), F = CraftFormats.FORMATS[fmt], files = [], bad = []; if (!S.length) return toast('Choose pictures first.');
+    for (let i = 0; i < S.length; i++) { const it = S[i]; busy(`Converting ${i + 1} of ${S.length} to ${F.name}…`); try { const b = await CraftFormats.write(await pixelsFor(it), fmt, {}); files.push({ name: `${it.name.replace(/[\\/:*?"<>|]+/g, '-')}.${F.ext}`, bytes: new Uint8Array(await b.arrayBuffer()), blob: b }); } catch (e) { bad.push(`${it.name} (${e.message || e})`); } }
+    busy(); if (!files.length) return toast(`None could be written as ${F.name}: ${bad.slice(0, 3).join('; ')}`);
+    if (files.length === 1) download(files[0].blob, files[0].name); else { const seen = {}; for (const f of files) { const k = f.name.toLowerCase(); seen[k] = (seen[k] || 0) + 1; if (seen[k] > 1) f.name = f.name.replace(/(\.[^.]+)$/, ` ${seen[k]}$1`); } download(L.zip(files), `Clip art (${F.ext.toUpperCase()}).zip`); }
+    toast(`${files.length} saved as ${F.name}${bad.length ? `; ${bad.length} could not be: ${bad.slice(0, 2).join('; ')}` : ''}.`);
+  }
+  async function convertAdd(kind) {
+    const S = chosen().filter((it) => (kind === 'svg' ? it.png && !it.svg : it.svg)); if (!S.length) return toast(kind === 'svg' ? 'None of the chosen is a PNG without an SVG.' : 'None of the chosen has an SVG.');
+    let n = 0, no = 0;
+    for (let i = 0; i < S.length; i++) { const it = S[i]; busy(`${kind === 'svg' ? 'Tracing' : 'Drawing'} ${i + 1} of ${S.length}…`);
+      try { if (kind === 'svg') { const t = await L.traceMatched(await L.pixelsOfItem(it)); if (!t.svg) { no++; continue; } it.svg = t.svg; it.noSvg = false; }
+        else { const p = await L.svgPng(it.svg); if (!it.pngFirst && it.png) it.pngFirst = it.png; it.png = p.blob; const t = await L.makeItem({ name: it.name, png: p.blob }); Object.assign(it, { thumb: t.thumb, width: t.width, height: t.height }); }
+        if (it.serverId) it.changed = true; it.edited = new Date().toISOString(); await L.put(it); n++; } catch (e) { no++; } }
+    busy(); await reload(); sendNow(S); toast(kind === 'svg' ? `${n} SVG${n === 1 ? '' : 's'} added${no ? `; ${no} did not match their picture (kept as PNG only)` : ''}.` : `${n} PNG${n === 1 ? '' : 's'} drawn again from the SVG${no ? `; ${no} failed` : ''}.`);
+  }
   const LOCK = '<i class="lock" title="Only me: on the server only with your key"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" fill="currentColor"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2.4"/></svg></i>';
   function render() {
     const C = cats(); const catBtn = ([k, l, n]) => `<button type="button" class="cat" data-cat="${esc(k)}" aria-current="${cat === k}"><span>${esc(l)}</span><b>${n}</b></button>`;
@@ -235,6 +265,7 @@
       + catBtn(['*', 'Kept in this browser', items.length])
       + `<div class="work-head">Categories</div>` + KNOWN().map((c) => branch(c, c, count.get(c) || 0, count.get(c) ? groupBy(items.filter((it) => it.category === c), subjectOf).map(([sj, n]) => ['#sub:' + c + '|' + sj, sj, n]) : [], !count.get(c))).join('')
       + (unsorted ? catBtn(['#unsorted', 'Not sorted yet', unsorted]) : '')
+      + (() => { const f = FMTS.map(([k, l]) => ['#fmt:' + k, l, items.filter((it) => fmtIs(it, k)).length]).filter(([, , n]) => n); return f.length ? `<div class="work-head">By format</div>` + f.map(catBtn).join('') : ''; })()
       + (toSort ? `<button type="button" class="btn outline sort-ai" data-act="sort-ai" title="The AI looks at each picture and gives it a category, style, form and tags (and a name, where it only has a number)">Sort ${toSort} with AI</button>` : '')
       + (srcs.length ? `<div class="work-head">From sheets and files</div>` + srcs.map(([k, l, n]) => branch('#src:' + k, l, n, groupBy(items.filter((it) => srcOf(it) === k), (it) => (KNOWN().includes(it.category || '') ? it.category : 'Not sorted yet')).map(([c, m]) => ['#srcat:' + k + '|' + c, c, m]))).join('') : '')
       + `<div class="work-head">Working area</div>` + catBtn(['#work', 'Files imported from', work.length]);
@@ -518,7 +549,7 @@
       { label: 'Category', sub: [...KNOWN().map((c) => ({ label: c, checked: S.every((x) => x.category === c), run: move(c) })), '-', { label: 'Not sorted yet', run: move('') }] },
       '-', { label: one && it.ai ? 'Ask the AI again' : 'Ask the AI', run: () => act('ai-again') }, { label: 'Ask a cloud AI…', run: () => act('cloud-ask') }, { label: 'Make one like this with AI…', disabled: !one, run: () => makeAi(likeOf(it)) },
       '-', { label: 'Copy', key: 'Ctrl+C', disabled: !one, run: () => act('copy') }, { label: 'Save as PNG…', disabled: !one || !it.png, run: () => act('dl-png') }, { label: 'Save as SVG…', disabled: !one || !it.svg, run: () => act('dl-svg') },
-      { label: one ? 'Export it (ZIP)…' : `Export these ${n} (ZIP)…`, run: () => act('export-sel') },
+      { label: one ? 'Export it (ZIP)…' : `Export these ${n} (ZIP)…`, run: () => act('export-sel') }, { label: 'Convert to', sub: convertMenu() },
       { label: one ? 'Send it to the server now' : `Send these ${n} to the server now`, disabled: !serverUrl || !serverOk, run: () => forceSend(chosen()) },
       { label: one ? 'Remake the thumbnail' : `Remake these ${n} thumbnails`, run: () => remakeThumbs(chosen()) },
       '-', { label: 'Select all', key: 'Ctrl+A', run: () => act('select-all') }, { label: `Delete ${them}`, key: 'Del', danger: true, run: () => act('delete') }]);
