@@ -467,3 +467,4 @@ label.ed-sw input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .nav-pages { display: inline-flex; align-items: center; gap: 4px; }
 .nav-n { margin-left: auto; }
 .gridnav .countline { justify-content: flex-start; }
+.countline.warn { background: rgba(245, 158, 11, .15); border: 1px solid #f59e0b; }

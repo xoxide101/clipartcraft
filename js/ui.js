@@ -124,7 +124,7 @@
       const r = await (await keyFetch(`${serverUrl}/api/items?limit=${PAGE}&offset=${page * PAGE}${cq}${st ? `&starts=${encodeURIComponent(st)}` : ''}`)).json();
       // (the A–Z bar's counts: by letter, and by first three letters when a big letter is chosen)
       try { if (srv.azFor !== base) { srv.az = await (await keyFetch(`${serverUrl}/api/letters?depth=1${cq}`)).json(); srv.azFor = base; } srv.az3 = letter && letter.length === 1 ? await (await keyFetch(`${serverUrl}/api/letters?depth=3${cq}&starts=${encodeURIComponent(letter)}`)).json() : []; } catch (e) { srv.az = srv.az || []; srv.az3 = []; }
-      srv.items = r.items; srv.total = r.total; srv.at = key;
+      srv.items = r.items; srv.total = r.total; srv.hidden = r.hidden || 0; srv.at = key;
       if (!srv.cats.length) try { srv.cats = (await (await keyFetch(serverUrl + '/api/categories')).json()).filter((x) => x.category); } catch (e) { /* none */ }
     } catch (e) { toast('The server’s pictures could not be read: ' + (e.message || e)); }
     srv.loading = false; render();
@@ -293,15 +293,16 @@
   // How this browser stands with the server, above the pages (here and On the server): the server's count asked every 30
   // seconds (one tiny request), so an import growing there shows; a Sync button when the server has pictures this has not
   const live = { total: null, was: null, at: 0 };
-  async function serverCount() { if (!serverUrl || !serverOk) return; try { const r = await (await keyFetch(`${serverUrl}/api/items?limit=1`)).json(); if (live.total !== null && r.total !== live.total) live.was = { n: live.total, t: live.at }; live.total = r.total; live.at = Date.now(); const c = $('gridnav').querySelector('.countline'); if (c) c.outerHTML = countLine(); status(); } catch (e) { /* the next time */ } }
+  async function serverCount() { if (!serverUrl || !serverOk) return; try { const r = await (await keyFetch(`${serverUrl}/api/items?limit=1`)).json(); srv.hidden = r.hidden || 0; if (live.total !== null && r.total !== live.total) live.was = { n: live.total, t: live.at }; live.total = r.total; live.at = Date.now(); const c = $('gridnav').querySelector('.countline'); if (c) c.outerHTML = countLine(); status(); } catch (e) { /* the next time */ } }
   setInterval(() => { if (!document.hidden) serverCount(); }, 30000);
   function countLine() {
     if (!serverUrl || !serverOk || live.total === null) return '';
     const known = items.filter((it) => it.serverId && !L.inBook(it.id)).length + bookRows.reduce((a, r) => a + r.n, 0), miss = Math.max(0, live.total - known), grew = live.was && live.total > live.was.n ? live.total - live.was.n : 0;
     const growth = grew ? ` <small class="hint">(+${grew.toLocaleString()} in the last ${Math.max(1, Math.round((live.at - live.was.t) / 1000))} s)</small>` : '';
-    return onServer()
+    const hid = srv.hidden ? `<div class="countline warn"><b>${srv.hidden.toLocaleString()}</b> pictures on this server are <b>Only me</b> and stay hidden: this page has no key for this server (or not the right one). <button type="button" class="btn outline sm" data-act="connect">Enter the key…</button></div>` : '';
+    return hid + (onServer()
       ? `<div class="countline">On the server: <b>${live.total.toLocaleString()}</b> pictures${growth} · this browser knows <b>${known.toLocaleString()}</b>${miss ? ` <button type="button" class="btn outline sm" data-act="sync">Sync: get ${miss.toLocaleString()} more</button>` : ''}</div>`
-      : `<div class="countline">This browser knows <b>${known.toLocaleString()}</b> of the server’s <b>${live.total.toLocaleString()}</b> pictures${growth}${items.length > known ? ` · ${(items.length - known).toLocaleString()} only here` : ''} · ${miss ? `<button type="button" class="btn outline sm" data-act="sync">Sync: get ${miss.toLocaleString()} more</button>` : 'in step with the server'}</div>`;
+      : `<div class="countline">This browser knows <b>${known.toLocaleString()}</b> of the server’s <b>${live.total.toLocaleString()}</b> pictures${growth}${items.length > known ? ` · ${(items.length - known).toLocaleString()} only here` : ''} · ${miss ? `<button type="button" class="btn outline sm" data-act="sync">Sync: get ${miss.toLocaleString()} more</button>` : 'in step with the server'}</div>`);
   }
   // the A–Z bar above the pages (here, a book, and On the server): All · # · 0–9 · A … Z with how many each; a letter with
   // more than a page gets a second row of the first three letters there
@@ -330,7 +331,7 @@
   }
   async function goSet(set, no) {
     sel.clear(); page = 0;
-    if (set === 'server') { cat = '#server'; render(); return loadServer(); }
+    if (set === 'server') { cat = '#server'; srv.at = ''; render(); return loadServer(); }
     if (set === 'mine') { cat = '#mine'; return render(); }
     const rows = bookRows.filter((r) => r.set === set); const r = rows.find((x) => x.no === no) || rows[0]; if (!r) return;
     busy('Opening the book…'); cat = '#book:' + bookKey(r); await openBookOf({ set: r.set, no: r.no }); busy();
@@ -847,7 +848,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     if (!serverUrl || !serverOk) { if (await autoPlace(true)) return; }
     if (!serverUrl) { connectWindow(); throw Object.assign(new Error('No clip-art server answers yet: choose or add one in the window (Server › Connect…).'), { quiet: true }); } if (!serverOk) await checkServer(); if (!serverOk) throw new Error(`The clip-art server at ${serverUrl} did not answer (is it running?).`); }
   $('cats').onclick = async (e) => {
-    const bk = e.target.closest('[data-book]'); if (bk) { const [set, no] = bk.dataset.book.split('|'); busy('Opening the book…'); sel.clear(); cat = '#book:' + bk.dataset.book; await openBookOf({ set, no: +no }); busy(); return; } const t = e.target.closest('[data-tree]'); if (t) { const k = t.dataset.tree; if (openTree.has(k)) openTree.delete(k); else openTree.add(k); keepTree(); render(); return; } const b = e.target.closest('[data-cat]'); if (!b) return; cat = b.dataset.cat; sel.clear(); srvSel = null; render(); if (onServer()) loadServer(); };
+    const bk = e.target.closest('[data-book]'); if (bk) { const [set, no] = bk.dataset.book.split('|'); busy('Opening the book…'); sel.clear(); cat = '#book:' + bk.dataset.book; await openBookOf({ set, no: +no }); busy(); return; } const t = e.target.closest('[data-tree]'); if (t) { const k = t.dataset.tree; if (openTree.has(k)) openTree.delete(k); else openTree.add(k); keepTree(); render(); return; } const b = e.target.closest('[data-cat]'); if (!b) return; cat = b.dataset.cat; sel.clear(); srvSel = null; render(); if (onServer()) { srv.at = ''; loadServer(); } }; // (On the server: asked afresh each time it is chosen)
   $('search').oninput = (e) => { query = e.target.value; if (onServer()) { clearTimeout(srvTimer); srvTimer = setTimeout(() => loadServer(), 300); return; } render(); };
   $('grid').addEventListener('change', (e) => { if (e.target.matches('[data-page-to]')) goPage((+e.target.value || 1) - 1); });
   $('gridnav').addEventListener('change', (e) => { const k = e.target.dataset.nav; if (k === 'set') goSet(e.target.value); if (k === 'book') goSet(setNow(), +e.target.value); if (k === 'page') goPage(+e.target.value); });

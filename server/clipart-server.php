@@ -332,7 +332,7 @@ try {
   }
   if ($what === 'items') {
     $id = $p[2] ?? null;
-    if (!$id && $method === 'GET') { $r = $lib->list($Q['q'] ?? '', $Q['category'] ?? null, min((int) ($Q['limit'] ?? 200) ?: 200, 5000), (int) ($Q['offset'] ?? 0), $Q['type'] ?? null, $may_write, ($Q['since'] ?? '') !== '' ? (string) $Q['since'] : null, (string) ($Q['order'] ?? ''), (string) ($Q['starts'] ?? '')); out(200, ['total' => $r['total'], 'items' => array_map(fn ($it) => $shown($lib, $it), $r['items'])]); }
+    if (!$id && $method === 'GET') { $r = $lib->list($Q['q'] ?? '', $Q['category'] ?? null, min((int) ($Q['limit'] ?? 200) ?: 200, 5000), (int) ($Q['offset'] ?? 0), $Q['type'] ?? null, $may_write, ($Q['since'] ?? '') !== '' ? (string) $Q['since'] : null, (string) ($Q['order'] ?? ''), (string) ($Q['starts'] ?? '')); out(200, ['total' => $r['total'], 'hidden' => $may_write ? 0 : (int) $lib->list('', null, 1, 0, null, true)['total'] - (int) $lib->list('', null, 1, 0, null, false)['total'], 'items' => array_map(fn ($it) => $shown($lib, $it), $r['items'])]); } // (hidden: pictures only for me, left out of this list because the key was not sent)
     if ((!$id && $method === 'POST') || ($id && $method === 'PATCH')) {
       $j = json_decode($body() ?: '{}', true) ?: []; $pics = [];
       foreach (FILE_KINDS as $k) if (array_key_exists($k, $j)) { $pics[$k] = $j[$k] === null ? null : ($k === 'svg' && empty($j['svgBase64']) ? $j[$k] : base64_decode($j[$k])); $pics[$k . 'Ext'] = $j[$k . 'Ext'] ?? null; unset($j[$k]); }

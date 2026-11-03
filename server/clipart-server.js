@@ -425,7 +425,7 @@ function serve(S) {
       if (p[1] === 'import' && req.method === 'POST') { const made = await importEntries(lib, unzip(await body(req)), { category: Q.category, privacy: Q.privacy }); return send(res, 200, { added: made.length, items: made.map((it) => shown(req, lib, it)) }); }
       if (p[1] === 'items') {
         const id = p[2];
-        if (!id && req.method === 'GET') { const r = await db.list({ q: Q.q || '', category: Q.category, type: Q.type, limit: Math.min(+Q.limit || 200, 5000), offset: +Q.offset || 0, all: mayWrite(req), since: Q.since || '', order: Q.order || '', starts: Q.starts || '' }); return send(res, 200, { total: r.total, items: r.items.map((it) => shown(req, lib, it)) }); }
+        if (!id && req.method === 'GET') { const r = await db.list({ q: Q.q || '', category: Q.category, type: Q.type, limit: Math.min(+Q.limit || 200, 5000), offset: +Q.offset || 0, all: mayWrite(req), since: Q.since || '', order: Q.order || '', starts: Q.starts || '' }); const hidden = mayWrite(req) ? 0 : (await db.list({ limit: 1 })).total - (await db.list({ limit: 1, all: false })).total; return send(res, 200, { total: r.total, hidden, items: r.items.map((it) => shown(req, lib, it)) }); } // (hidden: pictures only for me, left out because the key was not sent)
         // POST: a new item (or PATCH an old one) as JSON; pictures inside as base64: { png: 'base64', pngExt: 'png', svg: '<svg…' }
         if ((!id && req.method === 'POST') || (id && req.method === 'PATCH')) {
           const j = JSON.parse((await body(req)).toString('utf8') || '{}'), pics = {};
