@@ -96,6 +96,8 @@
     }
     let w = bmp.naturalWidth || bmp.width, h = bmp.naturalHeight || bmp.height;
     if (!w || !h) { w = 800; h = 600; }
+    // an SVG is drawn sharp at 512 pixels or more across (its own size is often an icon's), so the PNG made from it is as good as it
+    if (blob.type === 'image/svg+xml') { const k = Math.min(2048 / Math.max(w, h), Math.max(1, 512 / Math.max(w, h))); w = Math.round(w * k); h = Math.round(h * k); }
     const c = document.createElement('canvas'); c.width = w; c.height = h;
     const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(bmp, 0, 0, w, h);
     return x.getImageData(0, 0, w, h);

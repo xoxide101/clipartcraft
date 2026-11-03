@@ -188,9 +188,56 @@
         const X0 = Math.min(...pts.map((q) => q[0])), X1 = Math.max(...pts.map((q) => q[0])), Y0 = Math.min(...pts.map((q) => q[1])), Y1 = Math.max(...pts.map((q) => q[1]));
         const meets = X1 >= ux && X0 <= ux + uw && Y1 >= uy && Y0 <= uy + uh; if (!meets || (X1 - X0) * (Y1 - Y0) >= big) gone.push(e);
       }
-      gone.forEach((e) => e.remove());
+      gone.forEach((e) => e.remove()); root.style.removeProperty('background'); root.style.removeProperty('background-color'); // the sheet's background stays behind
       root.setAttribute('viewBox', `${+ux.toFixed(3)} ${+uy.toFixed(3)} ${+uw.toFixed(3)} ${+uh.toFixed(3)}`); root.setAttribute('width', at.w); root.setAttribute('height', at.h); root.removeAttribute('preserveAspectRatio');
       return new XMLSerializer().serializeToString(root);
+    } finally { host.remove(); }
+  }
+
+  // An SVG sheet says itself where its pictures are: each group of shapes (a <g> with shapes in it and no such group
+  // inside it) is one picture, and its words (<text>) are the headings over the columns and the labels left of the rows.
+  // Each picture is cut out of the drawing alone (nothing else from the sheet, the shared gradients and filters kept) and
+  // its PNG drawn from that, so the PNG and the SVG are the same picture, see-through round it.
+  const SHAPES = 'path, rect, circle, ellipse, line, polyline, polygon, image, use';
+  const wordsOf = (t) => { t = t.replace(/^\s*\d+[.):]\s*/, '').replace(/\s+/g, ' ').trim(); return /[a-z]/.test(t) || !/[A-Z]{4,}/.test(t) ? t : t.toLowerCase().replace(/(^|[\s/(-])([a-z])/g, (m, a, b) => a + b.toUpperCase()); };
+  async function drawingPics(src) {
+    const host = document.createElement('div'); host.style.cssText = 'position:fixed;left:-100000px;top:0;width:1px;height:1px;overflow:hidden;pointer-events:none';
+    host.innerHTML = src.text; const root = host.querySelector('svg'); if (!root) return null; document.body.append(host);
+    try {
+      const vb = src.vb, k = src.W / vb.w;
+      root.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`); root.setAttribute('width', src.W); root.setAttribute('height', src.H); root.setAttribute('preserveAspectRatio', 'none');
+      const toRoot = root.getScreenCTM().inverse();
+      const boxOf = (e) => { const b = e.getBBox(), m = toRoot.multiply(e.getScreenCTM()), pts = [[b.x, b.y], [b.x + b.width, b.y], [b.x, b.y + b.height], [b.x + b.width, b.y + b.height]].map(([x, y]) => [m.a * x + m.c * y + m.e, m.b * x + m.d * y + m.f]);
+        const x0 = Math.min(...pts.map((q) => q[0])), y0 = Math.min(...pts.map((q) => q[1])); return { x: x0, y: y0, w: Math.max(...pts.map((q) => q[0])) - x0, h: Math.max(...pts.map((q) => q[1])) - y0 }; };
+      const own = (g) => [...g.children].some((c) => c.matches(SHAPES));
+      const groups = [...root.querySelectorAll('g')].filter((g) => !g.closest('defs, clipPath, mask, pattern, symbol, marker') && own(g) && ![...g.querySelectorAll('g')].some(own));
+      const pics = []; for (const g of groups) { let r; try { r = boxOf(g); } catch (e) { continue; } if (r.w > 0 && r.h > 0 && r.w * r.h < vb.w * vb.h * 0.25) pics.push({ g, r }); }
+      if (pics.length < 2) return null;
+      // rows and columns: pictures whose middles line up
+      const lines = (key, size) => { const list = [...pics].sort((a, b) => a.r[key] + a.r[size] / 2 - (b.r[key] + b.r[size] / 2)), out = []; for (const p of list) { const c = p.r[key] + p.r[size] / 2, last = out[out.length - 1]; if (last && c - last.c < Math.min(p.r[size], last.s) / 2) last.p.push(p); else out.push({ c, s: p.r[size], p: [p] }); } return out; };
+      const rows = lines('y', 'h'), cols = lines('x', 'w'); rows.forEach((l, i) => l.p.forEach((p) => { p.row = i; })); cols.forEach((l, i) => l.p.forEach((p) => { p.col = i; }));
+      // the words: a column's heading is the nearest above its pictures, a row's label the biggest to the left of its pictures
+      const words = []; for (const t of root.querySelectorAll('text')) { if (t.closest('defs')) continue; const s = t.textContent.trim(); if (!s) continue; try { words.push({ s: wordsOf(s), r: boxOf(t), size: parseFloat(getComputedStyle(t).fontSize) || 0 }); } catch (e) { /* not drawn */ } }
+      const span = (l, key, size) => [Math.min(...l.p.map((p) => p.r[key])), Math.max(...l.p.map((p) => p.r[key] + p.r[size]))];
+      const colNames = cols.map((l) => { const [x0, x1] = span(l, 'x', 'w'), top = Math.min(...l.p.map((p) => p.r.y)); const w = words.filter((q) => q.r.x + q.r.w / 2 >= x0 && q.r.x + q.r.w / 2 <= x1 && q.r.y + q.r.h <= top + 2).sort((a, b) => b.r.y - a.r.y); return w.length ? w[0].s : ''; });
+      const rowNames = rows.map((l) => { const [y0, y1] = span(l, 'y', 'h'), left = Math.min(...l.p.map((p) => p.r.x)); const w = words.filter((q) => q.r.y + q.r.h / 2 >= y0 && q.r.y + q.r.h / 2 <= y1 && q.r.x + q.r.w <= left + 2).sort((a, b) => b.size - a.size || a.r.y - b.r.y); return w.length ? w[0].s : ''; });
+      // each picture alone: its group, the groups it sits in (their places) and the shared definitions; the rest taken out
+      pics.forEach((p, i) => p.g.setAttribute('data-pic', i));
+      const text = new XMLSerializer().serializeToString(root), out = [];
+      for (const p of pics) {
+        const h2 = document.createElement('div'); h2.innerHTML = text; const r2 = h2.querySelector('svg'), tg = r2.querySelector(`[data-pic="${p.g.getAttribute('data-pic')}"]`);
+        const prune = (n) => { for (const c of [...n.children]) { if (c === tg || /^(defs|style)$/i.test(c.tagName)) continue; if (c.contains(tg)) prune(c); else c.remove(); } }; prune(r2);
+        r2.querySelectorAll('[data-pic]').forEach((e) => e.removeAttribute('data-pic')); r2.style.removeProperty('background'); r2.style.removeProperty('background-color'); r2.removeAttribute('preserveAspectRatio');
+        // room for shadows and glows (filters draw outside the shapes), then trimmed to what is drawn
+        const pad = Math.max(4, Math.max(p.r.w, p.r.h) * 0.3), bx = { x: p.r.x - pad, y: p.r.y - pad, w: p.r.w + 2 * pad, h: p.r.h + 2 * pad }, W = Math.max(1, Math.round(bx.w * k)), H = Math.max(1, Math.round(bx.h * k));
+        const at = (b) => { r2.setAttribute('viewBox', `${+b.x.toFixed(3)} ${+b.y.toFixed(3)} ${+b.w.toFixed(3)} ${+b.h.toFixed(3)}`); r2.setAttribute('width', Math.max(1, Math.round(b.w * k))); r2.setAttribute('height', Math.max(1, Math.round(b.h * k))); return new XMLSerializer().serializeToString(r2); };
+        const draw = async (svg, w, h) => { const i = new Image(); i.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); await i.decode(); const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(i, 0, 0, w, h); return x.getImageData(0, 0, w, h); };
+        const big = await draw(at(bx), W, H); let x0 = W, y0 = H, x1 = -1, y1 = -1; for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (big.data[(y * W + x) * 4 + 3] > 3) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+        if (x1 < 0) continue; x0 = Math.max(0, x0 - 2); y0 = Math.max(0, y0 - 2); x1 = Math.min(W - 1, x1 + 2); y1 = Math.min(H - 1, y1 + 2);
+        const tb = { x: bx.x + x0 / k, y: bx.y + y0 / k, w: (x1 - x0 + 1) / k, h: (y1 - y0 + 1) / k }, svg = at(tb), img = await draw(svg, x1 - x0 + 1, y1 - y0 + 1);
+        out.push({ x: Math.round((tb.x - vb.x) * k), y: Math.round((tb.y - vb.y) * k), w: img.width, h: img.height, row: p.row, col: p.col, svg, img });
+      }
+      return out.length >= 2 ? { pics: out, rows: rows.length, cols: cols.length, rowNames, colNames } : null;
     } finally { host.remove(); }
   }
 
@@ -256,8 +303,9 @@
     }));
     return out;
   }
-  const rowCount = () => (S.mode === 'table' && table ? table.rowKind.filter((k) => k === 'pic').length : S.mode === 'grid' ? Math.max(1, +S.rows | 0) : 0);
-  const colCount = () => (S.mode === 'table' && table ? table.colKind.filter((k) => k === 'pic').length : S.mode === 'grid' ? Math.max(1, +S.cols | 0) : 0);
+  const drawn = () => (S.fromDrawing !== false && svgSheet && svgSheet.drawn && sheet === original && svgSheet.drawn) || null;
+  const rowCount = () => (drawn() ? drawn().rows : S.mode === 'table' && table ? table.rowKind.filter((k) => k === 'pic').length : S.mode === 'grid' ? Math.max(1, +S.rows | 0) : 0);
+  const colCount = () => (drawn() ? drawn().cols : S.mode === 'table' && table ? table.colKind.filter((k) => k === 'pic').length : S.mode === 'grid' ? Math.max(1, +S.cols | 0) : 0);
   const nameList = () => String(S.names || '').split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean);
   const safe = (s) => s.replace(/[\\/:*?"<>|]+/g, '-').trim();
 
@@ -270,8 +318,10 @@
       let v = (root.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number); if (v.length !== 4 || v.some((n) => !isFinite(n)) || !v[2] || !v[3]) v = [0, 0, parseFloat(root.getAttribute('width')) || 1000, parseFloat(root.getAttribute('height')) || 1000];
       const k = Math.min(4000, Math.max(2000, v[2], v[3])) / Math.max(v[2], v[3]), W = Math.round(v[2] * k), H = Math.round(v[3] * k);
       root.setAttribute('viewBox', v.join(' ')); root.setAttribute('width', W); root.setAttribute('height', H); root.setAttribute('preserveAspectRatio', 'none');
+      // a background set in its style (as a web page shows it) is left out when an SVG is drawn as a picture: painted behind it here
+      const bg = (() => { const d = document.createElement('div'); d.setAttribute('style', root.getAttribute('style') || ''); return d.style.backgroundColor; })();
       const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(root)], { type: 'image/svg+xml' }));
-      try { const i = new Image(); i.src = url; await i.decode(); const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(i, 0, 0, W, H); svgSheet = { text, vb: { x: v[0], y: v[1], w: v[2], h: v[3] }, W, H }; return x.getImageData(0, 0, W, H); } finally { URL.revokeObjectURL(url); }
+      try { const i = new Image(); i.src = url; await i.decode(); const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d', { willReadFrequently: true }); if (bg) { x.fillStyle = bg; x.fillRect(0, 0, W, H); } x.drawImage(i, 0, 0, W, H); svgSheet = { text, vb: { x: v[0], y: v[1], w: v[2], h: v[3] }, W, H }; const pic = x.getImageData(0, 0, W, H); try { svgSheet.drawn = await drawingPics(svgSheet); } catch (e) { console.warn('Reading the drawing failed', e); } return pic; } finally { URL.revokeObjectURL(url); }
     }
     const url = URL.createObjectURL(file); try { const i = new Image(); i.src = url; await i.decode(); const c = document.createElement('canvas'); c.width = i.naturalWidth; c.height = i.naturalHeight; const k = c.getContext('2d', { willReadFrequently: true }); k.drawImage(i, 0, 0); return k.getImageData(0, 0, c.width, c.height); } finally { URL.revokeObjectURL(url); }
   }
@@ -284,9 +334,10 @@
       ${sheet ? '' : '<p class="hint">Choose a sheet of clip art (a montage) to slice.</p>'}
       <button class="btn outline" type="button" data-sl="open" title="Choose one sheet or several (they are done one after another)">${sheet ? 'Other sheets…' : 'Choose sheets…'}</button>
       ${queueN > 1 ? `<div class="sl-queue"><span><b>Sheet ${queueN - queue.length} of ${queueN}</b>${queue.length ? ` · next: ${esc(queue[0].name)}` : ' · the last one'}</span><button class="btn outline sm" type="button" data-sl="skip">${queue.length ? 'Skip to the next' : 'Skip it'}</button></div>` : ''}
+      ${svgSheet && svgSheet.drawn && sheet === original ? `<div class="field"><span>Source</span><div class="seg" role="group"><button class="btn" type="button" data-src="vector" aria-pressed="${S.fromDrawing !== false}" title="This sheet is an SVG: each picture taken from the drawing itself, named from its own words, as PNG and SVG">Vector (the drawing)</button><button class="btn" type="button" data-src="raster" aria-pressed="${S.fromDrawing === false}" title="The sheet cut as a picture, the way other sheets are (find the pictures, a grid or a table)">Raster (as a picture)</button></div></div>` : ''}
       ${autoSaid ? `<p class="hint auto-said">${esc(autoSaid)} <small>Change anything below.</small></p>` : ''}
       <div class="field"><span>Show</span><div class="seg" role="group"><button class="btn" type="button" data-view="result" aria-pressed="${S.view === 'result'}">The result (live)</button><button class="btn" type="button" data-view="boxes" aria-pressed="${S.view === 'boxes'}">The boxes</button></div></div>
-      <div class="field"><span>How to cut</span><div class="seg" role="group"><button class="btn" type="button" data-mode="find" aria-pressed="${S.mode === 'find'}">Find the pictures</button><button class="btn" type="button" data-mode="grid" aria-pressed="${S.mode === 'grid'}">Grid</button><button class="btn" type="button" data-mode="table" aria-pressed="${S.mode === 'table'}">Table</button></div></div>
+      <div class="field"${drawn() ? ' hidden' : ''}><span>How to cut</span><div class="seg" role="group"><button class="btn" type="button" data-mode="find" aria-pressed="${S.mode === 'find'}">Find the pictures</button><button class="btn" type="button" data-mode="grid" aria-pressed="${S.mode === 'grid'}">Grid</button><button class="btn" type="button" data-mode="table" aria-pressed="${S.mode === 'table'}">Table</button></div></div>
       ${areaHtml()}
       ${S.mode === 'table' ? `<p class="hint">For a table of pictures between ruled lines, with headings and row labels (left out, and they can name the pictures).</p>
         ${table ? `<p class="hint">${table.rowKind.filter((k) => k === 'pic').length} rows × ${table.colKind.filter((k) => k === 'pic').length} columns of pictures${table.rowKind.some((k) => k === 'head') ? ', headings above' : ''}${table.colKind.includes('label') ? ', row labels at the side' : ''}${table.rowKind.includes('caption') ? ', a caption row under each' : ''}.</p>` : '<p class="hint warn">No ruled lines found on this sheet: try Grid.</p>'}
@@ -370,12 +421,13 @@
   function find() {
     if (!sheet) return;
     prep(); captions = []; const W = work.width, H = work.height;
-    if (S.mode === 'find') {
+    if (S.mode === 'find' && !drawn()) {
       // words on the sheet (captions) are taken off first, so they are neither pictures nor joined to one
       if (S.notext) for (const t of sheetText(work)) { captions.push(t); paint(work, { x: t.x - 2, y: t.y - 2, w: t.w + 4, h: t.h + 4 }, work.page); }
       found = splitSheet(work, { gap: +S.gap, min: Math.max(0.0005, S.min / 100) }); splitJoined(found, W, H); if (S.combine !== false) combine(found, W, H); boxes = found.items.map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h, item: b }));
     } else {
-      found = null; boxes = S.mode === 'table' && table ? tableCells() : gridCells(work, { rows: Math.max(1, +S.rows | 0), cols: Math.max(1, +S.cols | 0), inset: +S.inset });
+      const D = drawn(); if (D && !rowNames.some(Boolean) && !colNames.some(Boolean)) { rowNames = D.rowNames.slice(); colNames = D.colNames.slice(); }
+      found = null; boxes = D ? D.pics.map((p) => ({ x: p.x - wx, y: p.y - wy, w: p.w, h: p.h, r: p.row, c: p.col, drawn: p })) : S.mode === 'table' && table ? tableCells() : gridCells(work, { rows: Math.max(1, +S.rows | 0), cols: Math.max(1, +S.cols | 0), inset: +S.inset });
       if (S.notext) for (const b of boxes) { if (b.whole) continue; const bg = work.page ? cornerBg(cropOf(work, b.x, b.y, b.w, b.h)) : null; for (const t of textBits(work, b)) { if (t.below) captions.push({ ...t, own: b }); paint(work, { x: t.x - 2, y: t.y - 2, w: t.w + 4, h: t.h + 4 }, bg); } }
       // a table's caption rows: each cell names the picture above it
       if (S.mode === 'table' && table) table.rows.forEach((r, i) => { if (table.rowKind[i] !== 'caption') return; let up = i - 1; while (up >= 0 && table.rowKind[up] !== 'pic') up--; if (up < 0) return;
@@ -432,6 +484,7 @@
   // a box's picture before any room is added: a photo cell whole as it is; a box set to "whole box" not cut out; its
   // shadow taken off when asked
   function baseCut(b) {
+    if (b.drawn && !b.fixed) { let o = copy(b.drawn.img); o.at = { x: b.x, y: b.y, w: b.w, h: b.h }; if (b.wand && b.wand.length) o = wandApply(o, b.wand); if (marks.length) o = applyMarks(o); o.svg = b.wand || marks.length ? null : b.drawn.svg; return o; }
     const o0 = { cut: S.cut, see: S.see, pad: +S.pad, tol: +S.tol || 16 }, o = b.whole ? { ...o0, cut: false, see: false } : b.boxOnly ? { ...o0, cut: false } : b.cutOut ? { ...o0, cut: true } : o0;
     // a box with its own "how much background" is cut from just its box, at that setting
     const own = b.ctol ? { ...o, ctol: b.ctol, tol: Math.max(4, Math.round((b.ctol / 40) * o.tol)) } : o;
@@ -650,7 +703,7 @@
     if (!t && !b && !l && !r) return img;
     const L = l ? n : 0, T = t ? n : 0, o = new ImageData(W + L + (r ? n : 0), H + T + (b ? n : 0));
     for (let y = 0; y < H; y++) o.data.set(d.subarray(y * W * 4, (y + 1) * W * 4), ((y + T) * o.width + L) * 4);
-    o.at = img.at; o.room = { l: L, t: T }; return o;
+    o.at = img.at; o.room = { l: L, t: T }; o.svg = img.svg; return o;
   }
   let drawRun = 0;
   // how many pictures touch each side (cut as now, before any room is added), for the room box
@@ -773,7 +826,7 @@
       // on a sheet of like pictures, one clearly smaller than the rest has probably lost a part (a white tile on white paper)
       // (only on a sheet whose pictures really are alike in size: most within a tenth of the usual size)
       const med = (a) => a.slice().sort((p, q) => p - q)[a.length >> 1], mw = med(review.map((r) => r.img.width)), mh = med(review.map((r) => r.img.height)), alike = review.filter((r) => Math.abs(r.img.width - mw) <= mw * 0.1 && Math.abs(r.img.height - mh) <= mh * 0.1).length;
-      if (review.length >= 4 && alike >= review.length * 0.7) {
+      if (review.length >= 4 && alike >= review.length * 0.7 && !drawn()) { // (not from a drawing: a smaller one there is drawn smaller)
         for (const r of review) if (r.img.width < mw * 0.92 || r.img.height < mh * 0.92) r.doubts.push(`Smaller than the others (${r.img.width} × ${r.img.height}, most are about ${mw} × ${mh}): part of it may have gone with the background. Try Cut out off with See-through on.`); }
       if (S.quick && !review.some((r) => r.doubts.length)) { count(); btn.disabled = false; return addReviewed(btn); }
       showReview();
@@ -808,8 +861,8 @@
       for (const r of keep) {
         btn.textContent = `Adding ${++k} of ${keep.length}: ${r.name}…`; await wait(0);
         const mt = r.meta || {}, raw = await new Promise((ok) => canvasOf(r.img).toBlob(ok, 'image/png')), png = await pngText(raw, { Title: r.name.trim(), Description: mt.description || '', Keywords: (r.tags || []).join(', '), Source: `${sheetName}${mt.where ? ` (${mt.where})` : ''}`, Collection: mt.title || '', Software: 'ClipArtCraft Montage Slicer' }); let svg = null;
-        if (svgSheet && r.img.at) { try { svg = svgCut(svgSheet, { ...r.img.at, x: r.img.at.x + wx, y: r.img.at.y + wy }); } catch (e) { console.warn('Cutting the SVG failed', r.name, e); } }
-        if (!svg && window.CRAFT_RASTERTRACE) { try { svg = CRAFT_RASTERTRACE.traceImage(r.img, { profile: 'icon' }).svg; } catch (e) { console.warn('Tracing failed', r.name, e); } }
+        if (r.img.svg) svg = r.img.svg; else if (svgSheet && r.img.at) { try { svg = svgCut(svgSheet, { ...r.img.at, x: r.img.at.x + wx, y: r.img.at.y + wy }); } catch (e) { console.warn('Cutting the SVG failed', r.name, e); } }
+        if (!svg && window.CRAFT_RASTERTRACE) svg = (await CraftClipart.traceMatched(r.img)).svg;
         const it = await L.makeItem({ name: r.name.trim() || 'Clip art', category, tags: r.tags || [], png, svg, source: 'Montage Slicer: ' + sheetName }); if (src) it.sheet = src.id;
         // what the sheet said: kept as the picture's own information (the AI's sorting fills in only what is missing)
         if (mt.style) it.style = mt.style; if (mt.description) it.description = mt.description; if (mt.title) it.collection = mt.title; if (mt.where) it.place = mt.where;
@@ -831,6 +884,7 @@
     original = sheet; zoom = 1; past = []; future = []; now = '';
     area = null; outs = []; table = null; offRows.clear(); offCols.clear(); rowNames = []; colNames = []; captions = []; readText.clear(); moved.clear(); prefs.clear(); splits.clear(); zones = []; marks = []; joins = []; chosenBoxes.clear(); sheetTitle = ''; tool = 'pick';
     try { const a = autoCut(sheet); Object.assign(S, a.settings); autoSaid = a.said; table = a.table || null; area = a.area || null; S.notext = !!a.notext; } catch (e) { console.warn('Working out the cut failed', e); autoSaid = ''; S.notext = false; }
+    if (svgSheet && svgSheet.drawn) { const D = svgSheet.drawn; S.fromDrawing = true; table = null; area = null; S.notext = false; autoSaid = `Found in the drawing itself (this sheet is an SVG): ${D.pics.length} pictures${D.rows > 1 && D.cols > 1 ? ` in ${D.rows} rows and ${D.cols} columns` : ''}${D.rowNames.some(Boolean) || D.colNames.some(Boolean) ? ', named from its own words' : ''}. Each is cut out of the drawing alone, as PNG and SVG (Source: Raster cuts it as a picture instead).`; }
     renderPanel(); find(); applyZoom(); const d = desk(); d.scrollLeft = d.scrollTop = 0;
     if (S.autoread !== false && ((S.mode === 'table' && table) || captions.some((t) => t.own))) readLabels(null, true);
   }
@@ -1305,6 +1359,7 @@
       if (a && a.dataset.sl === 'open') return loadMany(await pickSheet());
       if (a && a.dataset.sl === 'skip') { if (!next()) { forget(); close(); } return; }
       if (a && a.dataset.sl === 'add') return addAll();
+      const sv = e.target.closest('[data-src]'); if (sv) { S.fromDrawing = sv.dataset.src === 'vector'; rowNames = []; colNames = []; skip.clear(); renderPanel(); find(); return; }
       if (m) { S.mode = m.dataset.mode; autoSaid = ''; keep(); skip.clear(); offRows.clear(); offCols.clear(); rowNames = []; colNames = [];
         if (S.mode === 'table') { table = tableOf(sheet); if (table) { area = tableArea(table) || area; S.notext = true; } }
         renderPanel(); find(); return; }

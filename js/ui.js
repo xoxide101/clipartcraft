@@ -163,6 +163,34 @@
     return ClipArtDupes.open({ where: 'local', toast, list: items.map((it) => ({ id: it.id, name: it.name, thumb: it.thumb, width: it.width, height: it.height, svg: !!it.svg, hash: it.hash })), remove: async (ids) => { const S = items.filter((it) => ids.includes(it.id)); return deletePictures(S, true); },
       tag: async (ids) => { for (const it of items.filter((x) => ids.includes(x.id))) { if ((it.tags || []).includes('duplicate')) continue; it.tags = [...(it.tags || []), 'duplicate']; await L.put(it); } }, done: () => reload() });
   }
+  // Check SVGs: an SVG that does not look like its PNG (a trace of a small picture: writing lost, colours run
+  // together) is taken away, so apps use the PNG; on the server when looking at it, else in this browser
+  async function checkSvgs(onSrv) {
+    let list, n = 0;
+    if (onSrv) {
+      if (!serverUrl || !serverOk) return toast('Connect to a server first.'); busy('Reading the server’s list…');
+      let all = []; try { for (let off = 0; ; off += 500) { const r = await (await fetch(`${serverUrl}/api/items?limit=500&offset=${off}`)).json(); all = all.concat(r.items); if (all.length >= r.total || !r.items.length) break; } } catch (e) { busy(); return fail(e); }
+      list = all.filter((x) => (x.links || {}).svg && (x.links || {}).png).map((x) => ({ x, name: x.name, svg: async () => (await fetch(x.links.svg)).text(), png: async () => (await fetch(x.links.png)).blob() }));
+    } else {
+      list = (sel.size ? chosen() : items).filter((it) => it.svg && it.png).map((it) => ({ it, name: it.name, svg: async () => it.svg, png: async () => it.png }));
+    }
+    if (!list.length) { busy(); return toast(onSrv ? 'No picture on the server has an SVG.' : 'No picture here has an SVG.'); }
+    const poor = [];
+    await L.guard(async () => { for (const p of list) { busy(`Checking SVG ${++n} of ${list.length}: ${p.name}…`); try { const m = await L.svgMatch(await p.svg(), await p.png()); if (!m.ok) poor.push(p); } catch (e) { /* unreadable: left as it is */ } } });
+    busy();
+    if (!poor.length) return toast(`All ${list.length} SVG${list.length === 1 ? '' : 's'} match their PNGs.`);
+    const v = await ask('SVGs that do not match their pictures', `${poor.length} of the ${list.length} SVGs ${onSrv ? 'on the server ' : ''}do not look like their PNG (writing lost, colours run together). Take those SVGs away? The PNGs stay, and apps use them instead.`, [{ label: 'Take them away', value: 'go', primary: true }, { label: 'Cancel', value: null }]);
+    if (!v) return;
+    n = 0;
+    try {
+      for (const p of poor) {
+        busy(`Taking away SVG ${++n} of ${poor.length}…`);
+        if (onSrv) await L.dropServerSvg(p.x.id);
+        const here = onSrv ? items.find((it) => it.serverId === p.x.id) : p.it; if (here) { here.svg = null; here.noSvg = true; await L.put(here); }
+      }
+    } catch (e) { busy(); return fail(e); }
+    busy(); await reload(); if (onSrv) loadServer(); toast(`Took away ${poor.length} SVG${poor.length === 1 ? '' : 's'}; ${list.length - poor.length} matched and stay.`);
+  }
   function render() {
     const C = cats(); const catBtn = ([k, l, n]) => `<button type="button" class="cat" data-cat="${esc(k)}" aria-current="${cat === k}"><span>${esc(l)}</span><b>${n}</b></button>`;
     const branch = (key, label, n, kids, dim) => { const open = openTree.has(key) && kids.length; return `<div class="tree-row">${kids.length ? `<button type="button" class="tw" data-tree="${esc(key)}" aria-expanded="${!!open}" aria-label="${open ? 'Close' : 'Open'} ${esc(label)}">${open ? '▾' : '▸'}</button>` : '<span class="tw"></span>'}${catBtn([key, label, n]).replace('class="cat"', `class="cat${dim ? ' empty' : ''}"`)}</div>${open ? `<div class="tree-kids">${kids.map(([k, l, c]) => `<div class="tree-row"><span class="tw"></span>${catBtn([k, l, c])}</div>`).join('')}</div>` : ''}`; };
@@ -277,6 +305,7 @@
       if (a === 'sort-ai') { const S = sel.size ? chosen() : items.filter(needsSort); if (!S.length) return toast('Everything is sorted already.');
         // the switch on cloud: the cloud AI sorts them (with the AI here when there is no key)
         if (window.CraftCloud.mode() === 'cloud' && window.CraftCloud.ready()) { if (S.length > 1 && !confirm(`Send ${S.length} pictures to ${CraftCloud.NAMES[CraftCloud.provider()]}? Each one costs a little on your account.`)) return; await askCloud(S); await reload(); return; } if (!(await aiOk())) return; await sortWithAI(S); await reload(); return; }
+      if (a === 'svg-check') return checkSvgs(onServer());
       if (a === 'dupes' || a === 'dupes-server' || a === 'dupes-local') return findCopies(a === 'dupes-server' || (a === 'dupes' && onServer()));
       if (a === 'start') { startOpen = true; render(); return; }
       if (a === 'start-close') { startOpen = false; render(); return; }
@@ -699,7 +728,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
       { id: 'home', label: 'Home', hue: '#c2410c', onSelect: () => leaveTouch(), groups: [
         ['Start', [B('Start', I.wand, () => act('start'), { big: true, title: 'The start page: what do you want to do? (import, slice a sheet, open a library…)' })]],
         ['Add', [B('Import pictures', IK.add, () => act('add'), { big: true, key: 'Ctrl+O', title: 'Any picture files (PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, TIFF, SVG, animations, classic formats): every page and frame, cropped, named for you, black and white made see-through' }), B('Import a library', IK.zip, () => act('zip'), { big: true, title: 'A library ZIP (from ImageCraft’s Split a sheet, or exported here)' })]],
-        ['Sort', [B('Sort with AI', I.wand, () => act('sort-ai'), { big: true, title: 'The AI looks at each picture (the chosen ones, or every one not yet in a category) and gives it a category, style, form and tags, and a name where it only has a number' }), { col: [B('Ask a cloud AI', I.globe, () => act('cloud-ask'), { title: 'A cloud AI (Claude, Gemini, GPT or OpenRouter, with your own key) names and sorts the chosen pictures: for the ones the AI here gets wrong. Costs a little per picture', disabled: () => !sel.size }), B('Cloud AI settings…', I.gear, () => act('cloud-settings'), { title: 'Your own key for Claude, Gemini, GPT or OpenRouter, and which model to use' })] }, B('Find copies…', I.duplicate || I.copy, () => act('dupes'), { big: true, title: 'Pictures that are the same picture (a sheet sent twice, a picture imported again): keep one of each, remove the rest. On the server when you are looking at it, else in this browser' })]],
+        ['Sort', [B('Sort with AI', I.wand, () => act('sort-ai'), { big: true, title: 'The AI looks at each picture (the chosen ones, or every one not yet in a category) and gives it a category, style, form and tags, and a name where it only has a number' }), { col: [B('Ask a cloud AI', I.globe, () => act('cloud-ask'), { title: 'A cloud AI (Claude, Gemini, GPT or OpenRouter, with your own key) names and sorts the chosen pictures: for the ones the AI here gets wrong. Costs a little per picture', disabled: () => !sel.size }), B('Cloud AI settings…', I.gear, () => act('cloud-settings'), { title: 'Your own key for Claude, Gemini, GPT or OpenRouter, and which model to use' })] }, { col: [B('Find copies…', I.duplicate || I.copy, () => act('dupes'), { title: 'Pictures that are the same picture (a sheet sent twice, a picture imported again): keep one of each, remove the rest. On the server when you are looking at it, else in this browser' }), B('Check SVGs…', TI.trace, () => act('svg-check'), { title: 'SVGs that do not look like their PNG (a trace of a small picture: writing lost, colours run together) are found and, if you say so, taken away so apps use the PNG. The chosen pictures, or all; on the server when you are looking at it' })] }]],
         ['Slice', [B('Montage Slicer', IK.slice, () => act('slice'), { big: true, title: 'Cut a sheet (montage) of clip art into separate pictures: found by themselves or by a grid, named in order, added to the library' })]],
         ['Library', [B('Export (ZIP)', IK.exportZ, () => act('export-all'), { big: true, title: 'Everything shown (the category you are in, or all) as one ZIP: pictures, SVGs and library.json' }), { col: [B('Save to the folder', IK.up, () => act('folder-out'), { title: 'Write the whole library to its folder (backup, sync, sharing)' }), B('Add from a folder', IK.down, () => act('folder-in'), { title: 'Read a library folder into this library' }), B('Choose the folder…', IK.folder, () => act('folder-pick'), { title: 'Which folder the library is saved to' })] }]],
         ['Edit', [{ col: [B('Choose all', I.selectAll, () => act('select-all'), { key: 'Ctrl+A' }), B('Delete', I.trash, () => act('delete'), { key: 'Delete', disabled: () => !sel.size })] }]],

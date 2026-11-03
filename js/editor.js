@@ -498,7 +498,7 @@
   function setVec(svg, show = true) { if (vec && vec.url) URL.revokeObjectURL(vec.url); vec = { svg, url: URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' })), show, stale: false, fills: fillsOf(svg) }; draw(); renderPanel(); }
   async function vecDo(a, v, to) {
     if (!cur) return;
-    if (a === 'trace') { if (!window.CRAFT_RASTERTRACE) return toast('The tracer is not here.'); busy('Tracing…'); await new Promise((r) => setTimeout(r, 20)); try { const t = traceOf(flat()); setVec(t.svg); toast(`Traced: ${fillsOf(t.svg).length} colours, ${Math.round(t.svg.length / 1024)} KB. Save keeps this SVG (until the picture changes).`); } catch (e) { toast('Tracing failed: ' + (e.message || e)); } finally { busy(); } return; }
+    if (a === 'trace') { if (!window.CRAFT_RASTERTRACE) return toast('The tracer is not here.'); busy('Tracing…'); await new Promise((r) => setTimeout(r, 20)); try { const F = flat(), t = traceOf(F), m = await L.svgMatch(t.svg, F); setVec(t.svg); toast(`Traced: ${fillsOf(t.svg).length} colours, ${Math.round(t.svg.length / 1024)} KB. ${m.ok ? 'It matches the picture: Save keeps this SVG (until the picture changes).' : `It does not match the picture well (${m.wrong}% of it off): Save keeps the PNG only. Try a finer Detail.`}`); } catch (e) { toast('Tracing failed: ' + (e.message || e)); } finally { busy(); } return; }
     if (a === 'show') { if (!vec) return vecDo('trace'); vec.show = !vec.show; draw(); renderPanel(); return; }
     if (a === 'recolour' && vec) { const re = new RegExp(`fill="${v.replace('#', '#')}"`, 'gi'); setVec(vec.svg.replace(re, `fill="${to}"`), true); return; }
   }
@@ -516,10 +516,11 @@
     putDown(); closeText(); const btns = el.querySelectorAll('[data-ed]'); btns.forEach((b) => { b.disabled = true; });
     try {
       const F = flat(), png = await new Promise((ok) => canvasOf(F).toBlob(ok, 'image/png')); let svg = vec && !vec.stale ? vec.svg : null, saved = null;
-      if (!svg && window.CRAFT_RASTERTRACE) { try { svg = traceOf(F).svg; } catch (e) { console.warn('Tracing failed', e); } }
+      if (svg && !(await L.svgMatch(svg, F)).ok) svg = null;
+      if (!svg) svg = (await L.traceMatched(F, [T.vprofile || 'icon', 'balanced'])).svg;
       const fresh = await L.makeItem({ name: item.name, png, svg });
       if (asCopy) { const o = offOf(cur), it = { ...item, ...fresh, id: fresh.id, cutAt: item.cutAt ? { x: item.cutAt.x + o.x, y: item.cutAt.y + o.y, w: cur.width, h: cur.height } : undefined, name: item.name, serverId: undefined, links: undefined, pngFirst: undefined, edited: new Date().toISOString() }; delete it.serverId; delete it.links; delete it.pngFirst; await L.put(it); toast(`Saved as a copy: “${it.name}”.`); saved = it; }
-      else { if (!item.pngFirst) { item.pngFirst = item.png; if (item.cutAt) item.cutAtFirst = item.cutAt; } if (item.cutAt) { const o = offOf(cur); item.cutAt = { x: item.cutAt.x + o.x, y: item.cutAt.y + o.y, w: cur.width, h: cur.height }; } Object.assign(item, { png, svg: svg || item.svg, thumb: fresh.thumb, width: fresh.width, height: fresh.height, edited: new Date().toISOString() }); if (item.serverId) item.changed = true; await L.put(item); toast(`Saved “${item.name}”.`); saved = item; }
+      else { if (!item.pngFirst) { item.pngFirst = item.png; if (item.cutAt) item.cutAtFirst = item.cutAt; } if (item.cutAt) { const o = offOf(cur); item.cutAt = { x: item.cutAt.x + o.x, y: item.cutAt.y + o.y, w: cur.width, h: cur.height }; } Object.assign(item, { png, svg, noSvg: !svg, thumb: fresh.thumb, width: fresh.width, height: fresh.height, edited: new Date().toISOString() }); if (item.serverId) item.changed = true; await L.put(item); toast(`Saved “${item.name}”.`); saved = item; }
       past = []; future = []; close(); if (opts.done) await opts.done(saved);
     } catch (e) { console.error(e); toast('Saving failed: ' + (e.message || e)); btns.forEach((b) => { b.disabled = false; }); }
   }

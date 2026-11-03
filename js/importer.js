@@ -285,7 +285,7 @@
         const p = todo[i]; btn.textContent = `Adding ${i + 1} of ${todo.length}: ${names[i]}…`; await wait(0);
         const img = result(p), png = await blobOf(img), drawing = p.style !== 'photo' && (p.kind !== 'colour' || p.style || (F().countColours ? F().countColours(img, 4096) <= 4096 : true));
         let svg = !p.crop && !p.rot && !p.flip && p.mode === 'auto' ? p.svgText : null;
-        if (!svg && (S.svg === 'always' || (S.svg === 'auto' && drawing)) && window.CRAFT_RASTERTRACE && img.width * img.height <= 4e6) { try { svg = CRAFT_RASTERTRACE.traceImage(img, { profile: 'icon' }).svg; } catch (e) { console.warn('Tracing failed', names[i], e); } }
+        if (!svg && (S.svg === 'always' || (S.svg === 'auto' && drawing)) && window.CRAFT_RASTERTRACE && img.width * img.height <= 4e6) svg = (await L.traceMatched(img)).svg;
         const it = await L.makeItem({ name: names[i], category: S.category.trim() || p.category || '', tags: p.tags, png, svg, source: files[p.file].name });
         Object.assign(it, { type: 'clipart', style: p.style || '', form: p.form || '', kind: /^ink/.test(modeName(p)) ? 'bw' : p.kind, hash: p.hash || hashOf(img) });
         if (p.anim) { it.anim = p.anim.blob; it.frames = p.anim.frames; }

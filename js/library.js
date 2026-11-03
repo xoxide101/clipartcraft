@@ -40,6 +40,38 @@
   const loadImg = (src) => new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => no(new Error('That picture could not be read.')); i.src = src; });
   async function thumbOf(src) { const i = await loadImg(src), k = Math.min(1, 160 / Math.max(i.naturalWidth, i.naturalHeight)), c = document.createElement('canvas'); c.width = Math.max(1, Math.round(i.naturalWidth * k)); c.height = Math.max(1, Math.round(i.naturalHeight * k)); const x = c.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(i, 0, 0, c.width, c.height); return { thumb: c.toDataURL('image/png'), width: i.naturalWidth, height: i.naturalHeight }; }
   const svgUrl = (svg) => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  // An SVG is kept only when it looks like its PNG: drawn at the PNG's size (on grey), the colours are on average
+  // within MATCH.mean (0-255) of it and at most MATCH.wrong % of the pixels are badly wrong (writing lost, a part
+  // gone). A trace of a small picture often is not: then the PNG is the picture, and no SVG is made.
+  const MATCH = { mean: 10, wrong: 4 };
+  const pixelsOf = (im, w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(im, 0, 0, w, h); return x.getImageData(0, 0, w, h); };
+  async function svgMatch(svg, pic) {
+    let ref = pic; if (!(pic instanceof ImageData)) { const i = await loadImg(typeof pic === 'string' ? pic : URL.createObjectURL(pic)); ref = pixelsOf(i, i.naturalWidth, i.naturalHeight); }
+    const w = ref.width, h = ref.height;
+    const b = pixelsOf(await loadImg(svgUrl(svg)), w, h).data, a = ref.data; let s = 0, n = 0, bad = 0;
+    for (let k = 0; k < a.length; k += 4) {
+      const aa = a[k + 3] / 255, ba = b[k + 3] / 255; if (aa < 0.05 && ba < 0.05) continue;
+      let d = 0; for (let c = 0; c < 3; c++) d += Math.abs(a[k + c] * aa + 128 * (1 - aa) - (b[k + c] * ba + 128 * (1 - ba)));
+      d /= 3; s += d; n++; if (d > 48) bad++;
+    }
+    const mean = n ? s / n : 0, wrong = n ? (100 * bad) / n : 0;
+    return { mean: Math.round(mean * 10) / 10, wrong: Math.round(wrong * 10) / 10, ok: mean <= MATCH.mean && wrong <= MATCH.wrong };
+  }
+  // a trace that matches the picture (ImageData), or none: the usual setting, then a finer one; not one many times
+  // bigger than the PNG it stands for
+  async function traceMatched(img, profiles = ['icon', 'balanced']) {
+    if (!window.CRAFT_RASTERTRACE) return { svg: null };
+    const most = Math.max(120000, img.width * img.height * 8); let best = null;
+    for (const profile of profiles) {
+      let svg; try { svg = CRAFT_RASTERTRACE.traceImage(img, { profile }).svg; } catch (e) { continue; }
+      if (svg.length > most) continue;
+      const m = await svgMatch(svg, img); if (m.ok) return { svg, match: m };
+      if (!best || m.mean < best.mean) best = m;
+    }
+    return { svg: null, match: best };
+  }
+  // the PNG of a picture, drawn from it to ImageData (for svgMatch)
+  async function pixelsOfItem(it) { const i = await loadImg(URL.createObjectURL(it.png)); return pixelsOf(i, i.naturalWidth, i.naturalHeight); }
   const nameOf = (file) => String(file).replace(/^.*[\\/]/, '').replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim() || 'Untitled';
 
   // one item from a PNG/JPEG/GIF/WebP blob and/or SVG text
@@ -131,7 +163,7 @@
     for (const it of items) {
       const j = Object.fromEntries(META.filter((k) => it[k] !== undefined).map((k) => [k, it[k]]));
       if (it.png) { j.png = await b64(it.png); j.pngExt = it.png.type === 'image/jpeg' ? 'jpg' : 'png'; }
-      if (it.svg) j.svg = it.svg; if (it.anim) { j.anim = await b64(it.anim); j.animExt = (it.anim.type.split('/')[1] || 'gif').replace('apng', 'png'); }
+      if (it.svg) j.svg = it.svg; else if (it.noSvg && it.serverId) j.svg = null; if (it.anim) { j.anim = await b64(it.anim); j.animExt = (it.anim.type.split('/')[1] || 'gif').replace('apng', 'png'); }
       if (it.thumb) { j.thumb = it.thumb.replace(/^data:[^,]*,/, ''); j.thumbExt = 'png'; }
       let s; try { s = await call(it.serverId ? '/api/items/' + it.serverId : '/api/items', { method: it.serverId ? 'PATCH' : 'POST', body: JSON.stringify(j) }); } catch (e) { if (!it.serverId || !/No such item/.test(e.message)) throw e; delete it.serverId; s = await call('/api/items', { method: 'POST', body: JSON.stringify(j) }); }
       it.serverId = s.id; it.links = s.links; it.name = s.name; it.serverChanged = s.changed; await tx('items', 'readwrite', (st) => req(st.put(it))); out.push(it); progress(++n, items.length);
@@ -169,6 +201,8 @@
     for (const id of [...q]) { try { await call('/api/items/' + id, { method: 'DELETE' }); n++; } catch (e) { if (!/No such item/.test(e.message)) { await meta('deleteQueue', q); throw e; } } q.splice(q.indexOf(id), 1); await meta('deleteQueue', q); }
     return n;
   }
+  // the server's SVG of one of its pictures taken away (it did not match the PNG)
+  async function dropServerSvg(id) { return call('/api/items/' + encodeURIComponent(id), { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ svg: null }) }); }
   async function deleteOnServer(ids) { await meta('deleteQueue', [...new Set([...((await meta('deleteQueue')) || []), ...ids])]); return sendDeletes(); }
   async function deleteItems(items, { server = false } = {}) {
     const ids = items.filter((it) => it.serverId).map((it) => it.serverId);
@@ -182,5 +216,5 @@
   async function lists(value) { return meta('lists', value); }
   // the user's corrections the AI learns from: [{ id (the picture's), vec, name, category, style, form, at }]
   async function lessons(value) { return value === undefined ? (await meta('lessons')) || [] : meta('lessons', value); }
-  window.CraftClipart = { DB, lists, lessons, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, deleteItems, deleteOnServer, sendDeletes, notHere, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip };
+  window.CraftClipart = { DB, lists, lessons, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, deleteItems, deleteOnServer, sendDeletes, notHere, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip, svgMatch, traceMatched, pixelsOfItem, dropServerSvg, MATCH };
 })();
