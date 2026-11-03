@@ -120,9 +120,11 @@ class Library {
     if ($cat !== null) { $w[] = "COALESCE(category, '') = ?"; $a[] = $cat; }
     return [$w ? 'WHERE ' . implode(' AND ', $w) : '', $a];
   }
-  function list(string $text = '', ?string $cat = null, int $limit = 200, int $offset = 0, ?string $type = null, bool $all = true, ?string $since = null): array {
+  // (order 'changed': the order they were added or changed, new ones at the end: a reader paging through while pictures are
+  // being added misses none; else by name)
+  function list(string $text = '', ?string $cat = null, int $limit = 200, int $offset = 0, ?string $type = null, bool $all = true, ?string $since = null, string $order = ''): array {
     [$w, $a] = $this->filter($text, $cat, $type, $all, $since);
-    return ['total' => (int) $this->q("SELECT COUNT(*) n FROM items $w", $a)[0]['n'], 'items' => array_map([$this, 'row'], $this->q("SELECT * FROM items $w ORDER BY name{$this->nocase()} LIMIT $limit OFFSET $offset", $a))];
+    return ['total' => (int) $this->q("SELECT COUNT(*) n FROM items $w", $a)[0]['n'], 'items' => array_map([$this, 'row'], $this->q("SELECT * FROM items $w ORDER BY " . ($order === 'changed' ? 'changed, id' : "name{$this->nocase()}") . " LIMIT $limit OFFSET $offset", $a))];
   }
   function get(string $id): ?array { return $this->row($this->q('SELECT * FROM items WHERE id = ?', [$id])[0] ?? null); }
   function by_name(string $n): ?array { return $this->row($this->q("SELECT * FROM items WHERE name = ?{$this->nocase()}", [$n])[0] ?? null); }
@@ -325,7 +327,7 @@ try {
   }
   if ($what === 'items') {
     $id = $p[2] ?? null;
-    if (!$id && $method === 'GET') { $r = $lib->list($Q['q'] ?? '', $Q['category'] ?? null, min((int) ($Q['limit'] ?? 200) ?: 200, 5000), (int) ($Q['offset'] ?? 0), $Q['type'] ?? null, $may_write, ($Q['since'] ?? '') !== '' ? (string) $Q['since'] : null); out(200, ['total' => $r['total'], 'items' => array_map(fn ($it) => $shown($lib, $it), $r['items'])]); }
+    if (!$id && $method === 'GET') { $r = $lib->list($Q['q'] ?? '', $Q['category'] ?? null, min((int) ($Q['limit'] ?? 200) ?: 200, 5000), (int) ($Q['offset'] ?? 0), $Q['type'] ?? null, $may_write, ($Q['since'] ?? '') !== '' ? (string) $Q['since'] : null, (string) ($Q['order'] ?? '')); out(200, ['total' => $r['total'], 'items' => array_map(fn ($it) => $shown($lib, $it), $r['items'])]); }
     if ((!$id && $method === 'POST') || ($id && $method === 'PATCH')) {
       $j = json_decode($body() ?: '{}', true) ?: []; $pics = [];
       foreach (FILE_KINDS as $k) if (array_key_exists($k, $j)) { $pics[$k] = $j[$k] === null ? null : ($k === 'svg' && empty($j['svgBase64']) ? $j[$k] : base64_decode($j[$k])); $pics[$k . 'Ext'] = $j[$k . 'Ext'] ?? null; unset($j[$k]); }

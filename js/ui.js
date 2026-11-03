@@ -747,7 +747,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
   async function sinceLast() {
     if (!serverUrl || !serverOk) return; let since = ''; try { since = localStorage.getItem(SEEN()) || ''; } catch (e) { /* blocked */ }
     const mark = (t) => { try { localStorage.setItem(SEEN(), t); } catch (e) { /* blocked */ } };
-    if (!since) { const r = await L.pull(() => {}, { since: new Date(Date.now() - 864e5).toISOString(), newMax: 50 }).catch(() => null); mark(new Date().toISOString()); if (r && (r.made.length || r.thumbs.length)) { await reload(); syncReport(r, [], 0, 'Changed on the server in the last day'); } return; }
+    if (!since) { const r = await L.pull(() => {}, { since: new Date(Date.now() - 864e5).toISOString(), newMax: 50 }).catch(() => null); mark((r && r.newest) || new Date().toISOString()); if (r && (r.made.length || r.thumbs.length)) { await reload(); syncReport(r, [], 0, 'Changed on the server in the last day'); } return; }
     try { const r = await L.pull(() => {}, { since, newMax: 50 }); if (r.newest) mark(r.newest > since ? r.newest : since); if (r.made.length || r.thumbs.length || r.leftNew) { await reload(); if (onServer()) loadServer(); syncReport(r, [], 0, 'Changed on the server since you were last here'); } } catch (e) { /* the next look */ }
   }
   async function checkServer(say) { serverUrl = await L.server(); serverOk = false; if (serverUrl) { try { const i = await L.serverInfo(); serverOk = true; if (say) toast(`Connected to the clip-art server (${i.libraries.map((l) => `${l.name}: ${l.database}`).join(', ')}).${i.writable ? '' : ' It can only be read from here.'}`); } catch (e) { if (say) toast(e.message); } } status(); if (serverOk) sinceLast(); }
