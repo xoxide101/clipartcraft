@@ -124,7 +124,7 @@
   let sending = Promise.resolve();
   function sendNow(list) {
     const S = (list || []).filter((it) => it && it.serverId && it.changed); if (!S.length || !serverUrl || !serverOk) return;
-    sending = sending.then(async () => { try { const fresh = (await L.all()).filter((x) => S.some((y) => y.id === x.id) && x.changed); if (!fresh.length) return; const d = await L.push(fresh); toast(`Sent to the server: ${d.length === 1 ? `“${d[0].name}”` : `${d.length} pictures`}.`); if (onServer()) loadServer(); } catch (e) { toast(`Not sent yet (${e.message}): Sync sends it later.`); } });
+    sending = sending.then(async () => { try { const fresh = (await Promise.all(S.map((y) => L.get(y.id)))).filter((x) => x && x.changed); if (!fresh.length) return; const d = await L.push(fresh); toast(`Sent to the server: ${d.length === 1 ? `“${d[0].name}”` : `${d.length} pictures`}.`); if (onServer()) loadServer(); } catch (e) { toast(`Not sent yet (${e.message}): Sync sends it later.`); } });
   }
   // Remake the thumbnail (right-click): drawn again from the picture itself (a tile showing an old picture)
   async function remakeThumbs(S) { let n = 0; for (const it of S) { const src = it.png ? URL.createObjectURL(it.png) : it.svg ? L.svgUrl(it.svg) : null; if (!src) continue; try { const t = await L.makeItem({ name: it.name, png: it.png, svg: it.svg }); it.thumb = t.thumb; it.width = t.width; it.height = t.height; it.thumbFrom = it.serverChanged; await L.put(it); n++; } catch (e) { /* unreadable */ } } await reload(); toast(`${n} thumbnail${n === 1 ? '' : 's'} remade from the picture.`); }
@@ -155,7 +155,7 @@
       el.querySelector('.arc-strip-t').textContent = `${title}: ${phase}${of ? ` · ${(n || 0).toLocaleString()} of ${of.toLocaleString()} (${((100 * (n || 0)) / of).toFixed(1)}%)` : ''}${rate ? ` · ${Math.round(rate).toLocaleString()} a second` : ''}${left > 2 ? ` · about ${dur(left)} left` : ''} · ${dur(secs())} so far`;
       el.querySelector('.arc-bar i').style.width = of ? `${(100 * (n || 0)) / of}%` : '0%';
     };
-    const WORDS = { list: 'reading the server’s list', save: 'saving the details', files: 'updating pictures kept with their files' };
+    const WORDS = { dedupe: 'took out copies of the same server picture', list: 'reading the server’s list', save: 'saving the details', files: 'updating pictures kept with their files' };
     return { step, pullStep: (n, t, ph) => step(WORDS[ph] || 'getting', n, t), end(text) { el.hidden = false; el.querySelector('.arc-strip-t').textContent = `${title}: ${text} · ${dur(secs())}`; el.querySelector('.arc-bar i').style.width = '100%'; const b = el.querySelector('[data-job]'); b.textContent = 'Close'; setTimeout(() => el.remove(), 12000); } };
   }
   // Send to the server now (right-click): the chosen pictures sent as they are here, whatever is marked (a force update)
@@ -507,7 +507,7 @@
       // it (deleted there, or never sent) is asked about
       if (a === 'match') {
         await need(); const del = await L.sendDeletes(); const r = await L.pull((n, t) => busy(`Getting ${n} of ${t}…`)); busy();
-        const extra = (await L.all()).filter((it) => !it.serverId); let out = 0, sent = 0;
+        const extra = items.filter((it) => !it.serverId); let out = 0, sent = 0;
         if (extra.length) { const v = await ask('Match the server', `${extra.length} picture${extra.length === 1 ? ' here is' : 's here are'} not on the server (${esc(extra.slice(0, 5).map((it) => it.name).join(', '))}${extra.length > 5 ? '…' : ''}).<br><br><b>Take them out here</b> makes this browser the same as the server. <b>Send them</b> puts them on the server instead.`,
           [{ label: 'Take them out here', value: 'out', danger: true }, { label: 'Send them to the server', value: 'send' }, { label: 'Leave them here', value: null, primary: true }]);
           if (v === 'out') { await L.remove(extra.map((it) => it.id)); out = extra.length; } else if (v === 'send') sent = (await L.push(extra, (n, t) => busy(`Sending ${n} of ${t}…`))).length; busy(); }
@@ -524,7 +524,7 @@
         busy(); toast(`Saved “${name}” (${(b.size / 1048576).toFixed(1)} MB) to your downloads.`); return;
       }
       if (a === 'pull') { await need(); const J = jobStrip('Get from the server'); let r; try { r = await L.pull(J.pullStep); J.end(`done: ${r.made.length.toLocaleString()} brought in`); } catch (e) { J.end('stopped: ' + e.message); throw e; } await reload(); syncReport(r, [], 0, 'Got from the server'); if (!r.made.length && !r.thumbs.length && !r.leftNew) toast(`Already up to date (the server has ${r.total.toLocaleString()}).`); return; }
-      if (a === 'sync') { await need(); const J = jobStrip('Sync'); try { J.step('sending deletions waiting here'); const del = await L.sendDeletes(); const r = await L.pull(J.pullStep); const fresh = (await L.all()).filter((it) => !it.serverId || it.changed); J.step('sending changes from here', 0, fresh.length); const d = await L.push(fresh, (n, t) => J.step('sending changes from here', n, t)); await reload(); J.end(`done: ${(r.made.length - r.updated.length).toLocaleString()} new (details), ${r.updated.length.toLocaleString()} updated, ${d.length.toLocaleString()} sent${del ? `, ${del} deleted` : ''}`); syncReport(r, d, del); } catch (e) { J.end('stopped: ' + e.message); throw e; } return; }
+      if (a === 'sync') { await need(); const J = jobStrip('Sync'); try { J.step('sending deletions waiting here'); const del = await L.sendDeletes(); const r = await L.pull(J.pullStep); const fresh = await Promise.all((await L.facts(['id', 'serverId', 'changed'])).filter((it) => !it.serverId || it.changed).map((it) => L.get(it.id))); J.step('sending changes from here', 0, fresh.length); const d = await L.push(fresh, (n, t) => J.step('sending changes from here', n, t)); await reload(); J.end(`done: ${(r.made.length - r.updated.length).toLocaleString()} new (details), ${r.updated.length.toLocaleString()} updated, ${d.length.toLocaleString()} sent${del ? `, ${del} deleted` : ''}${r.twice ? `, ${r.twice.toLocaleString()} copies of the same picture taken out` : ''}`); syncReport(r, d, del); } catch (e) { J.end('stopped: ' + e.message); throw e; } return; }
       if (a === 'unserver') { const S = chosen().filter((it) => it.serverId); if (!S.length) return toast('Choose something that is on the server.'); if (!confirm(`Take ${S.length === 1 ? `“${S[0].name}”` : `${S.length} items`} off the server? (They stay in this library.)`)) return; await L.removeFromServer(S); await reload(); toast('Taken off the server.'); return; }
       if (a === 'open-server') { if (!serverUrl) return toast('Connect to a server first.'); window.open(serverUrl + '/', '_blank'); return; }
       const one = chosen()[0]; if (!one) return;
@@ -777,6 +777,8 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
   async function sinceLast() {
     if (!serverUrl || !serverOk) return; let since = ''; try { since = localStorage.getItem(SEEN()) || ''; } catch (e) { /* blocked */ }
     const mark = (t) => { try { localStorage.setItem(SEEN(), t); } catch (e) { /* blocked */ } };
+    // (never a big job by itself on opening: more than 2,000 changed there and it only says so; Sync brings them when chosen)
+    try { const c = await (await keyFetch(`${serverUrl}/api/items?limit=1&order=changed&since=${encodeURIComponent(since || new Date(Date.now() - 864e5).toISOString())}`)).json(); if (c.total > 2000) { toast(`${c.total.toLocaleString()} pictures changed on the server since your last look: press Sync to bring their details in (the line above the pictures shows where it stands).`); return; } } catch (e) { return; }
     if (!since) { const r = await L.pull(() => {}, { since: new Date(Date.now() - 864e5).toISOString(), newMax: 50 }).catch(() => null); mark((r && r.newest) || new Date().toISOString()); if (r && (r.made.length || r.thumbs.length)) { await reload(); syncReport(r, [], 0, 'Changed on the server in the last day'); } return; }
     let J = null; const big = (n, t, ph) => { if (!J && t > 200) J = jobStrip('Since you were last here'); if (J) J.pullStep(n, t, ph); };
     try { const r = await L.pull(big, { since, newMax: 50 }); if (J) J.end(`done: ${r.made.length.toLocaleString()} brought in`); if (r.newest) mark(r.newest > since ? r.newest : since); if (r.made.length || r.thumbs.length || r.leftNew) { await reload(); if (onServer()) loadServer(); syncReport(r, [], 0, 'Changed on the server since you were last here'); } } catch (e) { /* the next look */ }
@@ -980,7 +982,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     if (!(await saveFirst())) return;
     stepping = true;
     try {
-      let next = touchSet.list[j]; next = touchSet.srv ? await keepFromServer(next) : (await L.all()).find((x) => x.id === next.id); if (!next) return toast('That picture is not there any more.');
+      let next = touchSet.list[j]; next = touchSet.srv ? await keepFromServer(next) : await L.get(next.id); if (!next) return toast('That picture is not there any more.');
       if (!touchSet.srv) { sel = new Set([next.id]); last = next.id; render(); }
       if (i >= 0 && (i + d >= n || i + d < 0)) toast(d > 0 ? 'That was the last: back to the first.' : 'That was the first: round to the last.');
       await E.open(next, touchOpts());
@@ -988,7 +990,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
   }
   const touchOpts = () => ({ toast, mount: app, before: touchEmpty, onClose: () => ribbon.select('home', true), nav: { step: touchStep, label: touchLabel }, drawing: () => editDrawing(),
     // saved: the library shows it chosen, and Touch up goes on with it
-    done: async (saved) => { if (saved) sendNow([saved]); await reload(); if (!saved || stepping) return; sel = new Set([saved.id]); render(); if (['touch', 'fix'].includes(ribbon.current())) await ClipArtEditor.open((await L.all()).find((x) => x.id === saved.id) || saved, touchOpts()); } });
+    done: async (saved) => { if (saved) sendNow([saved]); await reload(); if (!saved || stepping) return; sel = new Set([saved.id]); render(); if (['touch', 'fix'].includes(ribbon.current())) await ClipArtEditor.open((await L.get(saved.id)) || saved, touchOpts()); } });
   async function enterTouch() {
     setTimeout(syncTouchTab, 0);
     let it = touchWant; touchWant = null;
@@ -1010,9 +1012,9 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
   async function editDrawing() {
     const E = ClipArtEditor, it = E.item(); if (!it || !it.svg) return toast('This picture has no drawing (SVG) to edit.');
     if (E.changed() && !(await saveFirst())) return;
-    const cur = (await L.all()).find((x) => x.id === it.id) || it; E.close();
+    const cur = (await L.get(it.id)) || it; E.close();
     const again = async (x) => { await reload(); if (['touch', 'fix'].includes(ribbon.current())) await E.open(x, touchOpts()); syncTouchTab(); };
-    ClipArtVector.open(cur, { toast, ask, mount: app, before: touchEmpty, done: async (saved) => { sendNow([saved]); await reload(); sel = new Set([saved.id]); render(); await again((await L.all()).find((x) => x.id === saved.id) || saved); }, back: () => again(cur) });
+    ClipArtVector.open(cur, { toast, ask, mount: app, before: touchEmpty, done: async (saved) => { sendNow([saved]); await reload(); sel = new Set([saved.id]); render(); await again((await L.get(saved.id)) || saved); }, back: () => again(cur) });
     syncTouchTab();
   }
   function leaveTouch() { if (window.ClipArtVector) ClipArtVector.hide(); touchEmpty.hidden = true; if (ClipArtEditor.isOpen()) ClipArtEditor.close(); app.querySelector('.work').hidden = false; syncTouchTab(); }

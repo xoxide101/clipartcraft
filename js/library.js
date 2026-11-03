@@ -32,6 +32,12 @@
 
   async function all() { return tx('items', 'readonly', (s) => req(s.getAll())); }
   async function get(id) { return tx('items', 'readonly', (s) => req(s.get(id))); }
+  // a few facts of every item, read one at a time (never the whole library in memory at once: its SVGs and thumbnails stay
+  // on disk): what a comparison with the server, or a check for copies, needs
+  async function facts(keys = ['id', 'serverId', 'serverChanged', 'thumbFrom', 'remote', 'changed', 'edited', 'added', 'original', 'name']) {
+    const d = await open(); return new Promise((ok, no) => { const out = [], r = d.transaction('items', 'readonly').objectStore('items').openCursor();
+      r.onsuccess = () => { const c = r.result; if (!c) return ok(out); const v = c.value, o = {}; for (const k of keys) if (v[k] !== undefined) o[k] = v[k]; out.push(o); c.continue(); }; r.onerror = () => no(r.error); });
+  }
   // (quiet: a big import saves many and tells the views once, with tell())
   async function put(item, quiet) { await tx('items', 'readwrite', (s) => req(s.put(item))); if (!quiet) changed(); return item; }
   async function remove(ids) { await tx('items', 'readwrite', (s) => Promise.all([].concat(ids).map((id) => req(s.delete(id))))); changed(); }
@@ -231,7 +237,17 @@
     changed(); return out;
   }
   // bring the server's items into this browser (ones already here are updated if the server's copy is newer)
-  async function pull(progress = () => {}, opts = {}) { return guard(() => pullNow(progress, opts)); }
+  // one pull at a time (the opening check and a Sync at once both added the same new pictures): a second waits for the first
+  let pulling = Promise.resolve();
+  async function pull(progress = () => {}, opts = {}) { const run = pulling.then(() => guard(() => pullNow(progress, opts))); pulling = run.catch(() => {}); return run; }
+  // the same server picture here more than once (from before: pages read by name shifted while an import added, or two pulls
+  // at once): one kept (the one with its files, else the first added), the others taken out, all in one go
+  async function dedupe() {
+    const by = new Map(); for (const f of await facts(['id', 'serverId', 'remote', 'added'])) { if (!f.serverId) continue; const l = by.get(f.serverId); if (l) l.push(f); else by.set(f.serverId, [f]); }
+    const extra = []; for (const l of by.values()) { if (l.length < 2) continue; l.sort((a, b) => (!!a.remote - !!b.remote) || String(a.added || '').localeCompare(String(b.added || ''))); extra.push(...l.slice(1).map((x) => x.id)); }
+    for (let i = 0; i < extra.length; i += 1000) await tx('items', 'readwrite', (st) => Promise.all(extra.slice(i, i + 1000).map((id) => req(st.delete(id)))));
+    return extra.length;
+  }
   // why a picture came down again: its picture (PNG), its drawing (SVG) or its details changed on the server
   const DETAIL = ['name', 'category', 'style', 'form', 'description', 'source', 'author', 'licence', 'privacy'];
   async function files(it) {
@@ -250,8 +266,9 @@
     return w.length ? w.join('; ') : 'changed on the server';
   }
   async function pullNow(progress, { q = '', category, since = '', newMax = 300 } = {}) {
+    const twice = await dedupe(); if (twice) progress(twice, twice, 'dedupe');
     // (a picture the server lists but cannot hand over, its file missing there, is skipped and counted, not the end of it)
-    const here = new Map((await all()).filter((it) => it.serverId).map((it) => [it.serverId, it])), made = [], updated = [], thumbs = [], missing = [], skip = await notHere(), gone = new Set((await meta('deleteQueue')) || []), seen = new Set(); let n = 0, total = 0;
+    const here = new Map((await facts()).filter((it) => it.serverId).map((it) => [it.serverId, it])), made = [], updated = [], thumbs = [], missing = [], skip = await notHere(), gone = new Set((await meta('deleteQueue')) || []), seen = new Set(); let n = 0, total = 0;
     // one picture from the server into this browser (new here, or a newer copy of one here), with its own thumbnail
     const take = async (s, old) => {
         const get = async (k) => { if (!s.links[k]) return null; const r = await fetch(s.links[k]); return r.ok ? r.blob() : null; };
@@ -274,12 +291,13 @@
     for (let off = 0; ; off += 500) {
       const r = await call(`/api/items?limit=500&offset=${off}&q=${encodeURIComponent(q)}${category !== undefined ? '&category=' + encodeURIComponent(category) : ''}${since ? '&since=' + encodeURIComponent(since) : ''}&order=changed`); total = r.total; if (!r.items.length) break;
       for (const s of r.items) {
-        const old = here.get(s.id); seen.add(s.id); progress(++n, total, 'list'); if ((s.changed || '') > newestSeen) newestSeen = s.changed; // (in step already: its thumbnail remade once if it was made from an older copy, as a pull before this kept the old one)
-        if (old && old.serverChanged === s.changed) { if (old.thumbFrom !== s.changed && (old.png || old.svg)) { try { const t = await thumbOf(old.png ? URL.createObjectURL(old.png) : svgUrl(old.svg)); old.thumb = t.thumb; old.thumbFrom = s.changed; await tx('items', 'readwrite', (st) => req(st.put(old))); thumbs.push(old); } catch (e) { /* unreadable */ } } continue; }
+        let old = here.get(s.id); seen.add(s.id); progress(++n, total, 'list'); if ((s.changed || '') > newestSeen) newestSeen = s.changed; // (in step already: its thumbnail remade once if it was made from an older copy, as a pull before this kept the old one)
+        if (old && old.serverChanged === s.changed) { if (old.thumbFrom !== s.changed && !old.remote && (old = await get(old.id)) && (old.png || old.svg)) { try { const t = await thumbOf(old.png ? URL.createObjectURL(old.png) : svgUrl(old.svg)); old.thumb = t.thumb; old.thumbFrom = s.changed; await tx('items', 'readwrite', (st) => req(st.put(old))); thumbs.push(old); } catch (e) { /* unreadable */ } } continue; }
         if (!old && (skip.has(s.id) || gone.has(s.id))) continue;
+        if (old) old = (await get(old.id)) || old; // (the whole item, now that it is needed)
         // changed here and on the server too: the newer one wins (a change here older than the server's copy gives way)
         if (old && old.changed && Date.parse(old.edited || old.added || 0) >= Date.parse(s.changed || 0)) continue;
-        if (!old) { fresh.push(s); continue; }
+        if (!old) { if (!fresh.some((x) => x.id === s.id)) fresh.push(s); continue; } // (once, even when it is listed twice)
         // (a picture here as data only: its data again; one here with its files: those again too)
         if (old.remote) { old.why = await whyOf(old, s, null, null); note(s, old); } else { progress(n, total, 'files'); await take(s, old); }
       }
@@ -291,7 +309,7 @@
     for (let i = 0; i < datas.length; i += 500) { const part = datas.slice(i, i + 500); await tx('items', 'readwrite', (st) => Promise.all(part.map((x) => req(st.put(x))))); progress(Math.min(datas.length, i + 500), datas.length, 'save'); }
     // (a whole pull: pictures here that the server had but no longer has were deleted there, from another machine: they go here too)
     const removed = []; if (!q && !since && category === undefined && seen.size === total) { for (const [sid, it] of here) if (!seen.has(sid)) removed.push(it); if (removed.length) await remove(removed.map((it) => it.id)); }
-    changed(); return { made, updated, thumbs, total, missing, removed, leftNew, newest: newestSeen };
+    changed(); return { made, updated, thumbs, total, missing, removed, leftNew, twice, newest: newestSeen };
   }
   // deleting: from the server too (queued until the server answers; Sync sends what is left), or from this browser only
   // (remembered, so Sync and Get do not bring it back; keeping it again from the server forgets that)
@@ -318,5 +336,5 @@
   async function lessons(value) { return value === undefined ? (await meta('lessons')) || [] : meta('lessons', value); }
   // the original IDs of every picture on the server (a big archive skips those it has), read a page of 5,000 at a time
   async function serverOriginals() { const out = new Set(); for (let off = 0; ; off += 5000) { const r = await call(`/api/items?limit=5000&offset=${off}`); r.items.forEach((x) => x.original && out.add(x.original)); if (!r.items.length || off + r.items.length >= r.total) break; } return out; }
-  window.CraftClipart = { files, serverOriginals, tell: () => changed(), zip, DB, lists, lessons, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, deleteItems, deleteOnServer, sendDeletes, notHere, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip, stampPng, stampSvg, coreSum, sumsOf, svgMatch, traceMatched, pixelsOfItem, dropServerSvg, MATCH, svgUnits, scaleFor, svgPng, TARGET };
+  window.CraftClipart = { dedupe, facts, files, serverOriginals, tell: () => changed(), zip, DB, lists, lessons, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, deleteItems, deleteOnServer, sendDeletes, notHere, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip, stampPng, stampSvg, coreSum, sumsOf, svgMatch, traceMatched, pixelsOfItem, dropServerSvg, MATCH, svgUnits, scaleFor, svgPng, TARGET };
 })();

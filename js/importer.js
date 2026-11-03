@@ -69,7 +69,7 @@
   const hamming = (a, b) => { let n = 0; for (let i = 0; i < 16; i += 2) { let v = parseInt(a.slice(i, i + 2), 16) ^ parseInt(b.slice(i, i + 2), 16); while (v) { n += v & 1; v >>= 1; } } return n; };
   async function libraryHashes() {
     if (libHashes) return libHashes;
-    const out = []; for (const it of await L.all()) { let h = it.hash; if (!h && it.thumb) { try { const i = new Image(); i.src = it.thumb; await i.decode(); h = hashOf(i); it.hash = h; await L.put(it); } catch (e) { /* no thumb */ } } if (h) out.push({ h, name: it.name }); }
+    const out = []; for (const f of await L.facts(['id', 'hash', 'name'])) { let h = f.hash, it = f; if (!h) it = (await L.get(f.id)) || f; if (!h && it.thumb) { try { const i = new Image(); i.src = it.thumb; await i.decode(); h = hashOf(i); it.hash = h; await L.put(it); } catch (e) { /* no thumb */ } } if (h) out.push({ h, name: it.name }); }
     return (libHashes = out);
   }
   // the picture as it will be added
@@ -271,7 +271,7 @@
 
   // ------------------------------------------------------------------ adding to the library
   async function uniqueNames(list) {
-    const taken = new Set((await L.all()).map((it) => it.name.toLowerCase())), out = [];
+    const taken = new Set((await L.facts(['name'])).map((it) => String(it.name || '').toLowerCase())), out = [];
     for (const n0 of list) { const n = n0.trim() || 'Clip art', base = n.replace(/_\d{3,}$/, ''); let t = n; for (let k = 2; taken.has(t.toLowerCase()); k++) t = `${base}_${String(k).padStart(3, '0')}`; taken.add(t.toLowerCase()); out.push(t); }
     return out;
   }

@@ -73,7 +73,7 @@
     if (!list.length) { back.remove(); return o.toast && o.toast(`No pictures in that ${folder ? 'folder' : 'archive'}.`); }
     // (a folder's names: the file's own, its folders as tags; Microsoft's comma names as in the archive)
     const nameFor = (e) => { const nm = nameOf(e.name); if (folder) { const dirs = e.name.split('/').slice(1, -1).map((x) => x.replace(/[_-]+/g, ' ').trim().toLowerCase()).filter(Boolean); nm.tags = [...new Set([...dirs, ...nm.tags])].slice(0, 20); if (!nm.id) nm.id = e.name; } return nm; };
-    const have = new Set((await L.all()).map((it) => it.original).filter(Boolean)), kinds = {}; list.forEach((e) => { const k = (e.name.match(/\.([^.]+)$/) || [, ''])[1].toLowerCase(); kinds[k] = (kinds[k] || 0) + 1; });
+    const have = new Set((await L.facts(['original'])).map((it) => it.original).filter(Boolean)), kinds = {}; list.forEach((e) => { const k = (e.name.match(/\.([^.]+)$/) || [, ''])[1].toLowerCase(); kinds[k] = (kinds[k] || 0) + 1; });
     let running = false, stop = false, done = saved.done || 0, made = 0, skipped = 0, serverHave = null, stats = null;
     const picked = () => { const w = S.words.toLowerCase().split(/\s+/).filter(Boolean); let l = list; if (S.which === 'words' && w.length) l = l.filter((e) => w.every((x) => e.name.toLowerCase().replace(/_/g, ' ').includes(x))); return S.which === 'first' ? l.slice(0, Math.max(1, +S.first || 200)) : l; };
     const sample = list.slice(0, 4).map(nameFor);
