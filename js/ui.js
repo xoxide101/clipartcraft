@@ -126,6 +126,8 @@
     const S = (list || []).filter((it) => it && it.serverId && it.changed); if (!S.length || !serverUrl || !serverOk) return;
     sending = sending.then(async () => { try { const fresh = (await L.all()).filter((x) => S.some((y) => y.id === x.id) && x.changed); if (!fresh.length) return; const d = await L.push(fresh); toast(`Sent to the server: ${d.length === 1 ? `“${d[0].name}”` : `${d.length} pictures`}.`); if (onServer()) loadServer(); } catch (e) { toast(`Not sent yet (${e.message}): Sync sends it later.`); } });
   }
+  // Remake the thumbnail (right-click): drawn again from the picture itself (a tile showing an old picture)
+  async function remakeThumbs(S) { let n = 0; for (const it of S) { const src = it.png ? URL.createObjectURL(it.png) : it.svg ? L.svgUrl(it.svg) : null; if (!src) continue; try { const t = await L.makeItem({ name: it.name, png: it.png, svg: it.svg }); it.thumb = t.thumb; it.width = t.width; it.height = t.height; it.thumbFrom = it.serverChanged; await L.put(it); n++; } catch (e) { /* unreadable */ } } await reload(); toast(`${n} thumbnail${n === 1 ? '' : 's'} remade from the picture.`); }
   // Send to the server now (right-click): the chosen pictures sent as they are here, whatever is marked (a force update)
   async function forceSend(S) { if (!S.length) return; try { busy(`Sending ${S.length}…`); const d = await L.push(S, (k, t) => busy(`Sending ${k} of ${t}…`)); busy(); await reload(); if (onServer()) loadServer(); toast(`Sent to the server: ${d.length === 1 ? `“${d[0].name}”` : `${d.length} pictures`}.`); } catch (e) { busy(); fail(e); } }
   const keptOf = (s2) => items.find((it) => it.serverId === s2.id);
@@ -506,6 +508,7 @@
       '-', { label: 'Copy', key: 'Ctrl+C', disabled: !one, run: () => act('copy') }, { label: 'Save as PNG…', disabled: !one || !it.png, run: () => act('dl-png') }, { label: 'Save as SVG…', disabled: !one || !it.svg, run: () => act('dl-svg') },
       { label: one ? 'Export it (ZIP)…' : `Export these ${n} (ZIP)…`, run: () => act('export-sel') },
       { label: one ? 'Send it to the server now' : `Send these ${n} to the server now`, disabled: !serverUrl || !serverOk, run: () => forceSend(chosen()) },
+      { label: one ? 'Remake the thumbnail' : `Remake these ${n} thumbnails`, run: () => remakeThumbs(chosen()) },
       '-', { label: 'Select all', key: 'Ctrl+A', run: () => act('select-all') }, { label: `Delete ${them}`, key: 'Del', danger: true, run: () => act('delete') }]);
   });
   // right-click a category, a sheet or file, or a branch under one on the left: the same for all the pictures in it
