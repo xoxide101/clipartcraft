@@ -111,12 +111,14 @@
     if (!serverUrl || !serverOk) { srv.items = []; srv.total = 0; render(); return; }
     const c = cat.startsWith('#server:') ? cat.slice(8) : '', key = `${serverUrl}|${c}|${query}`; if (!more && srv.at === key && srv.items.length) return; srv.loading = true;
     try {
-      const r = await (await fetch(`${serverUrl}/api/items?limit=200&offset=${more ? srv.items.length : 0}&q=${encodeURIComponent(query.trim())}${c ? `&category=${encodeURIComponent(c)}` : ''}`)).json();
+      const r = await (await keyFetch(`${serverUrl}/api/items?limit=200&offset=${more ? srv.items.length : 0}&q=${encodeURIComponent(query.trim())}${c ? `&category=${encodeURIComponent(c)}` : ''}`)).json();
       srv.items = more ? [...srv.items, ...r.items] : r.items; srv.total = r.total; srv.at = key;
-      if (!srv.cats.length) try { srv.cats = (await (await fetch(serverUrl + '/api/categories')).json()).filter((x) => x.category); } catch (e) { /* none */ }
+      if (!srv.cats.length) try { srv.cats = (await (await keyFetch(serverUrl + '/api/categories')).json()).filter((x) => x.category); } catch (e) { /* none */ }
     } catch (e) { toast('The server’s pictures could not be read: ' + (e.message || e)); }
     srv.loading = false; render();
   }
+  // a read from the server with the key (when there is one): it shows the pictures only for me too
+  const keyFetch = async (url) => { const k = await L.serverKey(); return fetch(url, k ? { headers: { 'x-craft-key': k } } : {}); };
   const keptOf = (s2) => items.find((it) => it.serverId === s2.id);
   // one of the server's pictures copied into this browser (to touch up, or to have without the server)
   async function keepFromServer(s2) {
@@ -154,7 +156,7 @@
     if (!window.ClipArtDupes) return;
     if (onSrv) {
       if (!serverUrl || !serverOk) return toast('Connect to a server first.'); busy('Reading the server’s list…');
-      let all = []; try { for (let off = 0; ; off += 500) { const r = await (await fetch(`${serverUrl}/api/items?limit=500&offset=${off}`)).json(); all = all.concat(r.items); if (all.length >= r.total || !r.items.length) break; } } catch (e) { busy(); return fail(e); } busy();
+      let all = []; try { for (let off = 0; ; off += 500) { const r = await (await keyFetch(`${serverUrl}/api/items?limit=500&offset=${off}`)).json(); all = all.concat(r.items); if (all.length >= r.total || !r.items.length) break; } } catch (e) { busy(); return fail(e); } busy();
       return ClipArtDupes.open({ where: 'server', toast, list: all.map((x) => ({ id: x.id, name: x.name, thumb: (x.links || {}).thumb, width: x.width, height: x.height, svg: !!(x.links || {}).svg, tags: x.tags || [] })),
         tag: async (ids) => { const key = await L.serverKey(); for (const x of all.filter((y) => ids.includes(y.id))) { if ((x.tags || []).includes('duplicate')) continue; const r = await fetch(`${serverUrl}/api/items/${encodeURIComponent(x.id)}`, { method: 'PATCH', headers: { 'content-type': 'application/json', ...(key ? { 'x-craft-key': key } : {}) }, body: JSON.stringify({ tags: [...(x.tags || []), 'duplicate'] }) }); if (r.status === 403) throw new Error('the server needs its key to change pictures (Server › Connect…, the place’s Key)'); if (!r.ok) throw new Error(`the server said ${r.status}`); } srv.items = []; srv.at = ''; },
         remove: async (ids) => { const key = await L.serverKey(); for (const id of ids) { const r = await fetch(`${serverUrl}/api/items/${encodeURIComponent(id)}`, { method: 'DELETE', headers: key ? { 'x-craft-key': key } : {} }); if (r.status === 403) throw new Error('the server needs its key to remove pictures (Server › Connect…, the place’s Key)'); if (!r.ok && r.status !== 404) throw new Error(`the server said ${r.status}`); } srv.items = []; srv.at = ''; srv.total = 0; },
@@ -169,7 +171,7 @@
     let list, n = 0;
     if (onSrv) {
       if (!serverUrl || !serverOk) return toast('Connect to a server first.'); busy('Reading the server’s list…');
-      let all = []; try { for (let off = 0; ; off += 500) { const r = await (await fetch(`${serverUrl}/api/items?limit=500&offset=${off}`)).json(); all = all.concat(r.items); if (all.length >= r.total || !r.items.length) break; } } catch (e) { busy(); return fail(e); }
+      let all = []; try { for (let off = 0; ; off += 500) { const r = await (await keyFetch(`${serverUrl}/api/items?limit=500&offset=${off}`)).json(); all = all.concat(r.items); if (all.length >= r.total || !r.items.length) break; } } catch (e) { busy(); return fail(e); }
       list = all.filter((x) => (x.links || {}).svg && (x.links || {}).png).map((x) => ({ x, name: x.name, svg: async () => (await fetch(x.links.svg)).text(), png: async () => (await fetch(x.links.png)).blob() }));
     } else {
       list = (sel.size ? chosen() : items).filter((it) => it.svg && it.png).map((it) => ({ it, name: it.name, svg: async () => it.svg, png: async () => it.png }));
@@ -191,6 +193,7 @@
     } catch (e) { busy(); return fail(e); }
     busy(); await reload(); if (onSrv) loadServer(); toast(`Took away ${poor.length} SVG${poor.length === 1 ? '' : 's'}; ${list.length - poor.length} matched and stay.`);
   }
+  const LOCK = '<i class="lock" title="Only me: on the server only with your key"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" fill="currentColor"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2.4"/></svg></i>';
   function render() {
     const C = cats(); const catBtn = ([k, l, n]) => `<button type="button" class="cat" data-cat="${esc(k)}" aria-current="${cat === k}"><span>${esc(l)}</span><b>${n}</b></button>`;
     const branch = (key, label, n, kids, dim) => { const open = openTree.has(key) && kids.length; return `<div class="tree-row">${kids.length ? `<button type="button" class="tw" data-tree="${esc(key)}" aria-expanded="${!!open}" aria-label="${open ? 'Close' : 'Open'} ${esc(label)}">${open ? '▾' : '▸'}</button>` : '<span class="tw"></span>'}${catBtn([key, label, n]).replace('class="cat"', `class="cat${dim ? ' empty' : ''}"`)}</div>${open ? `<div class="tree-kids">${kids.map(([k, l, c]) => `<div class="tree-row"><span class="tw"></span>${catBtn([k, l, c])}</div>`).join('')}</div>` : ''}`; };
@@ -203,7 +206,7 @@
       + (srcs.length ? `<div class="work-head">From sheets and files</div>` + srcs.map(([k, l, n]) => branch('#src:' + k, l, n, groupBy(items.filter((it) => srcOf(it) === k), (it) => (KNOWN().includes(it.category || '') ? it.category : 'Not sorted yet')).map(([c, m]) => ['#srcat:' + k + '|' + c, c, m]))).join('') : '')
       + `<div class="work-head">Working area</div>` + catBtn(['#work', 'Files imported from', work.length]);
     const S = shown(), g = $('grid'), keepY = g.scrollTop; g.style.setProperty('--tile', size + 'px');
-    g.innerHTML = onServer() ? (srv.items.map((x) => `<button type="button" class="tile" role="option" data-srv-id="${esc(x.id)}" aria-selected="${srvSel === x.id}" title="${esc(x.name)}${x.category ? ' · ' + esc(x.category) : ''}"><span class="pic"><img src="${esc((x.links || {}).thumb || '')}" alt="" loading="lazy"></span><span class="nm">${esc(x.name)}</span>${keptOf(x) ? '<i class="used">kept</i>' : ''}${(x.links || {}).svg ? '<i class="fmt">SVG</i>' : ''}</button>`).join('') + (srv.items.length < srv.total ? `<button type="button" class="btn outline srv-more" data-srv-more>Show more (${srv.items.length} of ${srv.total})</button>` : '') || `<p class="hint" style="padding:16px">${srv.loading ? 'Asking the server…' : 'Nothing on the server matches.'}</p>`) : cat === '#work' ? S.map((w) => `<button type="button" class="tile" role="option" data-id="${w.id}" aria-selected="${sel.has(w.id)}" title="${esc(w.fileName)}"><span class="pic">${w.thumb ? `<img src="${w.thumb}" alt="" loading="lazy">` : ''}</span><span class="nm">${esc(w.name)}</span>${w.used ? `<i class="used">${w.used} made</i>` : ''}<i class="fmt">${esc((w.fileName.split('.').pop() || '').toUpperCase())}</i></button>`).join('') : S.map((it) => `<button type="button" class="tile" role="option" data-id="${it.id}" aria-selected="${sel.has(it.id)}" title="${esc(it.name)}${it.category ? ' · ' + esc(it.category) : ''}"><span class="pic"><img src="${it.thumb}" alt="" loading="lazy"></span><span class="nm">${esc(it.name)}</span>${it.anim ? '<i class="fmt">▶</i>' : it.svg ? '<i class="fmt">SVG</i>' : ''}</button>`).join('');
+    g.innerHTML = onServer() ? (srv.items.map((x) => `<button type="button" class="tile" role="option" data-srv-id="${esc(x.id)}" aria-selected="${srvSel === x.id}" title="${esc(x.name)}${x.category ? ' · ' + esc(x.category) : ''}"><span class="pic"><img src="${esc((x.links || {}).thumb || '')}" alt="" loading="lazy"></span><span class="nm">${esc(x.name)}</span>${x.privacy === 'me' ? LOCK : ''}${keptOf(x) ? '<i class="used">kept</i>' : ''}${(x.links || {}).svg ? '<i class="fmt">SVG</i>' : ''}</button>`).join('') + (srv.items.length < srv.total ? `<button type="button" class="btn outline srv-more" data-srv-more>Show more (${srv.items.length} of ${srv.total})</button>` : '') || `<p class="hint" style="padding:16px">${srv.loading ? 'Asking the server…' : 'Nothing on the server matches.'}</p>`) : cat === '#work' ? S.map((w) => `<button type="button" class="tile" role="option" data-id="${w.id}" aria-selected="${sel.has(w.id)}" title="${esc(w.fileName)}"><span class="pic">${w.thumb ? `<img src="${w.thumb}" alt="" loading="lazy">` : ''}</span><span class="nm">${esc(w.name)}</span>${w.used ? `<i class="used">${w.used} made</i>` : ''}<i class="fmt">${esc((w.fileName.split('.').pop() || '').toUpperCase())}</i></button>`).join('') : S.map((it) => `<button type="button" class="tile" role="option" data-id="${it.id}" aria-selected="${sel.has(it.id)}" title="${esc(it.name)}${it.category ? ' · ' + esc(it.category) : ''}"><span class="pic"><img src="${it.thumb}" alt="" loading="lazy"></span><span class="nm">${esc(it.name)}</span>${it.privacy === 'me' ? LOCK : ''}${it.anim ? '<i class="fmt">▶</i>' : it.svg ? '<i class="fmt">SVG</i>' : ''}</button>`).join('');
     g.scrollTop = keepY; // (redrawn in place: choosing a picture does not jump the grid)
     const showIt = startOpen || (!items.length && cat !== '#work' && !onServer()); $('start').hidden = !showIt; if (showIt) renderStart();
     renderDetails(); syncProps(); status(); lightUp(g); lightUp($('details')); if (propsBox && !propsBox.hidden) lightUp(propsBox);
@@ -215,6 +218,13 @@
       <button type="button" data-act="zip"><b>Import a library ZIP</b><small>From ImageCraft’s Split a sheet, or one exported here</small></button>
       <button type="button" data-act="folder-in"><b>Open a library folder</b><small>A folder with library.json and its pictures (backup, or shared from another computer)</small></button></div>
       <p class="hint">The library is kept in this browser and shared with every Craft app opened in it. Nothing is uploaded.</p></div>`;
+  }
+  // who can see it (Everyone / Only me), and where it came from: its source, author and licence (for several: those they share)
+  function detailsMore(S, one) {
+    const same = (k) => (new Set(S.map((x) => x[k] || '')).size === 1 ? S[0][k] || '' : ''), pv = same('privacy'), mixed = !one && new Set(S.map((x) => x.privacy || '')).size > 1;
+    const box = (k, label, ph) => `<label class="field"><span>${label}</span><input class="input" data-f="${k}" value="${esc(same(k))}" placeholder="${esc(!one && new Set(S.map((x) => x[k] || '')).size > 1 ? '(different: leave as they are)' : ph)}"></label>`;
+    return `<label class="field"><span>Who can see ${one ? 'it' : 'them'}</span><select class="input" data-f="privacy">${mixed ? '<option value="" selected>(leave as they are)</option>' : ''}<option value="everyone" ${!mixed && pv !== 'me' ? 'selected' : ''}>Everyone</option><option value="me" ${!mixed && pv === 'me' ? 'selected' : ''}>Only me (on the server: only with your key)</option></select></label>
+      <details class="names-more"${S.some((x) => x.source || x.author || x.licence) ? ' open' : ''}><summary>Where ${one ? 'it' : 'they'} came from</summary><div class="two">${box('source', 'Source', 'a site, a pack, a sheet…')}${box('author', 'Author', '')}</div>${box('licence', 'Licence', 'CC0, own work, for use with Office…')}<p class="hint">These go inside the PNG and SVG when they are sent to the server or saved in a ZIP.</p></details>`;
   }
   // a drop-down from one of the lists; a value not on the list is still shown (marked), and several chosen can be "unchanged"
   function pickField(f, label, list, value, many) {
@@ -252,6 +262,7 @@
         <div class="two"><label class="field"><span>Original name</span><input class="input" data-f="original" value="${esc(one.original || '')}"></label><label class="field"><span>Seen as <small class="hint">(the AI’s description)</small></span><input class="input" data-f="seen" value="${esc(one.seen || '')}"></label></div>
         <label class="field"><span>Matched word <small class="hint">(nearest on the lists)</small></span><input class="input" data-f="matched" value="${esc(one.matched || '')}"></label>
         <label class="field"><span>Description</span><textarea class="input" data-f="description" rows="2">${esc(one.description || '')}</textarea></label></details>` : ''}
+      ${detailsMore(S, one)}
       ${one ? dnaRow(one) : ''}
       ${one ? aiChips(one) : ''}
       <div class="btns"><button class="btn outline sm" type="button" data-act="ai-again" title="The AI looks at ${one ? 'this picture' : 'these pictures'} again: new guesses to choose from">Ask the AI${one && one.ai ? ' again' : ''}</button><button class="btn outline sm" type="button" data-act="cloud-ask" title="A cloud AI (Claude, Gemini, GPT or OpenRouter, with your own key) looks at ${one ? 'it' : 'them'}: for pictures the AI here gets wrong. Costs a little per picture">Ask a cloud AI</button><button class="btn ghost sm" type="button" data-act="edit-lists" title="Add, rename or remove categories (and the words the AI knows for each), styles and forms">Edit the lists…</button></div>
@@ -381,7 +392,9 @@
   async function onDetailsChange(e) {
     const f = e.target.dataset.f; if (!f) return; const S = chosen(), v = e.target.value.trim(); if (e.target.tagName === 'SELECT' && S.length > 1 && !v) return;
     const teachIt = S.length === 1 && S[0].vec && ['name', 'category', 'style', 'form'].includes(f);
-    for (const it of S) { if (f === 'name' && v) it.name = v; if (f === 'category') it.category = v; if (f === 'style' || f === 'form') it[f] = v; if (['original', 'seen', 'matched', 'description'].includes(f)) it[f] = e.target.value.trim(); it.checked = true; if (f === 'tags') it.tags = S.length === 1 ? v.split(',').map((t) => t.trim()).filter(Boolean) : [...new Set([...(it.tags || []), ...v.split(',').map((t) => t.trim()).filter(Boolean)])]; await L.put(it); }
+    for (const it of S) { if (f === 'name' && v) it.name = v; if (f === 'category') it.category = v; if (f === 'style' || f === 'form') it[f] = v; if (['original', 'seen', 'matched', 'description'].includes(f)) it[f] = e.target.value.trim();
+      if (['source', 'author', 'licence'].includes(f) && (S.length === 1 || v)) it[f] = v; if (f === 'privacy' && v) it.privacy = v === 'me' ? 'me' : '';
+      if (['source', 'author', 'licence', 'privacy'].includes(f) && it.serverId) it.changed = true; it.checked = true; if (f === 'tags') it.tags = S.length === 1 ? v.split(',').map((t) => t.trim()).filter(Boolean) : [...new Set([...(it.tags || []), ...v.split(',').map((t) => t.trim()).filter(Boolean)])]; await L.put(it); }
     if (teachIt) await teach(S[0]);
     await reload(); if (!teachIt && f === 'category' && v && cat !== '*' && cat !== v) toast(`Moved to “${v}”.`);
   }

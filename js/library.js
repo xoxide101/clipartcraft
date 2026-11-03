@@ -138,14 +138,42 @@
       made.push(await put(await makeItem({ name: it.name, category: it.category || category || libName, tags: it.tags || [], png: pf ? new Blob([pf.bytes], { type: /\.jpe?g$/i.test(it.png) ? 'image/jpeg' : 'image/png' }) : null, svg: sf ? new TextDecoder().decode(sf.bytes) : null, source }))); }
     return made;
   }
+
+  // ------------------------------------------------------------------ the picture's details inside its files
+  // Whenever a picture leaves this browser (sent to the server, a ZIP), its name, source, author and licence go inside the
+  // files themselves, so they travel with them: in the PNG as text (iTXt; earlier ones of the same name replaced), in the
+  // SVG as <metadata> (Dublin Core).
+  // (crc32: the ZIP writer's, above)
+  const fieldsOf = (it) => ({ Title: it.name || '', Source: it.source || '', Author: it.author || '', Copyright: it.licence || '', Description: it.description || '' });
+  async function stampPng(blob, fields) {
+    const src = new Uint8Array(await blob.arrayBuffer()); if (src.length < 33 || src[1] !== 0x50) return blob; // (not a PNG)
+    const enc = new TextEncoder(), dec = new TextDecoder(), keys = new Set(Object.keys(fields)), keep = [src.slice(0, 33)];
+    const chunk = (type, body) => { const c = new Uint8Array(12 + body.length), dv = new DataView(c.buffer), t = enc.encode(type); dv.setUint32(0, body.length); c.set(t, 4); c.set(body, 8); const both = new Uint8Array(4 + body.length); both.set(t); both.set(body, 4); dv.setUint32(8 + body.length, crc32(both)); return c; };
+    for (const [k, v] of Object.entries(fields)) if (v) keep.push(chunk('iTXt', new Uint8Array([...enc.encode(k), 0, 0, 0, 0, 0, ...enc.encode(String(v))])));
+    const dv = new DataView(src.buffer, src.byteOffset, src.byteLength);
+    for (let at = 33; at + 12 <= src.length; ) { const n = dv.getUint32(at), type = dec.decode(src.subarray(at + 4, at + 8)), end = at + 12 + n; if (end > src.length) { keep.push(src.slice(at)); break; }
+      const text = type === 'iTXt' || type === 'tEXt' || type === 'zTXt', key = text ? dec.decode(src.subarray(at + 8, at + 8 + Math.max(0, src.subarray(at + 8, end).indexOf(0)))) : '';
+      if (!(text && keys.has(key))) keep.push(src.slice(at, end)); at = end; }
+    return new Blob(keep, { type: 'image/png' });
+  }
+  const xmlEsc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  function stampSvg(svg, f) {
+    const clean = String(svg).replace(/<metadata id="craft-meta">[\s\S]*?<\/metadata>/, ''), m = clean.match(/<svg\b[^>]*>/); if (!m) return clean;
+    const dc = [['title', f.Title], ['source', f.Source], ['creator', f.Author], ['rights', f.Copyright], ['description', f.Description]].filter(([, v]) => v).map(([k, v]) => `<dc:${k}>${xmlEsc(v)}</dc:${k}>`).join('');
+    if (!dc) return clean;
+    const meta = `<metadata id="craft-meta"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:dc="http://purl.org/dc/elements/1.1/"><rdf:Description>${dc}</rdf:Description></rdf:RDF></metadata>`;
+    return clean.slice(0, m.index + m[0].length) + meta + clean.slice(m.index + m[0].length);
+  }
+  const stamped = async (it) => ({ png: it.png ? (it.png.type === 'image/png' ? await stampPng(it.png, fieldsOf(it)) : it.png) : null, svg: it.svg ? stampSvg(it.svg, fieldsOf(it)) : null });
   async function fromZip(file, opts = {}) { return fromEntries(await unzip(new Uint8Array(await file.arrayBuffer())), { source: file.name, ...opts }); }
   const safe = (s) => String(s).replace(/[\\/:*?"<>|]+/g, '-').trim() || 'item';
   async function entriesOf(items) {
     const files = [], list = [], enc = new TextEncoder(), used = new Set();
     for (const it of items) { let base = safe(it.name), k = 2; while (used.has(base.toLowerCase())) base = `${safe(it.name)} ${k++}`; used.add(base.toLowerCase());
-      const e = { name: it.name, category: it.category || '', tags: it.tags || [], width: it.width, height: it.height };
-      if (it.png) { files.push({ name: `${base}.png`, bytes: new Uint8Array(await it.png.arrayBuffer()) }); e.png = `${base}.png`; }
-      if (it.svg) { files.push({ name: `${base}.svg`, bytes: enc.encode(it.svg) }); e.svg = `${base}.svg`; }
+      const e = { name: it.name, category: it.category || '', tags: it.tags || [], width: it.width, height: it.height }, st = await stamped(it);
+      for (const k of ['source', 'author', 'licence', 'privacy', 'style', 'form', 'description']) if (it[k]) e[k] = it[k];
+      if (st.png) { files.push({ name: `${base}.png`, bytes: new Uint8Array(await st.png.arrayBuffer()) }); e.png = `${base}.png`; }
+      if (st.svg) { files.push({ name: `${base}.svg`, bytes: enc.encode(st.svg) }); e.svg = `${base}.svg`; }
       list.push(e); }
     files.push({ name: 'library.json', bytes: enc.encode(JSON.stringify({ library: 'Clip art', made: new Date().toISOString(), by: 'ClipArtCraft', items: list }, null, 2)) });
     return files;
@@ -160,7 +188,7 @@
 
   // ------------------------------------------------------------------ the clip-art server (optional)
   const b64 = (blob) => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result).replace(/^data:[^,]*,/, '')); r.onerror = () => no(r.error); r.readAsDataURL(blob); });
-  const META = ['type', 'name', 'original', 'seen', 'matched', 'category', 'style', 'form', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash'];
+  const META = ['type', 'name', 'original', 'seen', 'matched', 'category', 'style', 'form', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash', 'privacy'];
   async function server(url) { if (url !== undefined) { await meta('server', url ? String(url).trim().replace(/\/+$/, '') : ''); } return (await meta('server')) || ''; }
   async function serverKey(k) { if (k !== undefined) await meta('serverKey', k || ''); return (await meta('serverKey')) || ''; }
   async function call(path, opts = {}) { const u = await server(); if (!u) throw new Error('No clip-art server is connected.'); const k = await serverKey(); if (k) opts = { ...opts, headers: { ...(opts.headers || {}), 'x-craft-key': k } }; let r; try { r = await fetch(u + path, opts); } catch (e) { throw new Error(`The clip-art server at ${u} did not answer (is it running?).`); } const j = r.headers.get('content-type')?.includes('json') ? await r.json() : null; if (!r.ok) throw Object.assign(new Error((j && j.error) || `The server said ${r.status}.`), { status: r.status }); return j; }
@@ -178,8 +206,9 @@
     await meta('pushQueue', [...left]);
     for (const it of items) {
       const j = Object.fromEntries(META.filter((k) => it[k] !== undefined).map((k) => [k, it[k]]));
-      if (it.png) { j.png = await b64(it.png); j.pngExt = it.png.type === 'image/jpeg' ? 'jpg' : 'png'; }
-      if (it.svg) j.svg = it.svg; else if (it.noSvg && it.serverId) j.svg = null; if (it.anim) { j.anim = await b64(it.anim); j.animExt = (it.anim.type.split('/')[1] || 'gif').replace('apng', 'png'); }
+      const st = await stamped(it); if (!j.privacy) j.privacy = ''; // (its details go inside the files it sends)
+      if (st.png) { j.png = await b64(st.png); j.pngExt = it.png.type === 'image/jpeg' ? 'jpg' : 'png'; }
+      if (st.svg) j.svg = st.svg; else if (it.noSvg && it.serverId) j.svg = null; if (it.anim) { j.anim = await b64(it.anim); j.animExt = (it.anim.type.split('/')[1] || 'gif').replace('apng', 'png'); }
       if (it.thumb) { j.thumb = it.thumb.replace(/^data:[^,]*,/, ''); j.thumbExt = 'png'; }
       let s; try { s = await call(it.serverId ? '/api/items/' + it.serverId : '/api/items', { method: it.serverId ? 'PATCH' : 'POST', body: JSON.stringify(j) }); } catch (e) { if (!it.serverId || !/No such item/.test(e.message)) throw e; delete it.serverId; s = await call('/api/items', { method: 'POST', body: JSON.stringify(j) }); }
       it.serverId = s.id; it.links = s.links; it.name = s.name; it.serverChanged = s.changed; delete it.changed; await tx('items', 'readwrite', (st) => req(st.put(it))); out.push(it); progress(++n, items.length);
@@ -232,5 +261,5 @@
   async function lists(value) { return meta('lists', value); }
   // the user's corrections the AI learns from: [{ id (the picture's), vec, name, category, style, form, at }]
   async function lessons(value) { return value === undefined ? (await meta('lessons')) || [] : meta('lessons', value); }
-  window.CraftClipart = { DB, lists, lessons, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, deleteItems, deleteOnServer, sendDeletes, notHere, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip, svgMatch, traceMatched, pixelsOfItem, dropServerSvg, MATCH, svgUnits, scaleFor, svgPng, TARGET };
+  window.CraftClipart = { DB, lists, lessons, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, deleteItems, deleteOnServer, sendDeletes, notHere, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip, stampPng, stampSvg, svgMatch, traceMatched, pixelsOfItem, dropServerSvg, MATCH, svgUnits, scaleFor, svgPng, TARGET };
 })();

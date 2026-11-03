@@ -418,3 +418,4 @@ label.ed-sw input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .ed-size-card canvas { width: 150px; height: 150px; border-radius: 6px; image-rendering: pixelated; }
 .ed-size-card[aria-pressed=true] { border-color: var(--accent, #7c3aed); }
 .ed-size-card:disabled { opacity: .45; cursor: default; }
+.tile i.lock { position: absolute; top: 6px; left: 6px; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 5px; background: rgba(20, 20, 30, .75); color: #fbbf24; font-style: normal; }

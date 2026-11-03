@@ -67,7 +67,7 @@ function saveSettings(s) { try { fs.writeFileSync(SETTINGS, GUARD + JSON.stringi
 
 // ------------------------------------------------------------------ the item: what every database keeps
 // Columns are plain text and numbers so SQLite, MySQL and MariaDB hold them the same way.
-const COLS = ['id', 'type', 'name', 'original', 'seen', 'matched', 'category', 'style', 'form', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash', 'added', 'changed', 'files'];
+const COLS = ['id', 'type', 'name', 'original', 'seen', 'matched', 'category', 'style', 'form', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash', 'privacy', 'added', 'changed', 'files'];
 const FILE_KINDS = ['png', 'svg', 'anim', 'orig', 'thumb', 'model']; // the files one item may have (model: a 3D mesh)
 const TYPES = ['clipart', 'model']; // what an item is: clip art, or a 3D model (its png/thumb are pictures of it)
 const MIME = { png: 'image/png', svg: 'image/svg+xml', gif: 'image/gif', webp: 'image/webp', apng: 'image/apng', jpg: 'image/jpeg', jpeg: 'image/jpeg', avif: 'image/avif', bmp: 'image/bmp', ico: 'image/x-icon', tif: 'image/tiff', tiff: 'image/tiff', json: 'application/json', zip: 'application/zip', glb: 'model/gltf-binary', gltf: 'model/gltf+json', obj: 'model/obj', stl: 'model/stl', ply: 'application/ply', '3mf': 'model/3mf' };
@@ -87,10 +87,10 @@ async function uniqueName(db, name, id) {
 
 // ------------------------------------------------------------------ databases (drivers): sqlite, mysql/mariadb, json
 // columns added since the first version: an older database gets them when it is opened
-const ADDED = ['type VARCHAR(20)', 'style VARCHAR(40)', 'form VARCHAR(40)', 'original VARCHAR(200)', 'seen VARCHAR(200)', 'matched VARCHAR(200)'];
+const ADDED = ['type VARCHAR(20)', 'style VARCHAR(40)', 'form VARCHAR(40)', 'original VARCHAR(200)', 'seen VARCHAR(200)', 'matched VARCHAR(200)', 'privacy VARCHAR(10)'];
 const SCHEMA = (big) => `CREATE TABLE IF NOT EXISTS items (id VARCHAR(40) PRIMARY KEY, type VARCHAR(20), name VARCHAR(200) NOT NULL, original VARCHAR(200), seen VARCHAR(200), matched VARCHAR(200), category VARCHAR(200), style VARCHAR(40), form VARCHAR(40), tags ${big}, description ${big},
   kind VARCHAR(20), width INTEGER, height INTEGER, frames INTEGER, colours INTEGER, source VARCHAR(500), author VARCHAR(200), licence VARCHAR(200),
-  hash VARCHAR(64), added VARCHAR(40), changed VARCHAR(40), files ${big})`;
+  hash VARCHAR(64), privacy VARCHAR(10), added VARCHAR(40), changed VARCHAR(40), files ${big})`;
 
 function sqliteDb(dir) {
   const { DatabaseSync } = require('node:sqlite');
@@ -100,19 +100,19 @@ function sqliteDb(dir) {
   const q = (sql, ...a) => d.prepare(sql).all(...a), one = (sql, ...a) => d.prepare(sql).get(...a);
   return {
     kind: 'sqlite', where: dir, filesDir: path.join(dir, 'files'),
-    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0 } = {}) { const [w, a] = filter(text, category, type); return { total: one(`SELECT COUNT(*) n FROM items ${w}`, ...a).n, items: q(`SELECT * FROM items ${w} ORDER BY name COLLATE NOCASE LIMIT ? OFFSET ?`, ...a, +limit, +offset).map(fromRow) }; },
+    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0, all = true } = {}) { const [w, a] = filter(text, category, type, all); return { total: one(`SELECT COUNT(*) n FROM items ${w}`, ...a).n, items: q(`SELECT * FROM items ${w} ORDER BY name COLLATE NOCASE LIMIT ? OFFSET ?`, ...a, +limit, +offset).map(fromRow) }; },
     async get(id) { return fromRow(one('SELECT * FROM items WHERE id = ?', id)); },
     async byName(name) { return fromRow(one('SELECT * FROM items WHERE name = ? COLLATE NOCASE', name)); },
     async namesLike(base) { return q("SELECT id, name FROM items WHERE name = ? COLLATE NOCASE OR name LIKE ? ESCAPE '\\'", base, base.replace(/[\\%_]/g, '\\$&') + '\\_%'); },
     async put(it) { const r = toRow(it); d.prepare(`INSERT OR REPLACE INTO items (${COLS.join(',')}) VALUES (${COLS.map(() => '?').join(',')})`).run(...COLS.map((c) => r[c])); return it; },
     async remove(id) { d.prepare('DELETE FROM items WHERE id = ?').run(id); },
-    async categories() { return q("SELECT COALESCE(category, '') category, COUNT(*) n FROM items GROUP BY COALESCE(category, '') ORDER BY category"); },
+    async categories(all = true) { return q(`SELECT COALESCE(category, '') category, COUNT(*) n FROM items ${all ? '' : "WHERE COALESCE(privacy, '') <> 'me' "}GROUP BY COALESCE(category, '') ORDER BY category`); },
     async close() { d.close(); },
   };
 }
 // a search: every word must be found in the name, tags, category or description
-function filter(text, category, type) {
-  const w = [], a = []; if (type) { w.push("COALESCE(type, 'clipart') = ?"); a.push(type); } for (const word of String(text).toLowerCase().split(/\s+/).filter(Boolean)) { w.push("LOWER(CONCAT_WS(' ', name, original, seen, matched, tags, category, style, form, description)) LIKE ?"); a.push(`%${word}%`); }
+function filter(text, category, type, all = true) {
+  const w = [], a = []; if (!all) w.push("COALESCE(privacy, '') <> 'me'"); if (type) { w.push("COALESCE(type, 'clipart') = ?"); a.push(type); } for (const word of String(text).toLowerCase().split(/\s+/).filter(Boolean)) { w.push("LOWER(CONCAT_WS(' ', name, original, seen, matched, tags, category, style, form, description)) LIKE ?"); a.push(`%${word}%`); }
   if (category !== null && category !== undefined) { w.push("COALESCE(category, '') = ?"); a.push(category); }
   return [w.length ? 'WHERE ' + w.join(' AND ') : '', a];
 }
@@ -136,13 +136,13 @@ function mysqlDb(url) {
   const q = async (sql, a = []) => { await ready; return (await pool.query(sql, a))[0]; };
   return {
     kind: 'mysql', where: `${u.host}${u.pathname}`, filesDir,
-    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0 } = {}) { const [w, a] = filter(text, category, type); return { total: (await q(`SELECT COUNT(*) n FROM items ${w}`, a))[0].n, items: (await q(`SELECT * FROM items ${w} ORDER BY name LIMIT ? OFFSET ?`, [...a, +limit, +offset])).map(fromRow) }; },
+    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0, all = true } = {}) { const [w, a] = filter(text, category, type, all); return { total: (await q(`SELECT COUNT(*) n FROM items ${w}`, a))[0].n, items: (await q(`SELECT * FROM items ${w} ORDER BY name LIMIT ? OFFSET ?`, [...a, +limit, +offset])).map(fromRow) }; },
     async get(id) { return fromRow((await q('SELECT * FROM items WHERE id = ?', [id]))[0]); },
     async byName(name) { return fromRow((await q('SELECT * FROM items WHERE name = ?', [name]))[0]); },
     async namesLike(base) { return q("SELECT id, name FROM items WHERE name = ? OR name LIKE ?", [base, base.replace(/[\\%_]/g, '\\$&') + '\\_%']); },
     async put(it) { const r = toRow(it); await q(`REPLACE INTO items (${COLS.join(',')}) VALUES (${COLS.map(() => '?').join(',')})`, COLS.map((c) => r[c])); return it; },
     async remove(id) { await q('DELETE FROM items WHERE id = ?', [id]); },
-    async categories() { return q("SELECT COALESCE(category, '') category, COUNT(*) n FROM items GROUP BY COALESCE(category, '') ORDER BY category"); },
+    async categories(all = true) { return q(`SELECT COALESCE(category, '') category, COUNT(*) n FROM items ${all ? '' : "WHERE COALESCE(privacy, '') <> 'me' "}GROUP BY COALESCE(category, '') ORDER BY category`); },
     // the picture files kept in the database too (every server on it can hand them over, whichever one was sent them)
     async putBlob(item, kind, name, data) { await q('REPLACE INTO files (item, kind, name, data) VALUES (?, ?, ?, ?)', [item, kind, name, data]); },
     async getBlob(item, kind) { const r = (await q('SELECT name, data FROM files WHERE item = ? AND kind = ?', [item, kind]))[0]; return r ? { name: r.name, data: Buffer.from(r.data) } : null; },
@@ -162,13 +162,13 @@ function jsonDb(dir) {
   const save = () => fs.writeFileSync(f, JSON.stringify({ library: lib.library, made: new Date().toISOString(), by: 'Craft clip-art server', items: items.map((it) => ({ ...it, ...it.files, files: undefined })) }, null, 1));
   return {
     kind: 'json', where: dir, filesDir: dir, named: true,
-    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0 } = {}) { const words = String(text).toLowerCase().split(/\s+/).filter(Boolean), m = items.filter((it) => (category === null || category === undefined || (it.category || '') === category) && words.every((w) => [it.name, it.original, it.seen, it.matched, (it.tags || []).join(' '), it.category, it.style, it.form, it.description].join(' ').toLowerCase().includes(w))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })); return { total: m.length, items: m.slice(+offset, +offset + +limit) }; },
+    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0, all = true } = {}) { const words = String(text).toLowerCase().split(/\s+/).filter(Boolean), m = items.filter((it) => (all || it.privacy !== 'me') && (category === null || category === undefined || (it.category || '') === category) && words.every((w) => [it.name, it.original, it.seen, it.matched, (it.tags || []).join(' '), it.category, it.style, it.form, it.description].join(' ').toLowerCase().includes(w))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })); return { total: m.length, items: m.slice(+offset, +offset + +limit) }; },
     async get(id) { return items.find((it) => it.id === id); },
     async byName(name) { return items.find((it) => it.name.toLowerCase() === String(name).toLowerCase()); },
     async namesLike(base) { const b = base.toLowerCase(); return items.filter((it) => it.name.toLowerCase() === b || it.name.toLowerCase().startsWith(b + '_')); },
     async put(it) { const i = items.findIndex((x) => x.id === it.id); if (i >= 0) items[i] = it; else items.push(it); save(); return it; },
     async remove(id) { const i = items.findIndex((x) => x.id === id); if (i >= 0) items.splice(i, 1); save(); },
-    async categories() { const m = new Map(); items.forEach((it) => m.set(it.category || '', (m.get(it.category || '') || 0) + 1)); return [...m].sort().map(([category, n]) => ({ category, n })); },
+    async categories(all = true) { const m = new Map(); items.filter((it) => all || it.privacy !== 'me').forEach((it) => m.set(it.category || '', (m.get(it.category || '') || 0) + 1)); return [...m].sort().map(([category, n]) => ({ category, n })); },
     async close() { save(); },
   };
 }
@@ -277,13 +277,13 @@ async function exportZip(lib, opts = {}) {
   files.push({ name: 'library.json', bytes: Buffer.from(JSON.stringify({ library: lib.name, made: new Date().toISOString(), by: 'Craft clip-art server', items: list }, null, 1)) });
   return zip(files);
 }
-async function importEntries(lib, entries, { category } = {}) {
+async function importEntries(lib, entries, { category, privacy } = {}) {
   const by = new Map(entries.map((e) => [e.name.replace(/^.*\//, ''), e.bytes])), j = entries.find((e) => /(^|\/)library\.json$/i.test(e.name));
   let items; try { items = JSON.parse(j.bytes.toString('utf8')).items; } catch (e) { items = null; }
   if (!items) items = [...new Set(entries.filter((e) => /\.(png|jpe?g|gif|webp|svg|avif|bmp)$/i.test(e.name)).map((e) => e.name.replace(/^.*\//, '').replace(/\.[^.]+$/, '')))].map((n) => ({ name: n.replace(/[_-]+/g, ' '), png: [...by.keys()].find((k) => k.replace(/\.[^.]+$/, '') === n && !/\.svg$/i.test(k)), svg: [...by.keys()].find((k) => k === n + '.svg') }));
   const made = [];
   for (const it of items) { const pics = {}; for (const k of FILE_KINDS) if (it[k] && by.get(it[k])) { pics[k] = by.get(it[k]); pics[k + 'Ext'] = extOf(it[k]); } if (!pics.png && !pics.svg && !pics.anim && !pics.model) continue;
-    const meta = Object.fromEntries(COLS.filter((c) => it[c] !== undefined && c !== 'files' && c !== 'id').map((c) => [c, it[c]])); if (category && !meta.category) meta.category = category;
+    const meta = Object.fromEntries(COLS.filter((c) => it[c] !== undefined && c !== 'files' && c !== 'id').map((c) => [c, it[c]])); if (category && !meta.category) meta.category = category; if (privacy !== undefined) meta.privacy = privacy === 'me' ? 'me' : '';
     made.push(await lib.save(meta, pics)); }
   return made;
 }
@@ -299,8 +299,10 @@ function serve(S) {
   const closeAll = async () => { const old = [...libs.values()]; libs = new Map(); for (const l of old) try { await l.db.close(); } catch (e) { /* gone */ } };
   const base = (req) => `http://${req.headers.host}`;
   // what the API returns for an item: its fields and a real link for each picture
-  const shown = (req, lib, it) => { if (!it) return null; const L = lib.name === S.main ? '' : encodeURIComponent(lib.name) + '/', nm = encodeURIComponent(it.name), links = {};
-    for (const k of Object.keys(it.files || {})) links[k] = `${base(req)}/clipart/${L}${nm}${k === 'png' || k === 'svg' ? '' : '.' + k}.${extOf(it.files[k])}`;
+  // a picture only for me (privacy 'me'): its links carry its own pass (not the key), so whoever was given the link can open that one picture
+  const pass = (it) => crypto.createHmac('sha256', S.key || JSON.stringify(S.admin || 'craft')).update(String(it.id)).digest('hex').slice(0, 20), mine = (it) => !!it && it.privacy === 'me';
+  const shown = (req, lib, it) => { if (!it) return null; const L = lib.name === S.main ? '' : encodeURIComponent(lib.name) + '/', nm = encodeURIComponent(it.name), links = {}, t = mine(it) ? '?t=' + pass(it) : '';
+    for (const k of Object.keys(it.files || {})) links[k] = `${base(req)}/clipart/${L}${nm}${k === 'png' || k === 'svg' ? '' : '.' + k}.${extOf(it.files[k])}${t}`;
     return { ...it, files: undefined, links, library: lib.name }; };
   const body = (req) => new Promise((ok, no) => { const c = []; let n = 0; req.on('data', (d) => { n += d.length; if (n > 200e6) { no(Object.assign(new Error('Too big.'), { code: 413 })); req.destroy(); } else c.push(d); }); req.on('end', () => ok(Buffer.concat(c))); req.on('error', no); });
   const send = (res, code, data, type = 'application/json; charset=utf-8', extra = {}) => { if (data && typeof data === 'object' && !Buffer.isBuffer(data) && (data.error || data.ok === false)) res.craftError = data.error; res.writeHead(code, { 'Content-Type': type, 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'GET,POST,PATCH,PUT,DELETE,OPTIONS', 'Access-Control-Allow-Private-Network': 'true', ...extra }); res.end(Buffer.isBuffer(data) || typeof data === 'string' ? data : JSON.stringify(data)); };
@@ -342,7 +344,8 @@ function serve(S) {
       // pictures: /clipart/[library/]Name.png | Name.svg | Name.thumb.png | Name.anim.gif
       if (p[0] === 'clipart' && p.length >= 2) {
         const lib = p.length > 2 ? libOf(p[1]) : libOf(S.main), f = p[p.length - 1], m = f.match(/^(.*?)(?:\.(thumb|anim|orig|model))?\.([a-z0-9]+)$/i); if (!m) return send(res, 404, { error: 'No such picture.' });
-        const it = (await lib.db.byName(m[1])) || (await lib.db.get(m[1])), k = m[2] || (m[3].toLowerCase() === 'svg' ? 'svg' : 'png');
+        let it = (await lib.db.byName(m[1])) || (await lib.db.get(m[1])); const k = m[2] || (m[3].toLowerCase() === 'svg' ? 'svg' : 'png');
+        if (mine(it) && !mayWrite(req) && String(u.searchParams.get('t') || '') !== pass(it)) it = null;
         const b = it && ((await lib.readFileAny(it, k)) || (k === 'thumb' && (await lib.readFileAny(it, 'png')))); if (!b) return send(res, 404, { error: 'No such picture.' });
         return send(res, 200, b, MIME[extOf((it.files[k] || it.files.png))] || 'application/octet-stream', { 'Cache-Control': 'no-cache' });
       }
@@ -397,7 +400,7 @@ function serve(S) {
       if (p[1] === 'info') { const ips = S.share ? Object.values(os.networkInterfaces()).flat().filter((i) => i && i.family === 'IPv4' && !i.internal).map((i) => i.address) : [];
         return send(res, 200, { server: 'Craft clip-art server', version: VERSION, api: 1, writable: mayWrite(req), main: S.main, libraries: S.connections.map((c) => ({ name: c.name, database: c.db })),
           reach: { kind: 'node', host: os.hostname(), port: S.port, shared: !!S.share, here: base(req), addresses: [`http://localhost:${S.port}`, ...ips.map((ip) => `http://${ip}:${S.port}`)] } }); }
-      if (p[1] === 'categories') return send(res, 200, await db.categories());
+      if (p[1] === 'categories') return send(res, 200, await db.categories(mayWrite(req)));
       // a SQL copy of the library, pictures included (only this computer, or with the key)
       if (p[1] === 'export.sql') {
         if (!mayWrite(req)) return send(res, 403, { error: 'A copy of the database needs the key (on the server’s setup page).' });
@@ -405,11 +408,11 @@ function serve(S) {
         for await (const s of sqlDump(lib, sqlite)) if (!res.write(s)) await new Promise((r) => res.once('drain', r));
         return res.end();
       }
-      if (p[1] === 'export.zip') return send(res, 200, await exportZip(lib, { q: Q.q, category: Q.category, type: Q.type }), 'application/zip', { 'Content-Disposition': `attachment; filename="${slug(lib.name)} clip art.zip"` });
-      if (p[1] === 'import' && req.method === 'POST') { const made = await importEntries(lib, unzip(await body(req)), { category: Q.category }); return send(res, 200, { added: made.length, items: made.map((it) => shown(req, lib, it)) }); }
+      if (p[1] === 'export.zip') return send(res, 200, await exportZip(lib, { q: Q.q, category: Q.category, type: Q.type, all: mayWrite(req) }), 'application/zip', { 'Content-Disposition': `attachment; filename="${slug(lib.name)} clip art.zip"` });
+      if (p[1] === 'import' && req.method === 'POST') { const made = await importEntries(lib, unzip(await body(req)), { category: Q.category, privacy: Q.privacy }); return send(res, 200, { added: made.length, items: made.map((it) => shown(req, lib, it)) }); }
       if (p[1] === 'items') {
         const id = p[2];
-        if (!id && req.method === 'GET') { const r = await db.list({ q: Q.q || '', category: Q.category, type: Q.type, limit: Math.min(+Q.limit || 200, 5000), offset: +Q.offset || 0 }); return send(res, 200, { total: r.total, items: r.items.map((it) => shown(req, lib, it)) }); }
+        if (!id && req.method === 'GET') { const r = await db.list({ q: Q.q || '', category: Q.category, type: Q.type, limit: Math.min(+Q.limit || 200, 5000), offset: +Q.offset || 0, all: mayWrite(req) }); return send(res, 200, { total: r.total, items: r.items.map((it) => shown(req, lib, it)) }); }
         // POST: a new item (or PATCH an old one) as JSON; pictures inside as base64: { png: 'base64', pngExt: 'png', svg: '<svg…' }
         if ((!id && req.method === 'POST') || (id && req.method === 'PATCH')) {
           const j = JSON.parse((await body(req)).toString('utf8') || '{}'), pics = {};
@@ -418,7 +421,7 @@ function serve(S) {
           return send(res, id ? 200 : 201, shown(req, lib, await lib.save({ ...j, id: id || j.id }, pics)));
         }
         if (id && p[3] && req.method === 'PUT') { const it = await db.get(id); if (!it) return send(res, 404, { error: 'No such item.' }); return send(res, 200, shown(req, lib, await lib.save({ id }, { [p[3]]: await body(req), [p[3] + 'Ext']: Q.ext || (p[3] === 'svg' ? 'svg' : 'png') }))); }
-        if (id && req.method === 'GET') { const it = (await db.get(id)) || (await db.byName(id)); return it ? send(res, 200, shown(req, lib, it)) : send(res, 404, { error: 'No such item.' }); }
+        if (id && req.method === 'GET') { let it = (await db.get(id)) || (await db.byName(id)); if (mine(it) && !mayWrite(req)) it = null; return it ? send(res, 200, shown(req, lib, it)) : send(res, 404, { error: 'No such item.' }); }
         if (id && req.method === 'DELETE') return (await lib.remove(id)) ? send(res, 200, { deleted: id }) : send(res, 404, { error: 'No such item.' });
       }
       send(res, 404, { error: 'Not found.' });

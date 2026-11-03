@@ -256,8 +256,8 @@
   }
   // ------------------------------------------------------------------ the slicer window
   const S = { combine: true, mode: 'find', gap: 0, min: 0.2, pad: 6, see: true, rows: 3, cols: 3, inset: 0, cut: true, tol: 16, edges: { t: 'auto', b: 'auto', l: 'auto', r: 'auto' }, roomPx: 2, view: 'result', names: '', category: '', svg: true, autoread: true, quick: false, touch: { shape: 'box', op: 'keep', side: 'in' }, showNames: true, showBoxes: true };
-  try { Object.assign(S, JSON.parse(localStorage.getItem('clipartcraft-slicer') || '{}'), { names: '', category: '', notext: false }); } catch (e) { /* blocked storage */ }
-  const keep = () => { try { const { names, category, notext, ...rest } = S; localStorage.setItem('clipartcraft-slicer', JSON.stringify(rest)); } catch (e) { /* blocked */ } };
+  try { Object.assign(S, JSON.parse(localStorage.getItem('clipartcraft-slicer') || '{}'), { names: '', category: '', notext: false, source: '', author: '', licence: '' }); } catch (e) { /* blocked storage */ }
+  const keep = () => { try { const { names, category, notext, source, author, licence, ...rest } = S; localStorage.setItem('clipartcraft-slicer', JSON.stringify(rest)); } catch (e) { /* blocked */ } };
   let sheetFile = null, sheet = null, sheetName = '', found = null, boxes = [], skip = new Set(), el = null, timer = 0, opts = {};
   // Per sheet, in the sheet's pixels: the main area (only it is cut; null = all of it), parts ruled out, the table found,
   // rows and columns left out, their names (row labels, column headings), captions read, and boxes moved by hand
@@ -361,6 +361,9 @@
       <div id="sl-names"></div>
       <div class="field"><span>Names, in order <small class="hint">(one per line or with commas; these come first)</small></span><textarea class="input" rows="4" data-k="names" placeholder="Barn, Bible, Buffalo…">${esc(S.names)}</textarea></div>
       ${field('Category', `<input class="input" data-k="category" list="sl-cats" value="${esc(S.category)}" placeholder="Empty: sorted by the AI"><datalist id="sl-cats">${cats}</datalist>`)}
+      ${field('Who can see them', `<select class="input" data-k="privacy"><option value="" ${S.privacy !== 'me' ? 'selected' : ''}>Everyone</option><option value="me" ${S.privacy === 'me' ? 'selected' : ''}>Only me (on the server: only with your key)</option></select>`)}
+      <div class="two">${field('Source', `<input class="input" data-k="source" value="${esc(S.source || '')}" placeholder="the sheet">`)}${field('Author', `<input class="input" data-k="author" value="${esc(S.author || '')}">`)}</div>
+      ${field('Licence', `<input class="input" data-k="licence" value="${esc(S.licence || '')}" placeholder="CC0, own work…">`)}
       <p class="hint">Each picture is added as PNG and SVG: ${svgSheet ? 'this sheet is an SVG, so each is cut out of the drawing itself' : 'the SVG is traced from the picture'}.</p>
       <p class="hint" id="sl-count"></p>
       ${chk('quick', 'Add straight away when nothing looks wrong (no review)')}
@@ -866,7 +869,8 @@
         const mt = r.meta || {}, raw = r.img.svg ? (await L.svgPng(r.img.svg)).blob : await new Promise((ok) => canvasOf(r.img).toBlob(ok, 'image/png')), png = await pngText(raw, { Title: r.name.trim(), Description: mt.description || '', Keywords: (r.tags || []).join(', '), Source: `${sheetName}${mt.where ? ` (${mt.where})` : ''}`, Collection: mt.title || '', Software: 'ClipArtCraft Montage Slicer' }); let svg = null;
         if (r.img.svg) svg = r.img.svg; else if (svgSheet && r.img.at) { try { svg = svgCut(svgSheet, { ...r.img.at, x: r.img.at.x + wx, y: r.img.at.y + wy }); } catch (e) { console.warn('Cutting the SVG failed', r.name, e); } }
         if (!svg && window.CRAFT_RASTERTRACE) svg = (await CraftClipart.traceMatched(r.img)).svg;
-        const it = await L.makeItem({ name: r.name.trim() || 'Clip art', category, tags: r.tags || [], png, svg, source: 'Montage Slicer: ' + sheetName }); if (src) it.sheet = src.id;
+        const it = await L.makeItem({ name: r.name.trim() || 'Clip art', category, tags: r.tags || [], png, svg, source: (S.source || '').trim() || 'Montage Slicer: ' + sheetName }); if (src) it.sheet = src.id;
+        Object.assign(it, { privacy: S.privacy === 'me' ? 'me' : '', author: (S.author || '').trim(), licence: (S.licence || '').trim() });
         // what the sheet said: kept as the picture's own information (the AI's sorting fills in only what is missing)
         if (mt.style) it.style = mt.style; if (mt.description) it.description = mt.description; if (mt.title) it.collection = mt.title; if (mt.where) it.place = mt.where;
         if (mt.subject) { it.original = mt.subject; it.seen = mt.subject; } if (mt.fromSheet) it.checked = true;

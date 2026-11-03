@@ -12,7 +12,7 @@
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const S = { naming: 'smart', base: '', category: '', bwInk: true, animKeep: true, skipCopies: true, keepSources: true, alsoServer: false, svg: 'auto', view: 'checker' };
   try { Object.assign(S, JSON.parse(localStorage.getItem('clipartcraft-import-2') || '{}'), { base: '', category: '' }); } catch (e) { /* blocked */ }
-  const keep = () => { try { const { base, category, ...rest } = S; localStorage.setItem('clipartcraft-import-2', JSON.stringify(rest)); } catch (e) { /* blocked */ } };
+  const keep = () => { try { const { base, category, source, author, licence, ...rest } = S; localStorage.setItem('clipartcraft-import-2', JSON.stringify(rest)); } catch (e) { /* blocked */ } };
   let el = null, opts = {}, pages = [], files = [], cur = -1, busy = false, libHashes = null, aiState = '';
 
   // ------------------------------------------------------------------ pictures
@@ -189,6 +189,9 @@
       ${S.naming === 'base' ? `<label class="field"><span>Name <small class="hint">(the same names get _002, _003…)</small></span><input class="input" data-s="base" value="${esc(S.base)}" placeholder="Cat"></label>` : ''}
       ${S.naming === 'ai' || S.naming === 'smart' ? `<p class="hint">${S.naming === 'smart' ? 'A file name with real words is kept; pictures called IMG_2041 and the like are named by what is in them. ' : ''}${aiState === 'done' ? 'Each has a category, style, form and tags from the AI. Change any you like.' : aiState ? esc(aiState) : `The AI looks at each picture in this browser (nothing is uploaded). The first time it downloads about ${N() ? N().MB : 150} MB, then works offline.`}</p>` : '<p class="hint">Names that are the same get _002, _003… on the end.</p>'}
       <label class="field"><span>Category</span><input class="input" data-s="category" list="imp-cats" value="${esc(S.category)}" placeholder="${S.naming === 'ai' ? 'Each its own (from the AI)' : 'Animals, Holidays…'}"><datalist id="imp-cats">${cats}</datalist></label>
+      <label class="field"><span>Who can see them</span><select class="input" data-s="privacy"><option value="" ${S.privacy !== 'me' ? 'selected' : ''}>Everyone</option><option value="me" ${S.privacy === 'me' ? 'selected' : ''}>Only me (on the server: only with your key)</option></select></label>
+      <div class="two"><label class="field"><span>Source</span><input class="input" data-s="source" value="${esc(S.source || '')}" placeholder="the file’s name"></label><label class="field"><span>Author</span><input class="input" data-s="author" value="${esc(S.author || '')}"></label></div>
+      <label class="field"><span>Licence</span><input class="input" data-s="licence" value="${esc(S.licence || '')}" placeholder="CC0, own work, for use with Office…"></label>
       <label class="check"><input type="checkbox" data-s="bwInk" ${S.bwInk ? 'checked' : ''}> Black-and-white pictures: ink only (white paper see-through)</label>
       <label class="check"><input type="checkbox" data-s="animKeep" ${S.animKeep ? 'checked' : ''}> Animations stay moving (off: each frame its own picture)</label>
       <label class="check"><input type="checkbox" data-s="skipCopies" ${S.skipCopies ? 'checked' : ''}> Leave out copies of pictures already in the library</label>
@@ -239,12 +242,12 @@
   }
   function onInput(e) {
     const s = e.target.dataset.s, k = e.target.dataset.p, p = P();
-    if (s === 'base' || s === 'category') { S[s] = e.target.value; if (s === 'base') renderStrip(); status(); }
+    if (['base', 'category', 'source', 'author', 'licence'].includes(s)) { S[s] = e.target.value; if (s === 'base') renderStrip(); status(); }
     if (k === 'name' && p) { p.name = e.target.value; p.typed = !!e.target.value.trim(); renderCard(p); }
   }
   async function onChange(e) {
     const s = e.target.dataset.s, k = e.target.dataset.p, p = P();
-    if (s && s !== 'base' && s !== 'category') { S[s] = e.target.type === 'checkbox' ? e.target.checked : e.target.value; keep();
+    if (s && !['base', 'category', 'source', 'author', 'licence'].includes(s)) { S[s] = e.target.type === 'checkbox' ? e.target.checked : e.target.value; keep();
       if (s === 'skipCopies') pages.forEach((q) => { if (q.dup) q.include = !S.skipCopies; });
       if (s === 'bwInk') pages.forEach((q) => { q.hash = null; });
       if (s === 'animKeep') opts.toast && opts.toast('Takes effect for files added from now on.');
@@ -286,7 +289,8 @@
         const img = result(p), png = await blobOf(img), drawing = p.style !== 'photo' && (p.kind !== 'colour' || p.style || (F().countColours ? F().countColours(img, 4096) <= 4096 : true));
         let svg = !p.crop && !p.rot && !p.flip && p.mode === 'auto' ? p.svgText : null;
         if (!svg && (S.svg === 'always' || (S.svg === 'auto' && drawing)) && window.CRAFT_RASTERTRACE && img.width * img.height <= 4e6) svg = (await L.traceMatched(img)).svg;
-        const it = await L.makeItem({ name: names[i], category: S.category.trim() || p.category || '', tags: p.tags, png, svg, source: files[p.file].name });
+        const it = await L.makeItem({ name: names[i], category: S.category.trim() || p.category || '', tags: p.tags, png, svg, source: (S.source || '').trim() || files[p.file].name });
+        Object.assign(it, { privacy: S.privacy === 'me' ? 'me' : '', author: (S.author || '').trim(), licence: (S.licence || '').trim() });
         Object.assign(it, { type: 'clipart', style: p.style || '', form: p.form || '', kind: /^ink/.test(modeName(p)) ? 'bw' : p.kind, hash: p.hash || hashOf(img) });
         if (p.anim) { it.anim = p.anim.blob; it.frames = p.anim.frames; }
         if (srcOf.has(p.file)) it.sheet = srcOf.get(p.file).id;
