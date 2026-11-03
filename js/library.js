@@ -234,6 +234,13 @@
   async function pull(progress = () => {}, opts = {}) { return guard(() => pullNow(progress, opts)); }
   // why a picture came down again: its picture (PNG), its drawing (SVG) or its details changed on the server
   const DETAIL = ['name', 'category', 'style', 'form', 'description', 'source', 'author', 'licence', 'privacy'];
+  async function files(it) {
+    if (!it || !it.remote) return it; const l = it.links || {};
+    const get = async (u, text) => { if (!u) return null; const r = await fetch(u); if (!r.ok) throw new Error(`The server could not hand over “${it.name}” (${r.status}).`); return text ? r.text() : r.blob(); };
+    const png = await get(l.png), svg = await get(l.svg, true), anim = await get(l.anim); if (!png && !svg) throw new Error(`“${it.name}” has no picture on the server.`);
+    Object.assign(it, { png, svg, anim, remote: false }); try { const t = await thumbOf(png ? URL.createObjectURL(png) : svgUrl(svg)); it.thumb = t.thumb; it.width = t.width; it.height = t.height; } catch (e) { /* the server's thumbnail stays */ }
+    await tx('items', 'readwrite', (st) => req(st.put(it))); return it;
+  }
   async function whyOf(old, s, png, svg) {
     const w = [];
     try { if (!!old.png !== !!png || (png && (await coreSum(old.png, 'png')) !== (await coreSum(png, 'png')))) w.push('picture changed'); } catch (e) { /* unreadable */ }
@@ -256,6 +263,12 @@
         try { const t = await thumbOf(png ? URL.createObjectURL(png) : svgUrl(svg)); it.thumb = t.thumb; it.width = t.width; it.height = t.height; it.thumbFrom = s.changed; } /* (always: a newer picture needs its own thumbnail) */ catch (e) { missing.push(s.name); return; }
         await tx('items', 'readwrite', (st) => req(st.put(it))); made.push(it); if (old) updated.push(it);
     };
+    // its data only: details, links and the server's thumbnail (a link), no files; they come when it is used (files())
+    const datas = []; const note = (s, old) => {
+      const it = old || { id: uid(), added: s.added || new Date().toISOString() };
+      Object.assign(it, Object.fromEntries(META.map((k) => [k, s[k] ?? it[k] ?? (k === 'tags' ? [] : NUMS.includes(k) ? null : '')])), { serverId: s.id, links: s.links, serverChanged: s.changed, source: s.source || it.source || 'clip-art server', remote: true, thumb: s.links.thumb || s.links.png || s.links.svg || '', thumbFrom: s.changed });
+      delete it.changed; datas.push(it); made.push(it); if (old) updated.push(it); return it;
+    };
     const fresh = []; let leftNew = 0, newestSeen = '';
     for (let off = 0; ; off += 500) {
       const r = await call(`/api/items?limit=500&offset=${off}&q=${encodeURIComponent(q)}${category !== undefined ? '&category=' + encodeURIComponent(category) : ''}${since ? '&since=' + encodeURIComponent(since) : ''}`); total = r.total; if (!r.items.length) break;
@@ -265,13 +278,16 @@
         if (!old && (skip.has(s.id) || gone.has(s.id))) continue;
         // changed here and on the server too: the newer one wins (a change here older than the server's copy gives way)
         if (old && old.changed && Date.parse(old.edited || old.added || 0) >= Date.parse(s.changed || 0)) continue;
-        if (!old) { fresh.push(s); continue; } // (new ones: brought down after, and only when there are a few)
-        await take(s, old);
+        if (!old) { fresh.push(s); continue; }
+        // (a picture here as data only: its data again; one here with its files: those again too)
+        if (old.remote) { old.why = await whyOf(old, s, null, null); note(s, old); } else await take(s, old);
       }
     }
     // new on the server: brought down only when they are few (a big collection there, an archive of thousands, is browsed
     // on the server a page at a time: brought into this browser it would be too much for the page)
-    if (fresh.length <= newMax) { for (const s of fresh) await take(s, null); } else leftNew = fresh.length;
+    for (const s of fresh) note(s, null).why = 'new on the server (its details; the picture comes when it is used)';
+    // (the data saved a few hundred to a transaction: thousands, one by one, would take minutes)
+    for (let i = 0; i < datas.length; i += 500) { const part = datas.slice(i, i + 500); await tx('items', 'readwrite', (st) => Promise.all(part.map((x) => req(st.put(x))))); }
     // (a whole pull: pictures here that the server had but no longer has were deleted there, from another machine: they go here too)
     const removed = []; if (!q && !since && category === undefined && seen.size === total) { for (const [sid, it] of here) if (!seen.has(sid)) removed.push(it); if (removed.length) await remove(removed.map((it) => it.id)); }
     changed(); return { made, updated, thumbs, total, missing, removed, leftNew, newest: newestSeen };
@@ -301,5 +317,5 @@
   async function lessons(value) { return value === undefined ? (await meta('lessons')) || [] : meta('lessons', value); }
   // the original IDs of every picture on the server (a big archive skips those it has), read a page of 5,000 at a time
   async function serverOriginals() { const out = new Set(); for (let off = 0; ; off += 5000) { const r = await call(`/api/items?limit=5000&offset=${off}`); r.items.forEach((x) => x.original && out.add(x.original)); if (!r.items.length || off + r.items.length >= r.total) break; } return out; }
-  window.CraftClipart = { serverOriginals, tell: () => changed(), zip, DB, lists, lessons, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, deleteItems, deleteOnServer, sendDeletes, notHere, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip, stampPng, stampSvg, coreSum, sumsOf, svgMatch, traceMatched, pixelsOfItem, dropServerSvg, MATCH, svgUnits, scaleFor, svgPng, TARGET };
+  window.CraftClipart = { files, serverOriginals, tell: () => changed(), zip, DB, lists, lessons, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, deleteItems, deleteOnServer, sendDeletes, notHere, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip, stampPng, stampSvg, coreSum, sumsOf, svgMatch, traceMatched, pixelsOfItem, dropServerSvg, MATCH, svgUnits, scaleFor, svgPng, TARGET };
 })();

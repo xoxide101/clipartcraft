@@ -55,7 +55,7 @@
       const taken = new Set(items.map((it) => it.name.toLowerCase())); let n = 0;
       for (const it of list) {
         busy(`Sorting ${++n} of ${list.length}: ${it.name}…`);
-        let src; try { src = it.png ? await createImageBitmap(it.png) : await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = L.svgUrl(it.svg); }); } catch (e) { continue; }
+        let src; try { src = it.png ? await createImageBitmap(it.png) : !it.svg && it.thumb ? await createImageBitmap(await (await fetch(it.thumb)).blob()) : await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = L.svgUrl(it.svg); }); } catch (e) { continue; }
         const c = document.createElement('canvas'); c.width = src.width || 224; c.height = src.height || 224; c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
         const t0 = performance.now(), lessons = await L.lessons(), ai = window.CraftKeys ? await CraftKeys.track('local', () => N.name(c, { lessons, describe: describeOn() })) : await N.name(c, { lessons, describe: describeOn() }); it.ai = ai.words; it.vec = ai.vec; if (ai.description) it.description = ai.description;
         if (window.CraftKeys) CraftKeys.activity('local', { what: `Sort “${it.name}”`, model: describeOn() ? 'CLIP + Florence-2 (this computer)' : 'CLIP (this computer)', ms: Math.round(performance.now() - t0), came: `${ai.name} · ${ai.category}${ai.description ? ' · “' + ai.description + '”' : ''}` });
@@ -364,7 +364,7 @@
     if (!S.length) { d.innerHTML = `<div class="props-head">Library</div><div class="sec"><p class="hint"><b>${items.length}</b> item${items.length === 1 ? '' : 's'} in ${cats().length} categor${cats().length === 1 ? 'y' : 'ies'}.</p><p class="hint">Click a picture to see it and name it; Ctrl-click or Shift-click picks several (to give them a category together).</p><button class="btn ghost sm" type="button" data-act="edit-lists">Edit the lists…</button></div>`; return; }
     const one = S.length === 1 ? S[0] : null, catList = [...new Set([...KNOWN(), ...cats().map(([c]) => c).filter(Boolean)])];
     d.innerHTML = `<div class="props-head">${one ? 'Clip art' : `${S.length} chosen`}</div><div class="sec">
-      ${one ? `<div class="big check-bg"><img src="${one.anim ? URL.createObjectURL(one.anim) : one.svg ? L.svgUrl(one.svg) : URL.createObjectURL(one.png)}" alt=""></div>
+      ${one ? `<div class="big check-bg"><img src="${esc(one.anim ? URL.createObjectURL(one.anim) : one.svg ? L.svgUrl(one.svg) : one.png ? URL.createObjectURL(one.png) : (one.links || {}).png || (one.links || {}).svg || one.thumb || '')}" alt=""></div>${one.remote ? '<p class="hint">Its details are here; the picture itself is on the server and comes when it is used.</p>' : ''}
       ${fileChips(one)}
       <label class="field"><span>Name</span><input class="input" data-f="name" value="${esc(one.name)}"></label>` : `<div class="many">${S.slice(0, 12).map((it) => `<img src="${it.thumb}" alt="">`).join('')}</div>`}
       ${pickField('category', 'Category', KNOWN(), one ? one.category : (new Set(S.map((x) => x.category)).size === 1 ? S[0].category : ''), !one)}
@@ -380,7 +380,7 @@
       <div class="btns"><button class="btn outline sm" type="button" data-act="ai-again" title="The AI looks at ${one ? 'this picture' : 'these pictures'} again: new guesses to choose from">Ask the AI${one && one.ai ? ' again' : ''}</button><button class="btn outline sm" type="button" data-act="cloud-ask" title="A cloud AI (Claude, Gemini, GPT or OpenRouter, with your own key) looks at ${one ? 'it' : 'them'}: for pictures the AI here gets wrong. Costs a little per picture">Ask a cloud AI</button><button class="btn ghost sm" type="button" data-act="edit-lists" title="Add, rename or remove categories (and the words the AI knows for each), styles and forms">Edit the lists…</button></div>
       <label class="field"><span>Tags <small class="hint">(separated by commas)</small></span><input class="input" data-f="tags" value="${esc(one ? (one.tags || []).join(', ') : '')}" placeholder="${one ? 'farm, red, barn' : 'added to each'}"></label>
       ${one ? `<p class="hint">${one.width} × ${one.height} pixels · ${[one.png ? 'PNG' : '', one.svg ? 'SVG' : '', one.anim ? `moving (${one.frames || '?'} frames)` : ''].filter(Boolean).join(', ')}${one.kind === 'bw' ? ' · black and white' : one.kind === 'grey' ? ' · grey' : ''}${one.source ? ` · from ${esc(one.source)}` : ''}${one.cloud ? ` · named by ${esc(one.cloud)}` : ''}</p>
-      ${one.png ? `<div class="btns"><button class="btn primary" type="button" data-act="touchup" title="Fix it by hand: erase or restore with a box, ellipse or lasso, brushes, a magic wand, and clean-ups for specks, holes and halos">Touch up…</button>${one.pngFirst ? '<span class="hint">touched up</span>' : ''}</div>` : ''}
+      ${one.png || (one.remote && (one.links || {}).png) ? `<div class="btns"><button class="btn primary" type="button" data-act="touchup" title="Fix it by hand: erase or restore with a box, ellipse or lasso, brushes, a magic wand, and clean-ups for specks, holes and halos">Touch up…</button>${one.pngFirst ? '<span class="hint">touched up</span>' : ''}</div>` : ''}
       <div class="btns">${one.png ? '<button class="btn outline" type="button" data-act="dl-png">PNG</button>' : ''}${one.anim ? '<button class="btn outline" type="button" data-act="dl-anim">Animation</button>' : ''}${one.svg ? '<button class="btn outline" type="button" data-act="dl-svg">SVG</button>' : ''}<button class="btn outline" type="button" data-act="copy">Copy</button></div>` : ''}
       <div class="btns"><button class="btn outline" type="button" data-act="export-sel">Export ${one ? 'it' : 'these'} (ZIP)</button><button class="btn outline danger" type="button" data-act="delete">Delete</button></div></div>`;
     if (one) idLineFill();
@@ -424,7 +424,11 @@
   const rootOf = (fs) => { const r = (fs[0] && fs[0].webkitRelativePath || '').split('/')[0]; return r || `${fs.length.toLocaleString()} pictures`; };
   function bigImport(files, name, after) { if (!window.ClipArtArchive) return; ClipArtArchive.open({ folder: name || rootOf(files), files }, { toast, categories: KNOWN(), server: !!serverUrl && serverOk, done: async (n, where) => { await reload(); if (after) await after(); if (where === 'server') { cat = '#server'; render(); loadServer(); } else { cat = '*'; render(); } toast(`${n.toLocaleString()} pictures added${where === 'server' ? ' to the server' : ''}.`); } }); }
   const importer = (files) => (files.length > 300 ? bigImport(files) : window.ClipArtImporter.open({ files, big: (fs) => bigImport(fs), toast, server: !!serverUrl && serverOk, categories: KNOWN(), done: async (made) => { setTimeout(() => sortNew(made), 0); await reload(); offerResume(); cat = '*'; sel = new Set(made.map((m) => m.id)); render(); toast(`${made.length} picture${made.length === 1 ? '' : 's'} added to the library.`); } }));
+  // a picture known here by its data only: its files fetched before anything that needs them (and kept from then on)
+  const NEEDS = new Set(['touchup', 'dl-png', 'dl-svg', 'dl-anim', 'export-sel', 'copy', 'svg-check']);
+  async function withFiles(S) { const far = S.filter((it) => it.remote); if (!far.length) return S; for (let i = 0; i < far.length; i++) { busy(`Getting the picture${far.length > 1 ? `s: ${i + 1} of ${far.length}` : ''}…`); try { await L.files(far[i]); } catch (e) { busy(); toast(e.message); throw Object.assign(e, { quiet: true }); } } busy(); return S; }
   async function act(a) {
+    if (NEEDS.has(a)) await withFiles(chosen());
     try {
       if (a === 'ai-again') { const S = chosen(); if (!S.length) return; if (!(await aiOk())) return; await sortWithAI(S, { again: true }); await reload(); return; }
       if (a === 'edit-lists') return editLists();
@@ -964,6 +968,9 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     // the drawing being edited: shown again (another picture chosen: asked about its changes first)
     const V = window.ClipArtVector; if (V && V.item()) { if (!it || it.id === V.item().id) { touchEmpty.hidden = true; V.show(); return; } if (V.changed() && !(await ask('Changes not saved', `The drawing of “${esc(V.item().name)}” has changes not saved. Leave them?`, [{ label: 'Leave them', value: 'go' }, { label: 'Cancel', value: null, primary: true }]))) { V.show(); return; } V.close(); }
     if (open && (!it || it.id === open.id)) { touchEmpty.hidden = true; E.show(); return; }
+    if (it && it.remote) { try { await withFiles([it]); } catch (e) { return; } }
+    // an SVG only (Microsoft's archive is all SVG): a PNG drawn from it at a whole scale to touch up (Edit the drawing works on the SVG)
+    if (it && !it.png && it.svg) { busy('Drawing a PNG from its SVG…'); try { const pg = await L.svgPng(it.svg); it.png = pg.blob; await L.put(it, true); } catch (e) { /* stays an SVG only */ } busy(); }
     if (!it || !it.png) { touchEmpty.querySelector('p').textContent = it ? 'Only pictures (PNG) can be touched up: this one is an SVG only.' : 'Choose a picture on the Home tab first (or double-click one: it opens here).'; touchEmpty.hidden = false; return; }
     if (open && E.changed() && !(await saveFirst())) { touchEmpty.hidden = true; E.show(); return; }
     touchEmpty.hidden = true; touchSet = makeTouchSet(); await E.open(it, touchOpts());
@@ -1039,7 +1046,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
       const taken = new Set(items.map((it) => it.name.toLowerCase())); let n = 0, done = 0;
       for (const it of list) {
         busy(`Asking ${C.NAMES[C.provider()]}: ${++n} of ${list.length}, ${it.name}…`);
-        let src; try { src = it.png ? await createImageBitmap(it.png) : await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = L.svgUrl(it.svg); }); } catch (e) { continue; }
+        let src; try { src = it.png ? await createImageBitmap(it.png) : !it.svg && it.thumb ? await createImageBitmap(await (await fetch(it.thumb)).blob()) : await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = L.svgUrl(it.svg); }); } catch (e) { continue; }
         const c = document.createElement('canvas'); c.width = src.width || 512; c.height = src.height || 512; c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
         let a; try { a = await C.look(c, lists); } catch (e) { busy(); if (!done) throw e; toast(`${done} done, then: ${e.message}`); return done; }
         if (!it.original) it.original = it.name;
