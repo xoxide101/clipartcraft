@@ -448,3 +448,5 @@ label.ed-sw input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .resume ul { max-height: 240px; overflow: auto; margin: 0; padding: 0; list-style: none; }
 .resume li { display: flex; gap: 8px; align-items: center; min-width: 0; }
 .resume li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pagebar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; gap: 12px; padding: 6px 0; }
+.pagebar .input { width: 72px; height: 28px; padding: 2px 6px; text-align: center; }

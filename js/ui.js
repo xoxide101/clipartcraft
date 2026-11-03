@@ -109,10 +109,10 @@
   const onServer = () => cat === '#server' || cat.startsWith('#server:');
   async function loadServer(more) {
     if (!serverUrl || !serverOk) { srv.items = []; srv.total = 0; render(); return; }
-    const c = cat.startsWith('#server:') ? cat.slice(8) : '', key = `${serverUrl}|${c}|${query}`; if (!more && srv.at === key && srv.items.length) return; srv.loading = true;
+    const c = cat.startsWith('#server:') ? cat.slice(8) : '', base = `${serverUrl}|${c}|${query}`; if (srv.base !== base) { srv.base = base; page = 0; } const key = `${base}|${page}`; if (!more && srv.at === key && srv.items.length) return; srv.loading = true;
     try {
-      const r = await (await keyFetch(`${serverUrl}/api/items?limit=200&offset=${more ? srv.items.length : 0}&q=${encodeURIComponent(query.trim())}${c ? `&category=${encodeURIComponent(c)}` : ''}`)).json();
-      srv.items = more ? [...srv.items, ...r.items] : r.items; srv.total = r.total; srv.at = key;
+      const r = await (await keyFetch(`${serverUrl}/api/items?limit=${PAGE}&offset=${page * PAGE}&q=${encodeURIComponent(query.trim())}${c ? `&category=${encodeURIComponent(c)}` : ''}`)).json();
+      srv.items = r.items; srv.total = r.total; srv.at = key;
       if (!srv.cats.length) try { srv.cats = (await (await keyFetch(serverUrl + '/api/categories')).json()).filter((x) => x.category); } catch (e) { /* none */ }
     } catch (e) { toast('The server’s pictures could not be read: ' + (e.message || e)); }
     srv.loading = false; render();
@@ -258,12 +258,17 @@
     busy(); await reload(); sendNow(S); toast(kind === 'svg' ? `${n} SVG${n === 1 ? '' : 's'} added${no ? `; ${no} did not match their picture (kept as PNG only)` : ''}.` : `${n} PNG${n === 1 ? '' : 's'} drawn again from the SVG${no ? `; ${no} failed` : ''}.`);
   }
   const LOCK = '<i class="lock" title="Only me: on the server only with your key"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" fill="currentColor"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2.4"/></svg></i>';
-  // the grid draws so many tiles at a time (thousands at once would be too much for the page): Show more draws more
-  let gridMax = 200, gridKey = '';
-  // (scrolled near the end of the grid: the next 200 come by themselves, here and on the server)
-  const moreSeen = new IntersectionObserver((es) => { if (!es.some((x) => x.isIntersecting)) return; const b = $('grid').querySelector('[data-more-here], [data-srv-more]'); if (!b || b.disabled) return; b.disabled = true; if (b.matches('[data-more-here]')) { gridMax += 200; render(); } else loadServer(true); }, { rootMargin: '400px' });
+  // Pages of 600: the grid only ever holds one page (here and on the server), however big the library grows; a bar above and
+  // below goes to the previous or next page or to any page typed in. Another category or search starts at page 1.
+  const PAGE = 600; let page = 0, gridKey = '';
+  function pageBar(total) {
+    const pages = Math.max(1, Math.ceil(total / PAGE)); if (pages < 2) return '';
+    const from = page * PAGE + 1, to = Math.min(total, (page + 1) * PAGE);
+    return `<div class="pagebar"><button type="button" class="btn outline sm" data-page="prev" ${page ? '' : 'disabled'}>‹ Previous</button><span>Page <input class="input" data-page-to type="number" min="1" max="${pages}" value="${page + 1}"> of ${pages.toLocaleString()} <small class="hint">(${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()})</small></span><button type="button" class="btn outline sm" data-page="next" ${page < pages - 1 ? '' : 'disabled'}>Next ›</button></div>`;
+  }
+  function goPage(n) { const total = onServer() ? srv.total : shown().length, pages = Math.max(1, Math.ceil(total / PAGE)); n = Math.max(0, Math.min(pages - 1, n)); if (n === page) return; page = n; sel.clear(); if (onServer()) { srvSel = null; loadServer(); } else render(); $('grid').scrollTop = 0; }
   function render() {
-    if (gridKey !== cat + '|' + query) { gridKey = cat + '|' + query; gridMax = 200; }
+    if (gridKey !== cat + '|' + query) { gridKey = cat + '|' + query; page = 0; }
     const C = cats(); const catBtn = ([k, l, n]) => `<button type="button" class="cat" data-cat="${esc(k)}" aria-current="${cat === k}"><span>${esc(l)}</span><b>${n}</b></button>`;
     const branch = (key, label, n, kids, dim) => { const open = openTree.has(key) && kids.length; return `<div class="tree-row">${kids.length ? `<button type="button" class="tw" data-tree="${esc(key)}" aria-expanded="${!!open}" aria-label="${open ? 'Close' : 'Open'} ${esc(label)}">${open ? '▾' : '▸'}</button>` : '<span class="tw"></span>'}${catBtn([key, label, n]).replace('class="cat"', `class="cat${dim ? ' empty' : ''}"`)}</div>${open ? `<div class="tree-kids">${kids.map(([k, l, c]) => `<div class="tree-row"><span class="tw"></span>${catBtn([k, l, c])}</div>`).join('')}</div>` : ''}`; };
     const count = new Map(C), unsorted = items.filter((it) => !KNOWN().includes(it.category || '')).length, toSort = items.filter(needsSort).length, srcs = sources();
@@ -276,8 +281,8 @@
       + (srcs.length ? `<div class="work-head">From sheets and files</div>` + srcs.map(([k, l, n]) => branch('#src:' + k, l, n, groupBy(items.filter((it) => srcOf(it) === k), (it) => (KNOWN().includes(it.category || '') ? it.category : 'Not sorted yet')).map(([c, m]) => ['#srcat:' + k + '|' + c, c, m]))).join('') : '')
       + `<div class="work-head">Working area</div>` + catBtn(['#work', 'Files imported from', work.length]);
     const S = shown(), g = $('grid'), keepY = g.scrollTop; g.style.setProperty('--tile', size + 'px');
-    g.innerHTML = onServer() ? (srv.items.map((x) => `<button type="button" class="tile" role="option" data-srv-id="${esc(x.id)}" aria-selected="${srvSel === x.id}" title="${esc(x.name)}${x.category ? ' · ' + esc(x.category) : ''}"><span class="pic"><img src="${esc((x.links || {}).thumb || (x.links || {}).png || (x.links || {}).svg || '')}" alt="" loading="lazy"></span><span class="nm">${esc(x.name)}</span>${x.privacy === 'me' ? LOCK : ''}${keptOf(x) ? '<i class="used">kept</i>' : ''}${fmtBadge(x)}</button>`).join('') + (srv.items.length < srv.total ? `<button type="button" class="btn outline srv-more" data-srv-more>Show more (${srv.items.length} of ${srv.total})</button>` : '') || `<p class="hint" style="padding:16px">${srv.loading ? 'Asking the server…' : 'Nothing on the server matches.'}</p>`) : cat === '#work' ? S.map((w) => `<button type="button" class="tile" role="option" data-id="${w.id}" aria-selected="${sel.has(w.id)}" title="${esc(w.fileName)}"><span class="pic">${w.thumb ? `<img src="${w.thumb}" alt="" loading="lazy">` : ''}</span><span class="nm">${esc(w.name)}</span>${w.used ? `<i class="used">${w.used} made</i>` : ''}<i class="fmt">${esc((w.fileName.split('.').pop() || '').toUpperCase())}</i></button>`).join('') : S.slice(0, gridMax).map((it) => `<button type="button" class="tile" role="option" data-id="${it.id}" aria-selected="${sel.has(it.id)}" title="${esc(it.name)}${it.category ? ' · ' + esc(it.category) : ''}"><span class="pic"><img src="${it.thumb}" alt="" loading="lazy"></span><span class="nm">${esc(it.name)}</span>${it.privacy === 'me' ? LOCK : ''}${fmtBadge(it)}</button>`).join('') + (S.length > gridMax ? `<button type="button" class="btn outline srv-more" data-more-here>Show more (${gridMax.toLocaleString()} of ${S.length.toLocaleString()})</button>` : '');
-    { const mb = g.querySelector('[data-more-here], [data-srv-more]'); moreSeen.disconnect(); if (mb) moreSeen.observe(mb); }
+    g.innerHTML = onServer() ? (srv.items.map((x) => `<button type="button" class="tile" role="option" data-srv-id="${esc(x.id)}" aria-selected="${srvSel === x.id}" title="${esc(x.name)}${x.category ? ' · ' + esc(x.category) : ''}"><span class="pic"><img src="${esc((x.links || {}).thumb || (x.links || {}).png || (x.links || {}).svg || '')}" alt="" loading="lazy"></span><span class="nm">${esc(x.name)}</span>${x.privacy === 'me' ? LOCK : ''}${keptOf(x) ? '<i class="used">kept</i>' : ''}${fmtBadge(x)}</button>`).join('')  || `<p class="hint" style="padding:16px">${srv.loading ? 'Asking the server…' : 'Nothing on the server matches.'}</p>`) : cat === '#work' ? S.map((w) => `<button type="button" class="tile" role="option" data-id="${w.id}" aria-selected="${sel.has(w.id)}" title="${esc(w.fileName)}"><span class="pic">${w.thumb ? `<img src="${w.thumb}" alt="" loading="lazy">` : ''}</span><span class="nm">${esc(w.name)}</span>${w.used ? `<i class="used">${w.used} made</i>` : ''}<i class="fmt">${esc((w.fileName.split('.').pop() || '').toUpperCase())}</i></button>`).join('') : S.slice(page * PAGE, (page + 1) * PAGE).map((it) => `<button type="button" class="tile" role="option" data-id="${it.id}" aria-selected="${sel.has(it.id)}" title="${esc(it.name)}${it.category ? ' · ' + esc(it.category) : ''}"><span class="pic"><img src="${it.thumb}" alt="" loading="lazy"></span><span class="nm">${esc(it.name)}</span>${it.privacy === 'me' ? LOCK : ''}${fmtBadge(it)}</button>`).join('');
+    { const bar = pageBar(onServer() ? srv.total : cat === '#work' ? 0 : S.length); if (bar) { g.insertAdjacentHTML('afterbegin', bar); g.insertAdjacentHTML('beforeend', bar); } }
     g.scrollTop = keepY; // (redrawn in place: choosing a picture does not jump the grid)
     const showIt = startOpen || (!items.length && cat !== '#work' && !onServer()); $('start').hidden = !showIt; if (showIt) renderStart();
     renderDetails(); syncProps(); status(); lightUp(g); lightUp($('details')); if (propsBox && !propsBox.hidden) lightUp(propsBox);
@@ -747,9 +752,9 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     if (!serverUrl) { connectWindow(); throw Object.assign(new Error('No clip-art server answers yet: choose or add one in the window (Server › Connect…).'), { quiet: true }); } if (!serverOk) await checkServer(); if (!serverOk) throw new Error(`The clip-art server at ${serverUrl} did not answer (is it running?).`); }
   $('cats').onclick = (e) => { const t = e.target.closest('[data-tree]'); if (t) { const k = t.dataset.tree; if (openTree.has(k)) openTree.delete(k); else openTree.add(k); keepTree(); render(); return; } const b = e.target.closest('[data-cat]'); if (!b) return; cat = b.dataset.cat; sel.clear(); srvSel = null; render(); if (onServer()) loadServer(); };
   $('search').oninput = (e) => { query = e.target.value; if (onServer()) { clearTimeout(srvTimer); srvTimer = setTimeout(() => loadServer(), 300); return; } render(); };
+  $('grid').addEventListener('change', (e) => { if (e.target.matches('[data-page-to]')) goPage((+e.target.value || 1) - 1); });
   $('grid').addEventListener('click', (e) => {
-    if (e.target.closest('[data-srv-more]')) return loadServer(true);
-    if (e.target.closest('[data-more-here]')) { gridMax += 200; render(); return; }
+    const pg = e.target.closest('[data-page]'); if (pg) return goPage(page + (pg.dataset.page === 'next' ? 1 : -1));
     // a double-click (the first click redraws the grid, so the click's own count is used): Touch up
     if (e.detail === 2 && e.target.closest('.tile') && !e.shiftKey && !e.ctrlKey && !e.metaKey) return cat === '#work' && !onServer() ? act('work-import') : touchUp();
     const st = e.target.closest('[data-srv-id]'); if (st) { srvSel = st.dataset.srvId; render(); return; }
