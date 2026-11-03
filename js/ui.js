@@ -360,7 +360,7 @@
         busy(); toast(`Saved “${name}” (${(b.size / 1048576).toFixed(1)} MB) to your downloads.`); return;
       }
       if (a === 'pull') { await need(); const r = await L.pull((n, t) => busy(`Getting ${n} of ${t}…`)); busy(); await reload(); toast((r.made.length ? `Got ${r.made.length} new or changed item${r.made.length === 1 ? '' : 's'} from the server (it has ${r.total}).` : `Already up to date (the server has ${r.total}).`) + ((r.missing || []).length ? ` ${r.missing.length} could not be got: the server lists them but their picture files are not on it (sent through another server?).` : '')); return; }
-      if (a === 'sync') { await need(); const del = await L.sendDeletes(); const r = await L.pull((n, t) => busy(`Getting ${n} of ${t}…`)); const fresh = (await L.all()).filter((it) => !it.serverId); const d = await L.push(fresh, (n, t) => busy(`Sending ${n} of ${t}…`)); busy(); await reload(); toast(`In step with the server: got ${r.made.length}, sent ${d.length}${del ? `, deleted ${del}` : ''}${r.removed.length ? `, ${r.removed.length} deleted on the server taken out here` : ''}.`); return; }
+      if (a === 'sync') { await need(); const del = await L.sendDeletes(); const r = await L.pull((n, t) => busy(`Getting ${n} of ${t}…`)); const fresh = (await L.all()).filter((it) => !it.serverId || it.changed); const d = await L.push(fresh, (n, t) => busy(`Sending ${n} of ${t}…`)); busy(); await reload(); toast(`In step with the server: got ${r.made.length}, sent ${d.length}${del ? `, deleted ${del}` : ''}${r.removed.length ? `, ${r.removed.length} deleted on the server taken out here` : ''}.`); return; }
       if (a === 'unserver') { const S = chosen().filter((it) => it.serverId); if (!S.length) return toast('Choose something that is on the server.'); if (!confirm(`Take ${S.length === 1 ? `“${S[0].name}”` : `${S.length} items`} off the server? (They stay in this library.)`)) return; await L.removeFromServer(S); await reload(); toast('Taken off the server.'); return; }
       if (a === 'open-server') { if (!serverUrl) return toast('Connect to a server first.'); window.open(serverUrl + '/', '_blank'); return; }
       const one = chosen()[0]; if (!one) return;
@@ -664,6 +664,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     pick: '<path d="M15 3l6 6-3 3-6-6Z" class="fill"/><path d="M13 8l-8 8v3h3l8-8"/>',
     bold: '<path d="M7 4h6a4 4 0 0 1 0 8H7ZM7 12h7a4 4 0 0 1 0 8H7Z"/>',
     down: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
+    pen: '<path d="M4 20l4-1 11-11-3-3L5 16Z" class="fill"/><path d="M14 6l3 3M4 20l4-1"/><circle cx="19" cy="19" r="1.6" class="fill"/>',
     prev: '<circle cx="12" cy="12" r="10" class="fill"/><path d="M14.5 7 9.5 12l5 5" stroke-width="2.4"/>', next: '<circle cx="12" cy="12" r="10" class="fill"/><path d="M9.5 7l5 5-5 5" stroke-width="2.4"/>',
     layerNew: '<path d="m12 4 9 5-9 5-9-5Z" class="fill"/><path d="m3 14 9 5 9-5"/><path d="M19 2v5M16.5 4.5h5"/>',
     layerSel: '<path d="m12 4 9 5-9 5-9-5Z" stroke-dasharray="3 2"/><path d="m3 14 9 5 9-5"/>',
@@ -753,7 +754,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
             B('Complete the background', TI.complete, () => E().bgDo('complete'), { iconOnly: true, title: 'Complete it: the see-through gaps (or the selection) filled from the colours round them', disabled: busyOff }), B('Complete the background with AI', TI.completeAi, () => E().bgDo('complete-ai'), { iconOnly: true, title: 'Complete with AI: the AI fills the see-through gaps (or the selection) to match (the first time downloads about 30 MB)', disabled: busyOff }), '|', B('New background', TI.bgNew, () => E().bgDo('new'), { iconOnly: true, title: 'New background: a bottom layer in the style chosen below (colours 1 and 2 are on the Touch up tab)', disabled: busyOff })] }, { el: bgSel }, { el: stepSlide }] }]],
         ['Mend', [{ col: [B('Mend', TI.mend, () => E().mendSel(false), { title: 'Fill the selection from what is round it (quick; best for thin gaps and smooth backgrounds)', disabled: () => busyOff() || !E().hasSel() }), B('Mend with AI', TI.mendAi, () => E().mendSel(true), { title: 'The AI fills the selection to match what is round it (missing parts, holes, marks)', disabled: () => busyOff() || !E().hasSel() })] }]],
         ['Effects', [{ col: [{ row: [B('Outline', TI.outline, () => E().fxDo('outline'), { iconOnly: true, title: 'Outline in colour 1, round what the layer shows (a layer under it)', disabled: off }), B('Shadow', TI.shadow, () => E().fxDo('shadow'), { iconOnly: true, title: 'A soft shadow (a layer under it)', disabled: off }), B('Glow', TI.glow, () => E().fxDo('glow'), { iconOnly: true, title: 'A glow in colour 1 (a layer under it)', disabled: off })] }, { el: fxSlide }] }]],
-        ['Vector', [{ col: [{ el: vecSel }, { el: vcSlide }, { row: [B('Trace now', TI.trace, () => E().vecDo('trace'), { title: 'Trace the SVG now and see it (Save keeps it, until the picture changes)', disabled: busyOff }), B('Show the vector', TI.eye, () => E().vecDo('show'), { iconOnly: true, pressed: () => !off() && E().vecShown(), disabled: off })] }] }]],
+        ['Vector', [B('Edit the drawing', TI.pen, () => editDrawing(), { big: true, title: 'The picture’s SVG as a drawing: choose its shapes and words with a click, move, size, recolour, keep them inside a shape, take them out; Save makes the drawing the picture (the PNG drawn again from it)', disabled: () => off() || !(E().item() && E().item().svg) }), { col: [{ el: vecSel }, { el: vcSlide }, { row: [B('Trace now', TI.trace, () => E().vecDo('trace'), { title: 'Trace the SVG now and see it (Save keeps it, until the picture changes)', disabled: busyOff }), B('Show the vector', TI.eye, () => E().vecDo('show'), { iconOnly: true, pressed: () => !off() && E().vecShown(), disabled: off })] }] }]],
       ] },
       { id: 'server', label: 'Server', hue: '#0f766e', onSelect: () => leaveTouch(), groups: [
         ['Connect', [B('Connect…', IK.server, () => act('connect'), { big: true, title: 'Use a clip-art server: on this computer (server/start-server.cmd) or on a web host. Every picture then has a real http link any app can use.' }), { col: [B('Open the server page', IK.link, () => act('open-server')), B('Stop using it', IK.link, () => act('disconnect'), { title: 'Forget the server (nothing is deleted anywhere)' })] }]],
@@ -800,7 +801,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
       await E.open(next, touchOpts());
     } finally { stepping = false; }
   }
-  const touchOpts = () => ({ toast, mount: app, before: touchEmpty, onClose: () => ribbon.select('home', true), nav: { step: touchStep, label: touchLabel },
+  const touchOpts = () => ({ toast, mount: app, before: touchEmpty, onClose: () => ribbon.select('home', true), nav: { step: touchStep, label: touchLabel }, drawing: () => editDrawing(),
     // saved: the library shows it chosen, and Touch up goes on with it
     done: async (saved) => { await reload(); if (!saved || stepping) return; sel = new Set([saved.id]); render(); if (['touch', 'fix'].includes(ribbon.current())) await ClipArtEditor.open((await L.all()).find((x) => x.id === saved.id) || saved, touchOpts()); } });
   async function enterTouch() {
@@ -810,12 +811,23 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     if (!it && !onServer() && cat !== '#work') it = chosen()[0];
     app.querySelector('.work').hidden = true;
     const E = window.ClipArtEditor, open = E.item();
+    // the drawing being edited: shown again (another picture chosen: asked about its changes first)
+    const V = window.ClipArtVector; if (V && V.item()) { if (!it || it.id === V.item().id) { touchEmpty.hidden = true; V.show(); return; } if (V.changed() && !(await ask('Changes not saved', `The drawing of “${esc(V.item().name)}” has changes not saved. Leave them?`, [{ label: 'Leave them', value: 'go' }, { label: 'Cancel', value: null, primary: true }]))) { V.show(); return; } V.close(); }
     if (open && (!it || it.id === open.id)) { touchEmpty.hidden = true; E.show(); return; }
     if (!it || !it.png) { touchEmpty.querySelector('p').textContent = it ? 'Only pictures (PNG) can be touched up: this one is an SVG only.' : 'Choose a picture on the Home tab first (or double-click one: it opens here).'; touchEmpty.hidden = false; return; }
     if (open && E.changed() && !(await saveFirst())) { touchEmpty.hidden = true; E.show(); return; }
     touchEmpty.hidden = true; touchSet = makeTouchSet(); await E.open(it, touchOpts());
   }
-  function leaveTouch() { touchEmpty.hidden = true; if (ClipArtEditor.isOpen()) ClipArtEditor.close(); app.querySelector('.work').hidden = false; syncTouchTab(); }
+  // Edit the drawing (js/vector.js): in Touch up's place; back to Touch up (the picture saved or not) when done
+  async function editDrawing() {
+    const E = ClipArtEditor, it = E.item(); if (!it || !it.svg) return toast('This picture has no drawing (SVG) to edit.');
+    if (E.changed() && !(await saveFirst())) return;
+    const cur = (await L.all()).find((x) => x.id === it.id) || it; E.close();
+    const again = async (x) => { await reload(); if (['touch', 'fix'].includes(ribbon.current())) await E.open(x, touchOpts()); syncTouchTab(); };
+    ClipArtVector.open(cur, { toast, ask, mount: app, before: touchEmpty, done: async (saved) => { await reload(); sel = new Set([saved.id]); render(); await again((await L.all()).find((x) => x.id === saved.id) || saved); }, back: () => again(cur) });
+    syncTouchTab();
+  }
+  function leaveTouch() { if (window.ClipArtVector) ClipArtVector.hide(); touchEmpty.hidden = true; if (ClipArtEditor.isOpen()) ClipArtEditor.close(); app.querySelector('.work').hidden = false; syncTouchTab(); }
   // (the page always opens on the library, not on Touch up)
   if (['touch', 'fix'].includes(ribbon.current())) ribbon.select('home', true);
   const ic = document.createElement('link'); ic.rel = 'icon'; ic.href = 'data:image/svg+xml,' + encodeURIComponent(LOGO.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ')); document.head.append(ic);

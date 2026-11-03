@@ -402,3 +402,12 @@ label.ed-sw input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .ed-nav[data-ed=next] { padding: 0 8px 0 12px; }
 .ed-pos { min-width: 64px; text-align: center; font-variant-numeric: tabular-nums; }
 .rb-pos { margin-left: 4px; font-variant-numeric: tabular-nums; }
+.vx .vx-stage { position: relative; display: grid; place-items: center; min-width: 100%; min-height: 100%; padding: 24px; box-sizing: border-box; }
+.vx .vx-art { position: relative; box-shadow: 0 0 0 1px var(--line, #444); }
+.vx .vx-art svg { user-select: none; }
+.vx .vx-wrap { position: relative; }
+.vx .vx-over { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
+.vx .vx-over .vx-h { pointer-events: all; }
+.vx.vx-clipping .vx-art { cursor: crosshair; outline: 2px dashed #2563eb; }
+.vx .vx-row { display: flex; gap: 6px; align-items: center; }
+.vx .vx-row input[type=color] { width: 44px; height: 28px; padding: 0; border: 1px solid var(--line, #555); border-radius: 6px; background: none; }
