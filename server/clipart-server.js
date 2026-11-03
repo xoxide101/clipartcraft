@@ -208,6 +208,7 @@ function library(name, spec) {
   async function save(meta, pics = {}) {
     const old = meta.id ? await db.get(meta.id) : null, now = new Date().toISOString();
     const it = { ...(old || { id: meta.id || uid(), type: 'clipart', added: now, files: {} }), ...pick(meta), changed: now };
+    for (const c of ['width', 'height', 'frames', 'colours']) if (it[c] !== undefined && it[c] !== null && !isFinite(Number(it[c])) || it[c] === '') it[c] = null; // ('' is not a number: MySQL refuses it)
     it.files = { ...(old ? old.files : {}) };
     if (!old || (meta.name !== undefined && meta.name !== old.name)) it.name = await uniqueName(db, meta.name || (old && old.name) || 'Untitled', it.id);
     if (db.named && old && old.name !== it.name) for (const k of Object.keys(it.files)) { const b = await readFileAny(old, k); if (b) await setFile(it, k, b, extOf(old.files[k])); }
@@ -301,7 +302,7 @@ function serve(S) {
   // what the API returns for an item: its fields and a real link for each picture
   // a picture only for me (privacy 'me'): its links carry its own pass (not the key), so whoever was given the link can open that one picture
   const pass = (it) => crypto.createHmac('sha256', S.key || JSON.stringify(S.admin || 'craft')).update(String(it.id)).digest('hex').slice(0, 20), mine = (it) => !!it && it.privacy === 'me';
-  const shown = (req, lib, it) => { if (!it) return null; const L = lib.name === S.main ? '' : encodeURIComponent(lib.name) + '/', nm = encodeURIComponent(it.name), links = {}, t = mine(it) ? '?t=' + pass(it) : '';
+  const shown = (req, lib, it) => { if (!it) return null; const L = lib.name === S.main ? '' : encodeURIComponent(lib.name) + '/', nm = encodeURIComponent(it.name), links = {}, t = '?' + [`v=${String(it.changed || '').replace(/\D/g, '')}`, mine(it) ? 't=' + pass(it) : ''].filter(Boolean).join('&'); // (v: the time it last changed, so a changed picture has a new link and no browser shows an old copy)
     for (const k of Object.keys(it.files || {})) links[k] = `${base(req)}/clipart/${L}${nm}${k === 'png' || k === 'svg' ? '' : '.' + k}.${extOf(it.files[k])}${t}`;
     return { ...it, files: undefined, links, library: lib.name }; };
   const body = (req) => new Promise((ok, no) => { const c = []; let n = 0; req.on('data', (d) => { n += d.length; if (n > 200e6) { no(Object.assign(new Error('Too big.'), { code: 413 })); req.destroy(); } else c.push(d); }); req.on('end', () => ok(Buffer.concat(c))); req.on('error', no); });

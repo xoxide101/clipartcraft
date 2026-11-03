@@ -147,6 +147,7 @@ class Library {
     $old = !empty($meta['id']) ? $this->get($meta['id']) : null; $t = now();
     $it = $old ?: ['id' => $meta['id'] ?? uid(), 'type' => 'clipart', 'added' => $t, 'files' => []];
     foreach (COLS as $c) if (!in_array($c, ['id', 'files', 'added', 'changed'], true) && array_key_exists($c, $meta)) $it[$c] = $meta[$c];
+    foreach (['width', 'height', 'frames', 'colours'] as $c) if (isset($it[$c]) && !is_numeric($it[$c])) $it[$c] = null; // ('' is not a number: MySQL refuses it)
     $it['changed'] = $t;
     if (!$old || (isset($meta['name']) && $meta['name'] !== $old['name'])) $it['name'] = $this->unique_name((string) ($meta['name'] ?? ($old['name'] ?? 'Untitled')), $it['id']);
     foreach (FILE_KINDS as $k) if (array_key_exists($k, $pics)) {
@@ -241,7 +242,7 @@ if ($method !== 'GET' && $method !== 'HEAD' && !$may_write) fail(403, 'Changing 
 $secret = (string) (!empty($C['key']) ? $C['key'] : json_encode($C['admin'] ?? 'craft'));
 $pass = fn (array $it): string => substr(hash_hmac('sha256', (string) $it['id'], $secret), 0, 20);
 $mine = fn (?array $it): bool => $it !== null && ($it['privacy'] ?? '') === 'me';
-$shown = function (Library $lib, ?array $it) use ($base, $C, $pass, $mine) { if (!$it) return null; $L = $lib->name === $C['main'] ? '' : rawurlencode($lib->name) . '/'; $links = []; $t = $mine($it) ? '?t=' . $pass($it) : '';
+$shown = function (Library $lib, ?array $it) use ($base, $C, $pass, $mine) { if (!$it) return null; $L = $lib->name === $C['main'] ? '' : rawurlencode($lib->name) . '/'; $links = []; $t = '?' . implode('&', array_filter(['v=' . preg_replace('/\D/', '', (string) ($it['changed'] ?? '')), $mine($it) ? 't=' . $pass($it) : ''])); // (v: the time it last changed, so a changed picture has a new link and no browser shows an old copy)
   foreach ($it['files'] as $k => $f) $links[$k] = "$base/clipart/$L" . rawurlencode($it['name']) . ($k === 'png' || $k === 'svg' ? '' : ".$k") . '.' . ext_of($f) . $t;
   unset($it['files']); $it['links'] = (object) $links; $it['library'] = $lib->name; return $it; };
 $body = fn () => file_get_contents('php://input');

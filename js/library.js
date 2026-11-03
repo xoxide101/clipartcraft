@@ -188,6 +188,7 @@
 
   // ------------------------------------------------------------------ the clip-art server (optional)
   const b64 = (blob) => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result).replace(/^data:[^,]*,/, '')); r.onerror = () => no(r.error); r.readAsDataURL(blob); });
+  const NUMS = ['width', 'height', 'frames', 'colours'];
   const META = ['type', 'name', 'original', 'seen', 'matched', 'category', 'style', 'form', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash', 'privacy'];
   async function server(url) { if (url !== undefined) { await meta('server', url ? String(url).trim().replace(/\/+$/, '') : ''); } return (await meta('server')) || ''; }
   async function serverKey(k) { if (k !== undefined) await meta('serverKey', k || ''); return (await meta('serverKey')) || ''; }
@@ -205,7 +206,8 @@
     const out = []; let n = 0, left = new Set([...((await meta('pushQueue')) || []), ...items.map((it) => it.id)]);
     await meta('pushQueue', [...left]);
     for (const it of items) {
-      const j = Object.fromEntries(META.filter((k) => it[k] !== undefined).map((k) => [k, it[k]]));
+      // (a number left empty goes as nothing: MySQL refuses '' for a number column)
+      const j = Object.fromEntries(META.filter((k) => it[k] !== undefined).map((k) => [k, NUMS.includes(k) && (it[k] === '' || it[k] === null || !isFinite(it[k])) ? null : it[k]]));
       const st = await stamped(it); if (!j.privacy) j.privacy = ''; // (its details go inside the files it sends)
       if (st.png) { j.png = await b64(st.png); j.pngExt = it.png.type === 'image/jpeg' ? 'jpg' : 'png'; }
       if (st.svg) j.svg = st.svg; else if (it.noSvg && it.serverId) j.svg = null; if (it.anim) { j.anim = await b64(it.anim); j.animExt = (it.anim.type.split('/')[1] || 'gif').replace('apng', 'png'); }
@@ -229,7 +231,7 @@
         let png = null, svg = null, anim = null; try { png = await get('png'); if (s.links.svg) { const r = await fetch(s.links.svg); if (r.ok) svg = await r.text(); } anim = await get('anim'); } catch (e) { /* counted below */ }
         if (!png && !svg) { missing.push(s.name); continue; }
         const it = old || { id: uid(), added: s.added || new Date().toISOString() };
-        Object.assign(it, Object.fromEntries(META.map((k) => [k, s[k] ?? it[k] ?? (k === 'tags' ? [] : '')])), { png, svg, anim, serverId: s.id, links: s.links, serverChanged: s.changed, source: s.source || 'clip-art server' });
+        Object.assign(it, Object.fromEntries(META.map((k) => [k, s[k] ?? it[k] ?? (k === 'tags' ? [] : NUMS.includes(k) ? null : '')])), { png, svg, anim, serverId: s.id, links: s.links, serverChanged: s.changed, source: s.source || 'clip-art server' });
         try { if (!it.thumb || !old) it.thumb = (await thumbOf(png ? URL.createObjectURL(png) : svgUrl(svg))).thumb; } catch (e) { missing.push(s.name); continue; }
         await tx('items', 'readwrite', (st) => req(st.put(it))); made.push(it);
       }

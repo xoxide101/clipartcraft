@@ -419,3 +419,14 @@ label.ed-sw input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .ed-size-card[aria-pressed=true] { border-color: var(--accent, #7c3aed); }
 .ed-size-card:disabled { opacity: .45; cursor: default; }
 .tile i.lock { position: absolute; top: 6px; left: 6px; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 5px; background: rgba(20, 20, 30, .75); color: #fbbf24; font-style: normal; }
+.fchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 6px; }
+.fchip { position: relative; display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px 4px 7px; border-radius: 7px; border: 1px solid var(--line, #444); background: var(--panel-2, #2a2a2a); color: inherit; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.fchip:hover { border-color: var(--accent, #7c3aed); }
+.fchip.f-png svg { color: #38bdf8; } .fchip.f-svg svg { color: #f472b6; } .fchip.f-anim svg { color: #fbbf24; }
+.fchip .on-srv { display: inline-grid; margin-left: 2px; color: #4ade80; font-style: normal; }
+.fchip .on-srv svg { width: 13px; height: 13px; }
+.mk-in { width: min(620px, 94vw); }
+.mk-pic { display: grid; place-items: center; height: 300px; border-radius: 8px; overflow: hidden; }
+.mk-pic img { max-width: 100%; max-height: 100%; }
+.mk-err:empty { display: none; }
+.mk-err { color: #f87171; }

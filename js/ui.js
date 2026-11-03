@@ -119,6 +119,15 @@
   }
   // a read from the server with the key (when there is one): it shows the pictures only for me too
   const keyFetch = async (url) => { const k = await L.serverKey(); return fetch(url, k ? { headers: { 'x-craft-key': k } } : {}); };
+  // A picture that is on the server, changed here (saved in Touch up or Edit the drawing, its details changed): sent
+  // straight away when the server answers (else it stays marked, and Sync sends it). One send at a time, the rest queued.
+  let sending = Promise.resolve();
+  function sendNow(list) {
+    const S = (list || []).filter((it) => it && it.serverId && it.changed); if (!S.length || !serverUrl || !serverOk) return;
+    sending = sending.then(async () => { try { const fresh = (await L.all()).filter((x) => S.some((y) => y.id === x.id) && x.changed); if (!fresh.length) return; const d = await L.push(fresh); toast(`Sent to the server: ${d.length === 1 ? `“${d[0].name}”` : `${d.length} pictures`}.`); if (onServer()) loadServer(); } catch (e) { toast(`Not sent yet (${e.message}): Sync sends it later.`); } });
+  }
+  // Send to the server now (right-click): the chosen pictures sent as they are here, whatever is marked (a force update)
+  async function forceSend(S) { if (!S.length) return; try { busy(`Sending ${S.length}…`); const d = await L.push(S, (k, t) => busy(`Sending ${k} of ${t}…`)); busy(); await reload(); if (onServer()) loadServer(); toast(`Sent to the server: ${d.length === 1 ? `“${d[0].name}”` : `${d.length} pictures`}.`); } catch (e) { busy(); fail(e); } }
   const keptOf = (s2) => items.find((it) => it.serverId === s2.id);
   // one of the server's pictures copied into this browser (to touch up, or to have without the server)
   async function keepFromServer(s2) {
@@ -219,6 +228,36 @@
       <button type="button" data-act="folder-in"><b>Open a library folder</b><small>A folder with library.json and its pictures (backup, or shared from another computer)</small></button></div>
       <p class="hint">The library is kept in this browser and shared with every Craft app opened in it. Nothing is uploaded.</p></div>`;
   }
+  // The picture's files as small chips under it (PNG, SVG, moving; on the server too): click one to open it, right-click
+  // it (or the big picture) to open, save or copy the link to the PNG or the SVG
+  const CHIP = {
+    png: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="9" cy="10" r="2" fill="currentColor"/><path d="M4 18l5-5 4 4 3-3 4 4" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
+    svg: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M4 18C8 6 16 6 20 18" fill="none" stroke="currentColor" stroke-width="2"/><rect x="2.5" y="16.5" width="3" height="3" fill="currentColor"/><rect x="18.5" y="16.5" width="3" height="3" fill="currentColor"/><rect x="10.5" y="5" width="3" height="3" fill="currentColor"/></svg>',
+    anim: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 9l5 3-5 3Z" fill="currentColor"/></svg>',
+    server: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M7 18h10a4 4 0 0 0 .5-8A6 6 0 0 0 6 9a4.5 4.5 0 0 0 1 9Z" fill="none" stroke="currentColor" stroke-width="2"/></svg>' };
+  const KINDS = [['png', 'PNG'], ['svg', 'SVG'], ['anim', 'Moving']];
+  function fileChips(it) {
+    const ln = it.links || {}, have = KINDS.filter(([k]) => it[k] || ln[k]);
+    return `<div class="fchips">${have.map(([k, l]) => `<button type="button" class="fchip f-${k}" data-chip="${k}" title="${l}${ln[k] ? ' (on the server too)' : ''}: click to open it; right-click to save it or copy its link">${CHIP[k]}<span>${l}</span>${ln[k] ? `<i class="on-srv" title="On the server">${CHIP.server}</i>` : ''}</button>`).join('')}</div>`;
+  }
+  const blobOf = (it, k) => (k === 'svg' ? (it.svg ? new Blob([it.svg], { type: 'image/svg+xml' }) : null) : it[k] || null);
+  function openFile(it, k) { const ln = (it.links || {})[k], b = blobOf(it, k); if (b) window.open(URL.createObjectURL(b), '_blank', 'noopener'); else if (ln) window.open(ln, '_blank', 'noopener'); }
+  function fileMenu(e, it, only) {
+    const ln = it.links || {}, list = KINDS.filter(([k]) => (!only || k === only) && (it[k] || ln[k]));
+    const items = list.flatMap(([k, l], i) => [...(i ? ['-'] : []), { info: l, strong: true },
+      { label: `Open the ${l}`, run: () => openFile(it, k) },
+      { label: `Save the ${l}…`, disabled: !blobOf(it, k), run: () => download(blobOf(it, k), `${it.name}.${k === 'svg' ? 'svg' : k === 'anim' ? (it.anim.type.split('/')[1] || 'gif').replace('apng', 'png') : 'png'}`) },
+      { label: `Copy the link to the ${l}`, disabled: !ln[k], run: () => copyText(ln[k]).then(() => toast('Link copied.')) },
+      ...(k === 'svg' && it.svg ? [{ label: 'Copy the SVG code', run: () => copyText(it.svg).then(() => toast('SVG code copied.')) }] : [])]);
+    if (items.length) CraftMenu.show(e.clientX, e.clientY, items);
+  }
+  // (in the side panel and the Properties window alike)
+  const chipItem = () => { const S = chosen(); return S.length === 1 ? S[0] : null; };
+  document.addEventListener('click', (e) => { const c = e.target.closest('.fchip[data-chip]'); if (!c || !e.target.closest('#details, .props-dlg')) return; const it = chipItem(); if (it) openFile(it, c.dataset.chip); });
+  document.addEventListener('contextmenu', (e) => { if (!window.CraftMenu || !e.target.closest('#details, .props-dlg')) return; const c = e.target.closest('.fchip[data-chip]'), big = e.target.closest('.big'); if (!c && !big) return; const it = chipItem(); if (!it) return; e.preventDefault(); fileMenu(e, it, c ? c.dataset.chip : null); });
+  // Make with AI (js/makeai.js): words to a picture, a drawing (SVG) by default
+  const likeOf = (it) => [it.description || it.seen || it.name, it.style].filter(Boolean).join(', ');
+  function makeAi(prompt) { if (!window.ClipArtMake) return; ClipArtMake.open({ toast, prompt, categories: KNOWN(), done: async (it) => { await reload(); if (!onServer() && cat !== '#work') { sel = new Set([it.id]); last = it.id; render(); } } }); }
   // who can see it (Everyone / Only me), and where it came from: its source, author and licence (for several: those they share)
   function detailsMore(S, one) {
     const same = (k) => (new Set(S.map((x) => x[k] || '')).size === 1 ? S[0][k] || '' : ''), pv = same('privacy'), mixed = !one && new Set(S.map((x) => x.privacy || '')).size > 1;
@@ -255,6 +294,7 @@
     const one = S.length === 1 ? S[0] : null, catList = [...new Set([...KNOWN(), ...cats().map(([c]) => c).filter(Boolean)])];
     d.innerHTML = `<div class="props-head">${one ? 'Clip art' : `${S.length} chosen`}</div><div class="sec">
       ${one ? `<div class="big check-bg"><img src="${one.anim ? URL.createObjectURL(one.anim) : one.svg ? L.svgUrl(one.svg) : URL.createObjectURL(one.png)}" alt=""></div>
+      ${fileChips(one)}
       <label class="field"><span>Name</span><input class="input" data-f="name" value="${esc(one.name)}"></label>` : `<div class="many">${S.slice(0, 12).map((it) => `<img src="${it.thumb}" alt="">`).join('')}</div>`}
       ${pickField('category', 'Category', KNOWN(), one ? one.category : (new Set(S.map((x) => x.category)).size === 1 ? S[0].category : ''), !one)}
       <div class="two">${pickField('style', 'Style', window.CraftNamer ? CraftNamer.STYLES : [], one ? one.style : (new Set(S.map((x) => x.style || '')).size === 1 ? S[0].style : ''), !one)}${pickField('form', 'Form', window.CraftNamer ? CraftNamer.FORMS : [], one ? one.form : (new Set(S.map((x) => x.form || '')).size === 1 ? S[0].form : ''), !one)}</div>
@@ -268,7 +308,6 @@
       <div class="btns"><button class="btn outline sm" type="button" data-act="ai-again" title="The AI looks at ${one ? 'this picture' : 'these pictures'} again: new guesses to choose from">Ask the AI${one && one.ai ? ' again' : ''}</button><button class="btn outline sm" type="button" data-act="cloud-ask" title="A cloud AI (Claude, Gemini, GPT or OpenRouter, with your own key) looks at ${one ? 'it' : 'them'}: for pictures the AI here gets wrong. Costs a little per picture">Ask a cloud AI</button><button class="btn ghost sm" type="button" data-act="edit-lists" title="Add, rename or remove categories (and the words the AI knows for each), styles and forms">Edit the lists…</button></div>
       <label class="field"><span>Tags <small class="hint">(separated by commas)</small></span><input class="input" data-f="tags" value="${esc(one ? (one.tags || []).join(', ') : '')}" placeholder="${one ? 'farm, red, barn' : 'added to each'}"></label>
       ${one ? `<p class="hint">${one.width} × ${one.height} pixels · ${[one.png ? 'PNG' : '', one.svg ? 'SVG' : '', one.anim ? `moving (${one.frames || '?'} frames)` : ''].filter(Boolean).join(', ')}${one.kind === 'bw' ? ' · black and white' : one.kind === 'grey' ? ' · grey' : ''}${one.source ? ` · from ${esc(one.source)}` : ''}${one.cloud ? ` · named by ${esc(one.cloud)}` : ''}</p>
-      ${one.links ? `<div class="links"><span class="hint">On the server:</span>${Object.entries(one.links).filter(([k]) => k !== 'thumb').map(([k, u]) => `<a href="${esc(u)}" target="_blank" rel="noopener" title="${esc(u)}">${k.toUpperCase()}</a><button type="button" class="btn ghost sm" data-copy="${esc(u)}" title="Copy the link">Copy link</button>`).join('')}</div>` : ''}
       ${one.png ? `<div class="btns"><button class="btn primary" type="button" data-act="touchup" title="Fix it by hand: erase or restore with a box, ellipse or lasso, brushes, a magic wand, and clean-ups for specks, holes and halos">Touch up…</button>${one.pngFirst ? '<span class="hint">touched up</span>' : ''}</div>` : ''}
       <div class="btns">${one.png ? '<button class="btn outline" type="button" data-act="dl-png">PNG</button>' : ''}${one.anim ? '<button class="btn outline" type="button" data-act="dl-anim">Animation</button>' : ''}${one.svg ? '<button class="btn outline" type="button" data-act="dl-svg">SVG</button>' : ''}<button class="btn outline" type="button" data-act="copy">Copy</button></div>` : ''}
       <div class="btns"><button class="btn outline" type="button" data-act="export-sel">Export ${one ? 'it' : 'these'} (ZIP)</button><button class="btn outline danger" type="button" data-act="delete">Delete</button></div></div>`;
@@ -395,6 +434,8 @@
     for (const it of S) { if (f === 'name' && v) it.name = v; if (f === 'category') it.category = v; if (f === 'style' || f === 'form') it[f] = v; if (['original', 'seen', 'matched', 'description'].includes(f)) it[f] = e.target.value.trim();
       if (['source', 'author', 'licence'].includes(f) && (S.length === 1 || v)) it[f] = v; if (f === 'privacy' && v) it.privacy = v === 'me' ? 'me' : '';
       if (['source', 'author', 'licence', 'privacy'].includes(f) && it.serverId) it.changed = true; it.checked = true; if (f === 'tags') it.tags = S.length === 1 ? v.split(',').map((t) => t.trim()).filter(Boolean) : [...new Set([...(it.tags || []), ...v.split(',').map((t) => t.trim()).filter(Boolean)])]; await L.put(it); }
+    for (const it of S) if (it.serverId) { it.changed = true; await L.put(it); }
+    sendNow(S);
     if (teachIt) await teach(S[0]);
     await reload(); if (!teachIt && f === 'category' && v && cat !== '*' && cat !== v) toast(`Moved to “${v}”.`);
   }
@@ -429,7 +470,9 @@
   function syncProps() { if (!propsBox || propsBox.hidden) return; if (!sel.size) return closeProps(); const y = propsBox.querySelector('.props-body').scrollTop; propsBox.querySelector('.props-body').innerHTML = $('details').innerHTML; propsBox.querySelector('.props-body').scrollTop = y; }
   // right-click a picture (or a file in the working area): what can be done to it, like the panel and the ribbon
   $('grid').addEventListener('contextmenu', (e) => {
-    const t = e.target.closest('.tile'); if (!t || !window.CraftMenu) return; e.preventDefault();
+    const t = e.target.closest('.tile'); if (!window.CraftMenu) return;
+    if (!t) { if (cat === '#work') return; e.preventDefault(); return CraftMenu.show(e.clientX, e.clientY, [{ label: 'Make a picture with AI…', run: () => makeAi('') }, { label: 'Import pictures…', key: 'Ctrl+O', run: () => act('add') }, { label: 'Montage Slicer…', run: () => act('slice') }, '-', { label: 'Select all', key: 'Ctrl+A', run: () => act('select-all') }]); }
+    e.preventDefault();
     const id = t.dataset.id; if (!sel.has(id)) { sel = new Set([id]); last = id; render(); }
     const n = sel.size, one = n === 1, them = one ? 'it' : `these ${n}`;
     if (cat === '#work') return CraftMenu.show(e.clientX, e.clientY, [
@@ -443,9 +486,10 @@
       { label: 'Properties…', key: 'Alt+Enter', run: () => openProps() }, { label: 'Touch up…', disabled: !one || !it.png, run: () => act('touchup') }, { label: 'Rename…', key: 'F2', disabled: !one, run: () => openProps('name') },
       ...(one && sameDna(it).length ? [{ label: 'Same DNA / style', sub: [...[it, ...sameDna(it)].sort((a, b) => colOf(a) - colOf(b)).map((x) => ({ label: `${x.name}${x.style ? ` (${x.style})` : ''}`, checked: x.id === it.id, run: () => { sel = new Set([x.id]); last = x.id; render(); document.querySelector(`#grid [data-id="${x.id}"]`)?.scrollIntoView({ block: 'nearest' }); } })), '-', { label: `Choose all ${sameDna(it).length + 1}`, run: () => { sel = new Set([it.id, ...sameDna(it).map((x) => x.id)]); render(); } }] }] : []),
       { label: 'Category', sub: [...KNOWN().map((c) => ({ label: c, checked: S.every((x) => x.category === c), run: move(c) })), '-', { label: 'Not sorted yet', run: move('') }] },
-      '-', { label: one && it.ai ? 'Ask the AI again' : 'Ask the AI', run: () => act('ai-again') }, { label: 'Ask a cloud AI…', run: () => act('cloud-ask') },
+      '-', { label: one && it.ai ? 'Ask the AI again' : 'Ask the AI', run: () => act('ai-again') }, { label: 'Ask a cloud AI…', run: () => act('cloud-ask') }, { label: 'Make one like this with AI…', disabled: !one, run: () => makeAi(likeOf(it)) },
       '-', { label: 'Copy', key: 'Ctrl+C', disabled: !one, run: () => act('copy') }, { label: 'Save as PNG…', disabled: !one || !it.png, run: () => act('dl-png') }, { label: 'Save as SVG…', disabled: !one || !it.svg, run: () => act('dl-svg') },
       { label: one ? 'Export it (ZIP)…' : `Export these ${n} (ZIP)…`, run: () => act('export-sel') },
+      { label: one ? 'Send it to the server now' : `Send these ${n} to the server now`, disabled: !serverUrl || !serverOk, run: () => forceSend(chosen()) },
       '-', { label: 'Select all', key: 'Ctrl+A', run: () => act('select-all') }, { label: `Delete ${them}`, key: 'Del', danger: true, run: () => act('delete') }]);
   });
   // right-click a category, a sheet or file, or a branch under one on the left: the same for all the pictures in it
@@ -646,6 +690,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     exportZ: '<path d="M6 3h9l4 4v14H6Z" class="fill"/><path d="M12 10v7M9 14l3 3 3-3"/>',
     slice: '<rect x="3" y="3" width="18" height="18" rx="2" class="fill"/><path d="M12 3v18M3 12h18" stroke-dasharray="2 2"/><path d="m16 14 3 3m0-3-3 3"/>',
     folder: '<path d="M3 6h6l2 2h10v11H3Z" class="fill"/>',
+    make: '<rect x="3" y="7" width="14" height="14" rx="2" class="fill"/><path d="M6 18l3-4 2 2 2-3 3 5"/><path d="M19 2l.9 2.1L22 5l-2.1.9L19 8l-.9-2.1L16 5l2.1-.9Z" class="fill"/>',
     up: '<path d="M3 6h6l2 2h10v11H3Z" class="fill"/><path d="M12 17v-6M9 13l3-3 3 3"/>',
     server: '<rect x="4" y="3" width="16" height="7" rx="1.5" class="fill"/><rect x="4" y="14" width="16" height="7" rx="1.5" class="fill"/><path d="M8 6.5h.01M8 17.5h.01"/>',
     send: '<rect x="4" y="13" width="16" height="7" rx="1.5" class="fill"/><path d="M12 10V2M8.5 5.5 12 2l3.5 3.5"/>',
@@ -741,7 +786,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     tabs: [
       { id: 'home', label: 'Home', hue: '#c2410c', onSelect: () => leaveTouch(), groups: [
         ['Start', [B('Start', I.wand, () => act('start'), { big: true, title: 'The start page: what do you want to do? (import, slice a sheet, open a library…)' })]],
-        ['Add', [B('Import pictures', IK.add, () => act('add'), { big: true, key: 'Ctrl+O', title: 'Any picture files (PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, TIFF, SVG, animations, classic formats): every page and frame, cropped, named for you, black and white made see-through' }), B('Import a library', IK.zip, () => act('zip'), { big: true, title: 'A library ZIP (from ImageCraft’s Split a sheet, or exported here)' })]],
+        ['Add', [B('Make with AI', IK.make, () => makeAi(''), { big: true, title: 'Words to a picture, on the fly: a drawing (SVG, sharp at any size) or a painted picture (PNG), made on this computer (Ollama, LM Studio, Automatic1111) or by a cloud AI with your own key' }), B('Import pictures', IK.add, () => act('add'), { big: true, key: 'Ctrl+O', title: 'Any picture files (PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, TIFF, SVG, animations, classic formats): every page and frame, cropped, named for you, black and white made see-through' }), B('Import a library', IK.zip, () => act('zip'), { big: true, title: 'A library ZIP (from ImageCraft’s Split a sheet, or exported here)' })]],
         ['Sort', [B('Sort with AI', I.wand, () => act('sort-ai'), { big: true, title: 'The AI looks at each picture (the chosen ones, or every one not yet in a category) and gives it a category, style, form and tags, and a name where it only has a number' }), { col: [B('Ask a cloud AI', I.globe, () => act('cloud-ask'), { title: 'A cloud AI (Claude, Gemini, GPT or OpenRouter, with your own key) names and sorts the chosen pictures: for the ones the AI here gets wrong. Costs a little per picture', disabled: () => !sel.size }), B('Cloud AI settings…', I.gear, () => act('cloud-settings'), { title: 'Your own key for Claude, Gemini, GPT or OpenRouter, and which model to use' })] }, { col: [B('Find copies…', I.duplicate || I.copy, () => act('dupes'), { title: 'Pictures that are the same picture (a sheet sent twice, a picture imported again): keep one of each, remove the rest. On the server when you are looking at it, else in this browser' }), B('Check SVGs…', TI.trace, () => act('svg-check'), { title: 'SVGs that do not look like their PNG (a trace of a small picture: writing lost, colours run together) are found and, if you say so, taken away so apps use the PNG. The chosen pictures, or all; on the server when you are looking at it' })] }]],
         ['Slice', [B('Montage Slicer', IK.slice, () => act('slice'), { big: true, title: 'Cut a sheet (montage) of clip art into separate pictures: found by themselves or by a grid, named in order, added to the library' })]],
         ['Library', [B('Export (ZIP)', IK.exportZ, () => act('export-all'), { big: true, title: 'Everything shown (the category you are in, or all) as one ZIP: pictures, SVGs and library.json' }), { col: [B('Save to the folder', IK.up, () => act('folder-out'), { title: 'Write the whole library to its folder (backup, sync, sharing)' }), B('Add from a folder', IK.down, () => act('folder-in'), { title: 'Read a library folder into this library' }), B('Choose the folder…', IK.folder, () => act('folder-pick'), { title: 'Which folder the library is saved to' })] }]],
@@ -816,7 +861,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
   }
   const touchOpts = () => ({ toast, mount: app, before: touchEmpty, onClose: () => ribbon.select('home', true), nav: { step: touchStep, label: touchLabel }, drawing: () => editDrawing(),
     // saved: the library shows it chosen, and Touch up goes on with it
-    done: async (saved) => { await reload(); if (!saved || stepping) return; sel = new Set([saved.id]); render(); if (['touch', 'fix'].includes(ribbon.current())) await ClipArtEditor.open((await L.all()).find((x) => x.id === saved.id) || saved, touchOpts()); } });
+    done: async (saved) => { if (saved) sendNow([saved]); await reload(); if (!saved || stepping) return; sel = new Set([saved.id]); render(); if (['touch', 'fix'].includes(ribbon.current())) await ClipArtEditor.open((await L.all()).find((x) => x.id === saved.id) || saved, touchOpts()); } });
   async function enterTouch() {
     setTimeout(syncTouchTab, 0);
     let it = touchWant; touchWant = null;
@@ -837,7 +882,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     if (E.changed() && !(await saveFirst())) return;
     const cur = (await L.all()).find((x) => x.id === it.id) || it; E.close();
     const again = async (x) => { await reload(); if (['touch', 'fix'].includes(ribbon.current())) await E.open(x, touchOpts()); syncTouchTab(); };
-    ClipArtVector.open(cur, { toast, ask, mount: app, before: touchEmpty, done: async (saved) => { await reload(); sel = new Set([saved.id]); render(); await again((await L.all()).find((x) => x.id === saved.id) || saved); }, back: () => again(cur) });
+    ClipArtVector.open(cur, { toast, ask, mount: app, before: touchEmpty, done: async (saved) => { sendNow([saved]); await reload(); sel = new Set([saved.id]); render(); await again((await L.all()).find((x) => x.id === saved.id) || saved); }, back: () => again(cur) });
     syncTouchTab();
   }
   function leaveTouch() { if (window.ClipArtVector) ClipArtVector.hide(); touchEmpty.hidden = true; if (ClipArtEditor.isOpen()) ClipArtEditor.close(); app.querySelector('.work').hidden = false; syncTouchTab(); }
