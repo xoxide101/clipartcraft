@@ -223,7 +223,7 @@
       if (st.svg) j.svg = st.svg; else if (it.noSvg && it.serverId) j.svg = null; if (it.anim) { j.anim = await b64(it.anim); j.animExt = (it.anim.type.split('/')[1] || 'gif').replace('apng', 'png'); }
       if (it.thumb) { j.thumb = it.thumb.replace(/^data:[^,]*,/, ''); j.thumbExt = 'png'; }
       let s; try { s = await call(it.serverId ? '/api/items/' + it.serverId : '/api/items', { method: it.serverId ? 'PATCH' : 'POST', body: JSON.stringify(j) }); } catch (e) { if (!it.serverId || !/No such item/.test(e.message)) throw e; delete it.serverId; s = await call('/api/items', { method: 'POST', body: JSON.stringify(j) }); }
-      it.serverId = s.id; it.links = s.links; it.name = s.name; it.serverChanged = s.changed; delete it.changed; await tx('items', 'readwrite', (st) => req(st.put(it))); out.push(it); progress(++n, items.length);
+      it.serverId = s.id; it.links = s.links; it.name = s.name; it.serverChanged = s.changed; it.thumbFrom = s.changed; delete it.changed; await tx('items', 'readwrite', (st) => req(st.put(it))); out.push(it); progress(++n, items.length);
       left.delete(it.id); await meta('pushQueue', [...left]);
     }
     changed(); return out;
@@ -236,7 +236,9 @@
     for (let off = 0; ; off += 500) {
       const r = await call(`/api/items?limit=500&offset=${off}&q=${encodeURIComponent(q)}${category !== undefined ? '&category=' + encodeURIComponent(category) : ''}`); total = r.total; if (!r.items.length) break;
       for (const s of r.items) {
-        const old = here.get(s.id); seen.add(s.id); progress(++n, total); if ((old && old.serverChanged === s.changed) || (!old && (skip.has(s.id) || gone.has(s.id)))) continue;
+        const old = here.get(s.id); seen.add(s.id); progress(++n, total); // (in step already: its thumbnail remade once if it was made from an older copy, as a pull before this kept the old one)
+        if (old && old.serverChanged === s.changed) { if (old.thumbFrom !== s.changed && (old.png || old.svg)) { try { const t = await thumbOf(old.png ? URL.createObjectURL(old.png) : svgUrl(old.svg)); old.thumb = t.thumb; old.thumbFrom = s.changed; await tx('items', 'readwrite', (st) => req(st.put(old))); } catch (e) { /* unreadable */ } } continue; }
+        if (!old && (skip.has(s.id) || gone.has(s.id))) continue;
         // changed here and on the server too: the newer one wins (a change here older than the server's copy gives way)
         if (old && old.changed && Date.parse(old.edited || old.added || 0) >= Date.parse(s.changed || 0)) continue;
         const get = async (k) => { if (!s.links[k]) return null; const r = await fetch(s.links[k]); return r.ok ? r.blob() : null; };
@@ -244,7 +246,7 @@
         if (!png && !svg) { missing.push(s.name); continue; }
         const it = old || { id: uid(), added: s.added || new Date().toISOString() };
         Object.assign(it, Object.fromEntries(META.map((k) => [k, s[k] ?? it[k] ?? (k === 'tags' ? [] : NUMS.includes(k) ? null : '')])), { png, svg, anim, serverId: s.id, links: s.links, serverChanged: s.changed, source: s.source || 'clip-art server' }); delete it.changed;
-        try { if (!it.thumb || !old) it.thumb = (await thumbOf(png ? URL.createObjectURL(png) : svgUrl(svg))).thumb; } catch (e) { missing.push(s.name); continue; }
+        try { const t = await thumbOf(png ? URL.createObjectURL(png) : svgUrl(svg)); it.thumb = t.thumb; it.width = t.width; it.height = t.height; it.thumbFrom = s.changed; } /* (always: a newer picture needs its own thumbnail) */ catch (e) { missing.push(s.name); continue; }
         await tx('items', 'readwrite', (st) => req(st.put(it))); made.push(it);
       }
     }
