@@ -841,8 +841,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     try { const r = await L.pull(big, { since, newMax: 50 }); if (J) J.end(`done: ${r.made.length.toLocaleString()} brought in`); if (r.newest) mark(r.newest > since ? r.newest : since); if (r.made.length || r.thumbs.length || r.leftNew) { await reload(); if (onServer()) loadServer(); syncReport(r, [], 0, 'Changed on the server since you were last here'); } } catch (e) { /* the next look */ }
   }
   // (once on opening: details-only pictures and a big archive's kept in the open library moved into books)
-  async function moveToBooks() { if (!L.toBooks) return; let J = null; const n = await L.toBooks((k, t) => { if (!J && t > 500) J = jobStrip('Putting big sets into books'); if (J) J.step('moving', k, t); }); if (J) J.end(`done: ${n.toLocaleString()} moved into books`); if (n) await reload(); }
-  setTimeout(() => moveToBooks().catch((e) => console.warn(e)), 500);
+  async function moveToBooks() { if (!L.toBooks) return; let J = null; const n = await L.toBooks((k, t) => { if (!J && t > 500) J = jobStrip('Putting big sets into books'); if (J) J.step('moving', k, t); }); if (J) J.end(`done: ${n.toLocaleString()} moved into books`); }
   async function checkServer(say) { serverUrl = await L.server(); serverOk = false; if (serverUrl) { try { const i = await L.serverInfo(); serverOk = true; if (say) toast(`Connected to the clip-art server (${i.libraries.map((l) => `${l.name}: ${l.database}`).join(', ')}).${i.writable ? '' : ' It can only be read from here.'}`); } catch (e) { if (say) toast(e.message); } } status(); if (serverOk) { sinceLast(); serverCount(); } }
   async function need() {
     if (!serverUrl || !serverOk) { if (await autoPlace(true)) return; }
@@ -1197,6 +1196,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
   async function fillFromServer() {
     if (!serverOk) return; await loadServer(); if (!items.length) { cat = '#server'; render(); }
   }
-  loadLists().then(reload).then(() => checkServer()).then(autoPlace).then(fillFromServer).then(offerResume).then(firstTimeSetup).catch(fail);
+  // (big sets into books first, so the first load is never the whole of them)
+  loadLists().then(() => moveToBooks().catch((e) => console.warn(e))).then(reload).then(() => checkServer()).then(autoPlace).then(fillFromServer).then(offerResume).then(firstTimeSetup).catch(fail);
   window.ClipArtCraft = { reload, items: () => items };
 })();

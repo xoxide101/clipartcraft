@@ -61,9 +61,17 @@
   }
   // the items already here that belong in books (known by their details only, or from a big archive), moved into them,
   // in the order they came, a few hundred at a time; once (a mark is kept)
+  // an item's set: its collection, else its source; a source that is one file's name (the plain Import) goes with the
+  // others like it: Microsoft's "keyword,…,MC900326838.svg" into Microsoft Office clip art, the rest into Imported pictures
+  const setOfItem = (v) => { const s = v.collection || v.source || 'Server'; return /,MC\d{6,}\.\w+$/i.test(s) || /^MC\d{6,}/i.test(v.original || '') ? 'Microsoft Office clip art' : /\.(svg|png|jpe?g|gif|webp|bmp|tiff?|ico)$/i.test(s) ? 'Imported pictures' : s; };
   async function toBooks(progress = () => {}) {
-    const d = await open(), list = await new Promise((ok, no) => { const out = [], r = d.transaction('items', 'readonly').objectStore('items').openCursor(MAIN);
-      r.onsuccess = () => { const c = r.result; if (!c) return ok(out); const v = c.value; if (v.remote || (v.collection && /office clip art/i.test(v.collection))) out.push({ id: v.id, set: v.collection || v.source || 'Server', files: !v.remote, at: v.serverChanged || v.added || '' }); c.continue(); }; r.onerror = () => no(r.error); });
+    // (a cursor, one item at a time: only a few facts of each are kept, never the items themselves)
+    const d = await open(), all = await new Promise((ok, no) => { const out = [], r = d.transaction('items', 'readonly').objectStore('items').openCursor(MAIN);
+      r.onsuccess = () => { const c = r.result; if (!c) return ok(out); const v = c.value; out.push({ id: v.id, set: setOfItem(v), files: !v.remote, remote: !!v.remote, at: v.serverChanged || v.added || '' }); c.continue(); }; r.onerror = () => no(r.error); });
+    // what belongs in books: details-only pictures, and any set of more than 2,000 kept here with their files (an archive or a
+    // big folder brought in before books, whatever it is called); small sets of your own stay where they are
+    const per = new Map(); for (const x of all) per.set(x.set, (per.get(x.set) || 0) + 1);
+    const list = all.filter((x) => x.remote || per.get(x.set) > BOOK_FILES || /office clip art/i.test(x.set));
     if (!list.length) return 0;
     list.sort((a, b) => String(a.at).localeCompare(String(b.at)));
     const groups = new Map(); for (const x of list) { const k = `${x.set}|${x.files}`; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(x); }
