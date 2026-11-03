@@ -32,7 +32,8 @@
 
   async function all() { return tx('items', 'readonly', (s) => req(s.getAll())); }
   async function get(id) { return tx('items', 'readonly', (s) => req(s.get(id))); }
-  async function put(item) { await tx('items', 'readwrite', (s) => req(s.put(item))); changed(); return item; }
+  // (quiet: a big import saves many and tells the views once, with tell())
+  async function put(item, quiet) { await tx('items', 'readwrite', (s) => req(s.put(item))); if (!quiet) changed(); return item; }
   async function remove(ids) { await tx('items', 'readwrite', (s) => Promise.all([].concat(ids).map((id) => req(s.delete(id))))); changed(); }
   async function meta(key, value) { return value === undefined ? tx('meta', 'readonly', (s) => req(s.get(key))) : tx('meta', 'readwrite', (s) => req(s.put(value, key))); }
 
@@ -211,10 +212,11 @@
   async function forgetPending() { await meta('pushQueue', []); }
   async function pending() { const ids = (await meta('pushQueue')) || []; if (!ids.length) return []; const all = await tx('items', 'readonly', (s) => req(s.getAll())); return all.filter((it) => ids.includes(it.id)); }
   // send items to the server (new ones are added, ones it has are updated); the server may number a name (Cat_002)
-  async function push(items, progress = () => {}) { return guard(() => pushNow(items, progress)); }
-  async function pushNow(items, progress) {
-    const out = []; let n = 0, left = new Set([...((await meta('pushQueue')) || []), ...items.map((it) => it.id)]);
-    await meta('pushQueue', [...left]);
+  // (here: false = sent only, not kept in this browser: a big archive straight to the server)
+  async function push(items, progress = () => {}, { here = true } = {}) { return guard(() => pushNow(items, progress, here)); }
+  async function pushNow(items, progress, here = true) {
+    const out = []; let n = 0, left = new Set([...((await meta('pushQueue')) || []), ...(here ? items.map((it) => it.id) : [])]);
+    if (here) await meta('pushQueue', [...left]);
     for (const it of items) {
       // (a number left empty goes as nothing: MySQL refuses '' for a number column)
       const j = Object.fromEntries(META.filter((k) => it[k] !== undefined).map((k) => [k, NUMS.includes(k) && (it[k] === '' || it[k] === null || !isFinite(it[k])) ? null : it[k]]));
@@ -223,8 +225,8 @@
       if (st.svg) j.svg = st.svg; else if (it.noSvg && it.serverId) j.svg = null; if (it.anim) { j.anim = await b64(it.anim); j.animExt = (it.anim.type.split('/')[1] || 'gif').replace('apng', 'png'); }
       if (it.thumb) { j.thumb = it.thumb.replace(/^data:[^,]*,/, ''); j.thumbExt = 'png'; }
       let s; try { s = await call(it.serverId ? '/api/items/' + it.serverId : '/api/items', { method: it.serverId ? 'PATCH' : 'POST', body: JSON.stringify(j) }); } catch (e) { if (!it.serverId || !/No such item/.test(e.message)) throw e; delete it.serverId; s = await call('/api/items', { method: 'POST', body: JSON.stringify(j) }); }
-      it.serverId = s.id; it.links = s.links; it.name = s.name; it.serverChanged = s.changed; it.thumbFrom = s.changed; delete it.changed; await tx('items', 'readwrite', (st) => req(st.put(it))); out.push(it); progress(++n, items.length);
-      left.delete(it.id); await meta('pushQueue', [...left]);
+      it.serverId = s.id; it.links = s.links; it.name = s.name; it.serverChanged = s.changed; it.thumbFrom = s.changed; delete it.changed; if (here) await tx('items', 'readwrite', (st) => req(st.put(it))); out.push(it); progress(++n, items.length);
+      if (here) { left.delete(it.id); await meta('pushQueue', [...left]); }
     }
     changed(); return out;
   }
@@ -288,5 +290,7 @@
   async function lists(value) { return meta('lists', value); }
   // the user's corrections the AI learns from: [{ id (the picture's), vec, name, category, style, form, at }]
   async function lessons(value) { return value === undefined ? (await meta('lessons')) || [] : meta('lessons', value); }
-  window.CraftClipart = { zip, DB, lists, lessons, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, deleteItems, deleteOnServer, sendDeletes, notHere, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip, stampPng, stampSvg, coreSum, sumsOf, svgMatch, traceMatched, pixelsOfItem, dropServerSvg, MATCH, svgUnits, scaleFor, svgPng, TARGET };
+  // the original IDs of every picture on the server (a big archive skips those it has), read a page of 5,000 at a time
+  async function serverOriginals() { const out = new Set(); for (let off = 0; ; off += 5000) { const r = await call(`/api/items?limit=5000&offset=${off}`); r.items.forEach((x) => x.original && out.add(x.original)); if (!r.items.length || off + r.items.length >= r.total) break; } return out; }
+  window.CraftClipart = { serverOriginals, tell: () => changed(), zip, DB, lists, lessons, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, deleteItems, deleteOnServer, sendDeletes, notHere, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip, stampPng, stampSvg, coreSum, sumsOf, svgMatch, traceMatched, pixelsOfItem, dropServerSvg, MATCH, svgUnits, scaleFor, svgPng, TARGET };
 })();

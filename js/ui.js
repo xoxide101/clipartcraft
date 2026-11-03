@@ -431,7 +431,7 @@
         if (a === 'work-dl') return download(S[0].file, S[0].fileName);
         if (a === 'work-del') { if (!confirm(`Delete ${S.length === 1 ? `“${S[0].fileName}”` : `${S.length} files`} from the working area? (The clip art made from ${S.length === 1 ? 'it' : 'them'} stays in the library.)`)) return; await WA.remove(S.map((w) => w.id)); sel.clear(); await reload(); toast('Deleted.'); return; }
       }
-      if (a === 'zip') return addFiles(await pick('.zip', false), 'Imported');
+      if (a === 'zip') { const fs2 = await pick('.zip', false); const big = fs2.find((f) => f.size > 150e6); if (big && window.ClipArtArchive) return ClipArtArchive.open(big, { toast, categories: KNOWN(), server: !!serverUrl && serverOk, done: async (n, where) => { await reload(); if (where === 'server') { cat = '#server'; render(); loadServer(); } else { cat = '*'; render(); } toast(`${n.toLocaleString()} pictures added from the archive${where === 'server' ? ' to the server' : ''}.`); } }); return addFiles(fs2, 'Imported'); } // (a big archive: read a piece at a time, js/archive.js)
       if (a === 'slice') return slicer();
       if (a === 'export-all') { if (!items.length) return toast('The library is empty.'); download(await L.toZip(shown()), cat === '*' ? 'Clip art library.zip' : `${cat || 'No category'} clip art.zip`); return; }
       if (a === 'export-sel') { download(await L.toZip(chosen()), chosen().length === 1 ? `${chosen()[0].name}.zip` : 'Clip art.zip'); return; }

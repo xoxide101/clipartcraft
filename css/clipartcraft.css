@@ -438,3 +438,6 @@ label.ed-sw input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .sync-row p { margin: 4px 0 0; }
 .sync-why { margin: 4px 0 0; padding-left: 18px; font-size: 12px; }
 .sync-why li { margin: 2px 0; }
+.arc-in { width: min(640px, 94vw); }
+.arc-bar { height: 8px; border-radius: 4px; background: var(--panel-2, #2a2a2a); overflow: hidden; margin-top: 6px; }
+.arc-bar i { display: block; height: 100%; background: var(--accent, #7c3aed); transition: width .3s; }
