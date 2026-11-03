@@ -70,6 +70,22 @@
     }
     return { svg: null, match: best };
   }
+  // An SVG drawn as pixels: a whole number of pixels per unit of its own (1 mm = 5 px stays 5 px, edges on pixel
+  // boundaries, no rounding drift), as many as reach about TARGET pixels on the longer side (at least 1).
+  const TARGET = 2400;
+  function svgUnits(svg) {
+    const root = new DOMParser().parseFromString(svg, 'image/svg+xml').documentElement; if (!root || root.nodeName !== 'svg') return null;
+    const v = (root.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
+    if (v.length === 4 && v.every((n) => isFinite(n)) && v[2] > 0 && v[3] > 0) return { w: v[2], h: v[3] };
+    const w = parseFloat(root.getAttribute('width')), h = parseFloat(root.getAttribute('height')); return w > 0 && h > 0 && !/%/.test(root.getAttribute('width') + root.getAttribute('height')) ? { w, h } : null;
+  }
+  const scaleFor = (u, target = TARGET) => Math.max(1, Math.round(target / Math.max(u.w, u.h)));
+  async function svgPng(svg, target = TARGET) {
+    const u = svgUnits(svg) || { w: 512, h: 512 }, k = scaleFor(u, target), W = Math.max(1, Math.round(u.w * k)), H = Math.max(1, Math.round(u.h * k));
+    const root = new DOMParser().parseFromString(svg, 'image/svg+xml').documentElement; root.setAttribute('width', W); root.setAttribute('height', H);
+    const i = await loadImg(svgUrl(new XMLSerializer().serializeToString(root))), c = document.createElement('canvas'); c.width = W; c.height = H; c.getContext('2d').drawImage(i, 0, 0, W, H);
+    return { blob: await new Promise((ok) => c.toBlob(ok, 'image/png')), width: W, height: H, k };
+  }
   // the PNG of a picture, drawn from it to ImageData (for svgMatch)
   async function pixelsOfItem(it) { const i = await loadImg(URL.createObjectURL(it.png)); return pixelsOf(i, i.naturalWidth, i.naturalHeight); }
   const nameOf = (file) => String(file).replace(/^.*[\\/]/, '').replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim() || 'Untitled';
@@ -216,5 +232,5 @@
   async function lists(value) { return meta('lists', value); }
   // the user's corrections the AI learns from: [{ id (the picture's), vec, name, category, style, form, at }]
   async function lessons(value) { return value === undefined ? (await meta('lessons')) || [] : meta('lessons', value); }
-  window.CraftClipart = { DB, lists, lessons, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, deleteItems, deleteOnServer, sendDeletes, notHere, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip, svgMatch, traceMatched, pixelsOfItem, dropServerSvg, MATCH };
+  window.CraftClipart = { DB, lists, lessons, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, deleteItems, deleteOnServer, sendDeletes, notHere, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip, svgMatch, traceMatched, pixelsOfItem, dropServerSvg, MATCH, svgUnits, scaleFor, svgPng, TARGET };
 })();

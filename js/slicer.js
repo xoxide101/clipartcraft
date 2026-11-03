@@ -230,11 +230,13 @@
         r2.querySelectorAll('[data-pic]').forEach((e) => e.removeAttribute('data-pic')); r2.style.removeProperty('background'); r2.style.removeProperty('background-color'); r2.removeAttribute('preserveAspectRatio');
         // room for shadows and glows (filters draw outside the shapes), then trimmed to what is drawn
         const pad = Math.max(4, Math.max(p.r.w, p.r.h) * 0.3), bx = { x: p.r.x - pad, y: p.r.y - pad, w: p.r.w + 2 * pad, h: p.r.h + 2 * pad }, W = Math.max(1, Math.round(bx.w * k)), H = Math.max(1, Math.round(bx.h * k));
-        const at = (b) => { r2.setAttribute('viewBox', `${+b.x.toFixed(3)} ${+b.y.toFixed(3)} ${+b.w.toFixed(3)} ${+b.h.toFixed(3)}`); r2.setAttribute('width', Math.max(1, Math.round(b.w * k))); r2.setAttribute('height', Math.max(1, Math.round(b.h * k))); return new XMLSerializer().serializeToString(r2); };
+        const at = (b) => { r2.setAttribute('viewBox', `${+b.x.toFixed(3)} ${+b.y.toFixed(3)} ${+b.w.toFixed(3)} ${+b.h.toFixed(3)}`); r2.setAttribute('width', +b.w.toFixed(3)); r2.setAttribute('height', +b.h.toFixed(3)); return new XMLSerializer().serializeToString(r2); };
         const draw = async (svg, w, h) => { const i = new Image(); i.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); await i.decode(); const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(i, 0, 0, w, h); return x.getImageData(0, 0, w, h); };
         const big = await draw(at(bx), W, H); let x0 = W, y0 = H, x1 = -1, y1 = -1; for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (big.data[(y * W + x) * 4 + 3] > 3) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
         if (x1 < 0) continue; x0 = Math.max(0, x0 - 2); y0 = Math.max(0, y0 - 2); x1 = Math.min(W - 1, x1 + 2); y1 = Math.min(H - 1, y1 + 2);
-        const tb = { x: bx.x + x0 / k, y: bx.y + y0 / k, w: (x1 - x0 + 1) / k, h: (y1 - y0 + 1) / k }, svg = at(tb), img = await draw(svg, x1 - x0 + 1, y1 - y0 + 1);
+        // (in whole units of the drawing, so the PNG drawn at a whole number of pixels per unit has its edges on pixels)
+        const ux0 = Math.floor(bx.x + x0 / k), uy0 = Math.floor(bx.y + y0 / k), tb = { x: ux0, y: uy0, w: Math.ceil(bx.x + (x1 + 1) / k) - ux0, h: Math.ceil(bx.y + (y1 + 1) / k) - uy0 };
+        const svg = at(tb), img = await draw(svg, Math.max(1, Math.round(tb.w * k)), Math.max(1, Math.round(tb.h * k)));
         out.push({ x: Math.round((tb.x - vb.x) * k), y: Math.round((tb.y - vb.y) * k), w: img.width, h: img.height, row: p.row, col: p.col, svg, img });
       }
       return out.length >= 2 ? { pics: out, rows: rows.length, cols: cols.length, rowNames, colNames } : null;
@@ -860,7 +862,8 @@
       const made = []; let k = 0;
       for (const r of keep) {
         btn.textContent = `Adding ${++k} of ${keep.length}: ${r.name}…`; await wait(0);
-        const mt = r.meta || {}, raw = await new Promise((ok) => canvasOf(r.img).toBlob(ok, 'image/png')), png = await pngText(raw, { Title: r.name.trim(), Description: mt.description || '', Keywords: (r.tags || []).join(', '), Source: `${sheetName}${mt.where ? ` (${mt.where})` : ''}`, Collection: mt.title || '', Software: 'ClipArtCraft Montage Slicer' }); let svg = null;
+        // (a picture from the drawing: its PNG drawn from its SVG at a whole number of pixels per unit, about 2,400 across)
+        const mt = r.meta || {}, raw = r.img.svg ? (await L.svgPng(r.img.svg)).blob : await new Promise((ok) => canvasOf(r.img).toBlob(ok, 'image/png')), png = await pngText(raw, { Title: r.name.trim(), Description: mt.description || '', Keywords: (r.tags || []).join(', '), Source: `${sheetName}${mt.where ? ` (${mt.where})` : ''}`, Collection: mt.title || '', Software: 'ClipArtCraft Montage Slicer' }); let svg = null;
         if (r.img.svg) svg = r.img.svg; else if (svgSheet && r.img.at) { try { svg = svgCut(svgSheet, { ...r.img.at, x: r.img.at.x + wx, y: r.img.at.y + wy }); } catch (e) { console.warn('Cutting the SVG failed', r.name, e); } }
         if (!svg && window.CRAFT_RASTERTRACE) svg = (await CraftClipart.traceMatched(r.img)).svg;
         const it = await L.makeItem({ name: r.name.trim() || 'Clip art', category, tags: r.tags || [], png, svg, source: 'Montage Slicer: ' + sheetName }); if (src) it.sheet = src.id;
