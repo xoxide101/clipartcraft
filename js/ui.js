@@ -16,7 +16,7 @@
 
   // ------------------------------------------------------------------ what is shown
   const cats = () => { const m = new Map(); items.forEach((it) => { const c = it.category || ''; m.set(c, (m.get(c) || 0) + 1); }); return [...m].sort((a, b) => (a[0] === '' ? 1 : b[0] === '' ? -1 : a[0].localeCompare(b[0]))); };
-  const shown = () => { const q = query.trim().toLowerCase(); const words = q.split(/\s+/).filter(Boolean); if (cat === '#work') return work.filter((w) => words.every((x) => w.name.toLowerCase().includes(x))); return items.filter((it) => (cat === '*' || (cat === '#unsorted' ? !KNOWN().includes(it.category || '') : cat.startsWith('#src:') ? srcOf(it) === cat.slice(5) : cat.startsWith('#fmt:') ? fmtIs(it, cat.slice(5)) : cat.startsWith('#sub:') ? (() => { const [c, sj] = cat.slice(5).split('|'); return it.category === c && subjectOf(it) === sj; })() : cat.startsWith('#srcat:') ? (() => { const [k, c] = cat.slice(7).split('|'); return srcOf(it) === k && (c === 'Not sorted yet' ? !KNOWN().includes(it.category || '') : it.category === c); })() : (it.category || '') === cat)) && words.every((x) => [it.name, it.original, it.seen, it.matched, (it.tags || []).join(' '), it.category, it.style, it.form, it.kind === 'bw' ? 'black and white' : it.kind, it.anim ? 'animated animation' : '', it.description].join(' ').toLowerCase().includes(x))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })); };
+  const shown = () => { const q = query.trim().toLowerCase(); const words = q.split(/\s+/).filter(Boolean); if (cat === '#work') return work.filter((w) => words.every((x) => w.name.toLowerCase().includes(x))); return items.filter((it) => (cat === '*' || (cat === '#unsorted' ? !KNOWN().includes(it.category || '') : cat.startsWith('#src:') ? srcOf(it) === cat.slice(5) : cat.startsWith('#book:') ? it.id.startsWith(`!${cat.slice(6).split('|')[0]}~${cat.slice(6).split('|')[1].padStart(3, '0')}~`) : cat.startsWith('#fmt:') ? fmtIs(it, cat.slice(5)) : cat.startsWith('#sub:') ? (() => { const [c, sj] = cat.slice(5).split('|'); return it.category === c && subjectOf(it) === sj; })() : cat.startsWith('#srcat:') ? (() => { const [k, c] = cat.slice(7).split('|'); return srcOf(it) === k && (c === 'Not sorted yet' ? !KNOWN().includes(it.category || '') : it.category === c); })() : (it.category || '') === cat)) && words.every((x) => [it.name, it.original, it.seen, it.matched, (it.tags || []).join(' '), it.category, it.style, it.form, it.kind === 'bw' ? 'black and white' : it.kind, it.anim ? 'animated animation' : '', it.description].join(' ').toLowerCase().includes(x))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })); };
   // the agreed categories (the AI's), and which pictures still need sorting: no category from them, or a name that
   // only says where it came from (Sheet 6 – 3, IMG_2041, clip art 12)
   const KNOWN = () => (window.CraftNamer ? CraftNamer.CATEGORIES : []);
@@ -101,7 +101,11 @@
     const kept = keptOf(s2); try { if (kept) await L.deleteItems([kept], { server: true }); else await L.deleteOnServer([s2.id]); } catch (e) { return fail(e); }
     srv.items = srv.items.filter((x) => x !== s2); srv.total = Math.max(0, srv.total - 1); srvSel = null; await reload(); toast(`Deleted “${s2.name}” from the server.`);
   }
-  async function reload() { items = await L.all(); work = WA ? await WA.all() : []; [...sel].forEach((id) => { if (!items.some((it) => it.id === id)) sel.delete(id); }); render(); }
+  // (your own pictures, and the book open now: never the whole library; the books' sizes counted, not read)
+  let openBook = null, bookRows = []; try { openBook = JSON.parse(localStorage.getItem('clipartcraft-book') || 'null'); } catch (e) { /* blocked */ }
+  const bookKey = (b) => (b ? `${b.set}|${b.no}` : '');
+  async function openBookOf(b) { openBook = b; try { localStorage.setItem('clipartcraft-book', JSON.stringify(b)); } catch (e) { /* blocked */ } await reload(); }
+  async function reload() { bookRows = L.bookList ? await L.bookList() : []; if (openBook && !bookRows.some((r) => bookKey(r) === bookKey(openBook))) openBook = null; items = L.main ? [...(await L.main()), ...(openBook ? await L.book(openBook.set, openBook.no) : [])] : await L.all(); work = WA ? await WA.all() : []; [...sel].forEach((id) => { if (!items.some((it) => it.id === id)) sel.delete(id); }); render(); }
   // ------------------------------------------------------------------ On the server: the server's pictures, looked at where
   // they are (its thumbnails); only what is kept (or touched up) is copied into this browser
   const srv = { items: [], total: 0, cats: [], loading: false, at: '' };
@@ -285,7 +289,7 @@
   setInterval(() => { if (!document.hidden) serverCount(); }, 30000);
   function countLine() {
     if (!serverUrl || !serverOk || live.total === null) return '';
-    const known = items.filter((it) => it.serverId).length, miss = Math.max(0, live.total - known), grew = live.was && live.total > live.was.n ? live.total - live.was.n : 0;
+    const known = items.filter((it) => it.serverId && !L.inBook(it.id)).length + bookRows.reduce((a, r) => a + r.n, 0), miss = Math.max(0, live.total - known), grew = live.was && live.total > live.was.n ? live.total - live.was.n : 0;
     const growth = grew ? ` <small class="hint">(+${grew.toLocaleString()} in the last ${Math.max(1, Math.round((live.at - live.was.t) / 1000))} s)</small>` : '';
     return onServer()
       ? `<div class="countline">On the server: <b>${live.total.toLocaleString()}</b> pictures${growth} · this browser knows <b>${known.toLocaleString()}</b>${miss ? ` <button type="button" class="btn outline sm" data-act="sync">Sync: get ${miss.toLocaleString()} more</button>` : ''}</div>`
@@ -304,6 +308,7 @@
     const count = new Map(C), unsorted = items.filter((it) => !KNOWN().includes(it.category || '')).length, toSort = items.filter(needsSort).length, srcs = sources();
     $('cats').innerHTML = (serverUrl && serverOk ? catBtn(['#server', 'On the server', srv.total || '…']) + (onServer() ? `<div class="tree-kids">${srv.cats.map((c) => `<div class="tree-row"><span class="tw"></span>${catBtn(['#server:' + c.category, c.category, c.n])}</div>`).join('')}</div>` : '') : '')
       + catBtn(['*', 'Kept in this browser', items.length])
+      + (bookRows.length ? `<div class="work-head">Books <small class="hint">(one open at a time)</small></div>` + [...new Set(bookRows.map((r) => r.set))].map((k) => { const rows = bookRows.filter((r) => r.set === k); return `<div class="book-set"><span>${esc(rows[0].name)}</span><b>${rows.reduce((a, r) => a + r.n, 0).toLocaleString()}</b></div>` + rows.map((r) => `<button type="button" class="cat book${bookKey(openBook) === bookKey(r) ? ' open' : ''}" data-book="${esc(bookKey(r))}" aria-current="${cat === '#book:' + bookKey(r)}" title="${bookKey(openBook) === bookKey(r) ? 'Open now' : 'Open this book (the one open now is put away)'}"><span>Book ${r.no} <small class="hint">(${r.from.toLocaleString()}–${(r.from + r.n - 1).toLocaleString()})</small></span><b>${r.n.toLocaleString()}</b></button>`).join(''); }).join('') : '')
       + `<div class="work-head">Categories</div>` + KNOWN().map((c) => branch(c, c, count.get(c) || 0, count.get(c) ? groupBy(items.filter((it) => it.category === c), subjectOf).map(([sj, n]) => ['#sub:' + c + '|' + sj, sj, n]) : [], !count.get(c))).join('')
       + (unsorted ? catBtn(['#unsorted', 'Not sorted yet', unsorted]) : '')
       + (() => { const f = FMTS.map(([k, l]) => ['#fmt:' + k, l, items.filter((it) => fmtIs(it, k)).length]).filter(([, , n]) => n); return f.length ? `<div class="work-head">By format</div>` + f.map(catBtn).join('') : ''; })()
@@ -783,11 +788,15 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
     let J = null; const big = (n, t, ph) => { if (!J && t > 200) J = jobStrip('Since you were last here'); if (J) J.pullStep(n, t, ph); };
     try { const r = await L.pull(big, { since, newMax: 50 }); if (J) J.end(`done: ${r.made.length.toLocaleString()} brought in`); if (r.newest) mark(r.newest > since ? r.newest : since); if (r.made.length || r.thumbs.length || r.leftNew) { await reload(); if (onServer()) loadServer(); syncReport(r, [], 0, 'Changed on the server since you were last here'); } } catch (e) { /* the next look */ }
   }
+  // (once on opening: details-only pictures and a big archive's kept in the open library moved into books)
+  async function moveToBooks() { if (!L.toBooks) return; let J = null; const n = await L.toBooks((k, t) => { if (!J && t > 500) J = jobStrip('Putting big sets into books'); if (J) J.step('moving', k, t); }); if (J) J.end(`done: ${n.toLocaleString()} moved into books`); if (n) await reload(); }
+  setTimeout(() => moveToBooks().catch((e) => console.warn(e)), 500);
   async function checkServer(say) { serverUrl = await L.server(); serverOk = false; if (serverUrl) { try { const i = await L.serverInfo(); serverOk = true; if (say) toast(`Connected to the clip-art server (${i.libraries.map((l) => `${l.name}: ${l.database}`).join(', ')}).${i.writable ? '' : ' It can only be read from here.'}`); } catch (e) { if (say) toast(e.message); } } status(); if (serverOk) { sinceLast(); serverCount(); } }
   async function need() {
     if (!serverUrl || !serverOk) { if (await autoPlace(true)) return; }
     if (!serverUrl) { connectWindow(); throw Object.assign(new Error('No clip-art server answers yet: choose or add one in the window (Server › Connect…).'), { quiet: true }); } if (!serverOk) await checkServer(); if (!serverOk) throw new Error(`The clip-art server at ${serverUrl} did not answer (is it running?).`); }
-  $('cats').onclick = (e) => { const t = e.target.closest('[data-tree]'); if (t) { const k = t.dataset.tree; if (openTree.has(k)) openTree.delete(k); else openTree.add(k); keepTree(); render(); return; } const b = e.target.closest('[data-cat]'); if (!b) return; cat = b.dataset.cat; sel.clear(); srvSel = null; render(); if (onServer()) loadServer(); };
+  $('cats').onclick = async (e) => {
+    const bk = e.target.closest('[data-book]'); if (bk) { const [set, no] = bk.dataset.book.split('|'); busy('Opening the book…'); sel.clear(); cat = '#book:' + bk.dataset.book; await openBookOf({ set, no: +no }); busy(); return; } const t = e.target.closest('[data-tree]'); if (t) { const k = t.dataset.tree; if (openTree.has(k)) openTree.delete(k); else openTree.add(k); keepTree(); render(); return; } const b = e.target.closest('[data-cat]'); if (!b) return; cat = b.dataset.cat; sel.clear(); srvSel = null; render(); if (onServer()) loadServer(); };
   $('search').oninput = (e) => { query = e.target.value; if (onServer()) { clearTimeout(srvTimer); srvTimer = setTimeout(() => loadServer(), 300); return; } render(); };
   $('grid').addEventListener('change', (e) => { if (e.target.matches('[data-page-to]')) goPage((+e.target.value || 1) - 1); });
   $('grid').addEventListener('click', (e) => {

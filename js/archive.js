@@ -130,7 +130,7 @@
                 const b = await bytesOf(arg, e), isSvg = /\.svg$/i.test(e.name);
                 const it = await L.makeItem({ name: nm.name, category: S.category, tags: nm.tags, svg: isSvg ? new TextDecoder().decode(b) : null, png: isSvg ? null : new Blob([b], { type: /\.jpe?g$/i.test(e.name) ? 'image/jpeg' : /\.gif$/i.test(e.name) ? 'image/gif' : /\.webp$/i.test(e.name) ? 'image/webp' : 'image/png' }), source: S.source });
                 Object.assign(it, { type: 'clipart', original: nm.id || e.name.replace(/^.*\//, ''), privacy: S.privacy === 'me' ? 'me' : '', licence: S.licence, collection: S.source, checked: false });
-                if (S.where !== 'server') await L.put(it, true); batch.push(it); made++;
+                if (S.where !== 'server') { if (L.bookIds) it.id = (await L.bookIds(S.source || title, 1, true))[0]; await L.put(it, true); } batch.push(it); made++; // (kept here: in the set's books of 2,000)
               } catch (err) { console.warn('Skipped', e.name, err); }
             };
             let qi = 0; await Promise.all(Array.from({ length: 4 }, async () => { while (qi < part.length && !stop) await one(part[qi++]); }));

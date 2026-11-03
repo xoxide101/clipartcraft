@@ -451,3 +451,6 @@ label.ed-sw input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .pagebar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; gap: 12px; padding: 6px 0; }
 .pagebar .input { width: 72px; height: 28px; padding: 2px 6px; text-align: center; }
 .countline { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; padding: 6px 10px; border-radius: 8px; background: var(--panel-2, #23242c); font-size: 13px; }
+.book-set { display: flex; justify-content: space-between; padding: 6px 10px 2px; font-size: 12px; font-weight: 600; opacity: .85; }
+.cat.book { padding-left: 22px; }
+.cat.book.open span::after { content: ' · open'; color: var(--accent, #7c3aed); font-size: 11px; }

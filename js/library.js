@@ -32,6 +32,52 @@
 
   async function all() { return tx('items', 'readonly', (s) => req(s.getAll())); }
   async function get(id) { return tx('items', 'readonly', (s) => req(s.get(id))); }
+
+  // ------------------------------------------------------------------ books: a big set kept apart, read one book at a time
+  // The browser never holds more than your own pictures and one book. A big set (Microsoft's archive, a server's pictures
+  // known by their details) is kept in books of 20,000 (2,000 when they carry their files: SVG text and thumbnails weigh
+  // far more), numbered in the order they came. A book's items have ids "!<set>~<book>~<uid>" ('!' sorts below every other
+  // id), so one key range reads exactly one book; your own pictures keep plain ids and are read by the range above it.
+  const BOOK = 20000, BOOK_FILES = 2000, MAIN = IDBKeyRange.lowerBound('"');
+  const setKeyOf = (name) => String(name || 'server').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'server';
+  const inBook = (id) => String(id || '').startsWith('!');
+  const bookRange = (set, no) => { const p = `!${set}~${String(no).padStart(3, '0')}~`; return IDBKeyRange.bound(p, p + '\uffff'); };
+  async function books() { return (await meta('books')) || {}; } // { set: { name, n (given out so far), size } }
+  // ids for n items of a set, in the books they fall in (the set's count kept, so the next ones carry on)
+  async function bookIds(name, n, withFiles) {
+    const B = await books(), k = setKeyOf(name), b = B[k] || (B[k] = { name: String(name || 'Server'), n: 0, size: withFiles ? BOOK_FILES : BOOK }), out = [];
+    // (the set's running number ends the id: never the same twice, and in the order they came; a random ending made thousands
+    // at once could repeat, and one would overwrite another)
+    for (let i = 0; i < n; i++) { const no = Math.floor(b.n / b.size) + 1; out.push(`!${k}~${String(no).padStart(3, '0')}~${String(b.n).padStart(8, '0')}`); b.n++; }
+    await meta('books', B); return out;
+  }
+  // your own pictures (not in a book); one book; how many each book holds (counted, not read)
+  async function main() { return tx('items', 'readonly', (s) => req(s.getAll(MAIN))); }
+  async function book(set, no) { return tx('items', 'readonly', (s) => req(s.getAll(bookRange(set, no)))); }
+  async function bookList() {
+    const B = await books(), out = [];
+    for (const [k, b] of Object.entries(B)) { const last = Math.max(1, Math.ceil(b.n / b.size)); for (let no = 1; no <= last; no++) { const n = await tx('items', 'readonly', (s) => req(s.count(bookRange(k, no)))); if (n) out.push({ set: k, name: b.name, no, n, from: (no - 1) * b.size + 1, size: b.size }); } }
+    return out;
+  }
+  // the items already here that belong in books (known by their details only, or from a big archive), moved into them,
+  // in the order they came, a few hundred at a time; once (a mark is kept)
+  async function toBooks(progress = () => {}) {
+    const d = await open(), list = await new Promise((ok, no) => { const out = [], r = d.transaction('items', 'readonly').objectStore('items').openCursor(MAIN);
+      r.onsuccess = () => { const c = r.result; if (!c) return ok(out); const v = c.value; if (v.remote || (v.collection && /office clip art/i.test(v.collection))) out.push({ id: v.id, set: v.collection || v.source || 'Server', files: !v.remote, at: v.serverChanged || v.added || '' }); c.continue(); }; r.onerror = () => no(r.error); });
+    if (!list.length) return 0;
+    list.sort((a, b) => String(a.at).localeCompare(String(b.at)));
+    const groups = new Map(); for (const x of list) { const k = `${x.set}|${x.files}`; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(x); }
+    let n = 0, queue = new Set((await meta('pushQueue')) || []);
+    for (const g of groups.values()) {
+      const ids = await bookIds(g[0].set, g.length, g[0].files);
+      for (let i = 0; i < g.length; i += 300) {
+        const part = g.slice(i, i + 300);
+        await tx('items', 'readwrite', async (st) => { for (let j = 0; j < part.length; j++) { const v = await req(st.get(part[j].id)); if (!v) continue; const nid = ids[i + j]; if (queue.has(v.id)) { queue.delete(v.id); queue.add(nid); } v.id = nid; st.put(v); st.delete(part[j].id); } });
+        n += part.length; progress(n, list.length, 'books');
+      }
+    }
+    await meta('pushQueue', [...queue]); changed(); return n;
+  }
   // a few facts of every item, read one at a time (never the whole library in memory at once: its SVGs and thumbnails stay
   // on disk): what a comparison with the server, or a check for copies, needs
   async function facts(keys = ['id', 'serverId', 'serverChanged', 'thumbFrom', 'remote', 'changed', 'edited', 'added', 'original', 'name']) {
@@ -304,7 +350,9 @@
     }
     // new on the server: brought down only when they are few (a big collection there, an archive of thousands, is browsed
     // on the server a page at a time: brought into this browser it would be too much for the page)
-    for (const s of fresh) note(s, null).why = 'new on the server (its details; the picture comes when it is used)';
+    // (new ones: into their set's book; a set is its collection or source, Microsoft's archive one set, the rest "Server")
+    const bySet = new Map(); for (const s of fresh) { const k = s.collection || s.source || 'Server'; if (!bySet.has(k)) bySet.set(k, []); bySet.get(k).push(s); }
+    for (const [k, l] of bySet) { const ids = await bookIds(k, l.length, false); l.forEach((s, i) => { const it = note(s, null); it.id = ids[i]; it.why = 'new on the server (its details; the picture comes when it is used)'; }); }
     // (the data saved a few hundred to a transaction: thousands, one by one, would take minutes)
     for (let i = 0; i < datas.length; i += 500) { const part = datas.slice(i, i + 500); await tx('items', 'readwrite', (st) => Promise.all(part.map((x) => req(st.put(x))))); progress(Math.min(datas.length, i + 500), datas.length, 'save'); }
     // (a whole pull: pictures here that the server had but no longer has were deleted there, from another machine: they go here too)
@@ -336,5 +384,5 @@
   async function lessons(value) { return value === undefined ? (await meta('lessons')) || [] : meta('lessons', value); }
   // the original IDs of every picture on the server (a big archive skips those it has), read a page of 5,000 at a time
   async function serverOriginals() { const out = new Set(); for (let off = 0; ; off += 5000) { const r = await call(`/api/items?limit=5000&offset=${off}`); r.items.forEach((x) => x.original && out.add(x.original)); if (!r.items.length || off + r.items.length >= r.total) break; } return out; }
-  window.CraftClipart = { dedupe, facts, files, serverOriginals, tell: () => changed(), zip, DB, lists, lessons, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, deleteItems, deleteOnServer, sendDeletes, notHere, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip, stampPng, stampSvg, coreSum, sumsOf, svgMatch, traceMatched, pixelsOfItem, dropServerSvg, MATCH, svgUnits, scaleFor, svgPng, TARGET };
+  window.CraftClipart = { inBook, setKeyOf, books, bookIds, main, book, bookList, toBooks, BOOK, BOOK_FILES, dedupe, facts, files, serverOriginals, tell: () => changed(), zip, DB, lists, lessons, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, deleteItems, deleteOnServer, sendDeletes, notHere, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip, stampPng, stampSvg, coreSum, sumsOf, svgMatch, traceMatched, pixelsOfItem, dropServerSvg, MATCH, svgUnits, scaleFor, svgPng, TARGET };
 })();
