@@ -21,7 +21,7 @@
   const letterOf = (n) => { const c = String(n || '').trim().charAt(0).toUpperCase(); return /[A-Z]/.test(c) ? c : /[0-9]/.test(c) ? '0-9' : '#'; };
   const azOk = (it) => (!letter || letterOf(it.name) === letter) && (!pre3 || String(it.name || '').trim().slice(0, 3).toLowerCase() === pre3);
   const shown = () => allShown().filter(azOk);
-  const allShown = () => { const q = query.trim().toLowerCase(); const words = q.split(/\s+/).filter(Boolean); if (cat === '#work') return work.filter((w) => words.every((x) => w.name.toLowerCase().includes(x))); return items.filter((it) => (cat === '*' || (cat === '#unsorted' ? !KNOWN().includes(it.category || '') : cat.startsWith('#src:') ? srcOf(it) === cat.slice(5) : cat === '#mine' ? !L.inBook(it.id) : cat.startsWith('#book:') ? it.id.startsWith(`!${cat.slice(6).split('|')[0]}~${cat.slice(6).split('|')[1].padStart(3, '0')}~`) : cat.startsWith('#fmt:') ? fmtIs(it, cat.slice(5)) : cat.startsWith('#sub:') ? (() => { const [c, sj] = cat.slice(5).split('|'); return it.category === c && subjectOf(it) === sj; })() : cat.startsWith('#srcat:') ? (() => { const [k, c] = cat.slice(7).split('|'); return srcOf(it) === k && (c === 'Not sorted yet' ? !KNOWN().includes(it.category || '') : it.category === c); })() : (it.category || '') === cat)) && words.every((x) => [it.name, it.original, it.seen, it.matched, (it.tags || []).join(' '), it.category, it.style, it.form, it.kind === 'bw' ? 'black and white' : it.kind, it.anim ? 'animated animation' : '', it.description].join(' ').toLowerCase().includes(x))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })); };
+  const allShown = () => { const q = query.trim().toLowerCase(); const words = q.split(/\s+/).filter(Boolean); if (cat === '#work') return work.filter((w) => words.every((x) => w.name.toLowerCase().includes(x))); return items.filter((it) => (cat === '*' || (cat === '#unsorted' ? !KNOWN().includes(it.category || '') : cat.startsWith('#src:') ? srcOf(it) === cat.slice(5) : cat === '#mine' ? !L.inBook(it.id) : cat.startsWith('#book:') ? it.id.startsWith(`!${cat.slice(6).split('|')[0]}~${cat.slice(6).split('|')[1].padStart(3, '0')}~`) : cat === '#ai:done' ? !!it.sorted : cat === '#ai:todo' ? !it.sorted : cat.startsWith('#fmt:') ? fmtIs(it, cat.slice(5)) : cat.startsWith('#sub:') ? (() => { const [c, sj] = cat.slice(5).split('|'); return it.category === c && subjectOf(it) === sj; })() : cat.startsWith('#srcat:') ? (() => { const [k, c] = cat.slice(7).split('|'); return srcOf(it) === k && (c === 'Not sorted yet' ? !KNOWN().includes(it.category || '') : it.category === c); })() : (it.category || '') === cat)) && words.every((x) => [it.name, it.original, it.seen, it.matched, (it.tags || []).join(' '), it.category, it.style, it.form, it.kind === 'bw' ? 'black and white' : it.kind, it.anim ? 'animated animation' : '', it.description].join(' ').toLowerCase().includes(x))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })); };
   // the agreed categories (the AI's), and which pictures still need sorting: no category from them, or a name that
   // only says where it came from (Sheet 6 – 3, IMG_2041, clip art 12)
   const KNOWN = () => (window.CraftNamer ? CraftNamer.CATEGORIES : []);
@@ -34,7 +34,7 @@
   // the sheets and files pictures came from, most first: [key, label, count]
   const sources = () => { const m = new Map(); items.forEach((it) => { const k = srcOf(it); m.set(k, (m.get(k) || 0) + 1); }); return [...m].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([k, n]) => [k, k, n]); };
   const placeholderName = (n) => { const t = String(n).trim(), u = t.replace(/_\d{3,}$/, ''); return /^(sheet\b.*[–-]\s*\d+|clip ?art(\s*[–-]?\s*\d+)?|img[ _-]?\d+|dsc\S*\d+|untitled|picture\s*\d*|item\s*\d*)$/i.test(t) || /^(clip ?art(\s*[–-]?\s*\d+)?|untitled|picture\s*\d*|item\s*\d*)$/i.test(u) || /^[0-9a-f]{6,}(?:[\s-]+[0-9a-f]{3,})+/i.test(u) || /\s[–-]\s*\d+$/.test(u); };
-  const needsSort = (it) => !KNOWN().includes(it.category || '') || placeholderName(it.name);
+  const needsSort = (it) => !it.sorted && (!KNOWN().includes(it.category || '') || placeholderName(it.name));
   // learning from a correction: the picture's look and the user's answer are remembered (and a new name word is added
   // to that category's words), so pictures like it are named and sorted that way from now on
   async function teach(it, quiet) {
@@ -57,11 +57,18 @@
       const prog = (got, total, what) => busy(what === 'words' ? `Learning the words… ${got} of ${total}` : `Getting the AI (once)… ${Math.round(got / 1048576)} of ${Math.round(total / 1048576)} MB${what ? ` · ${String(what).split('/').pop()}` : ''}`);
       if (describeOn()) { busy('Getting the describing AI ready…'); try { await N.describeReady(prog); } catch (e) { console.warn(e); toast('The describing AI could not start here; names come from the word list.'); } }
       await N.ready((got, total, what) => busy(what === 'words' ? `Learning the words… ${got} of ${total}` : `Getting the AI (once, about ${N.MB} MB)… ${Math.round(got / 1048576)} of ${Math.round(total / 1048576)} MB`));
-      const taken = new Set(items.map((it) => it.name.toLowerCase())); let n = 0;
+      // (marked ones are done: skipped, so sorting again carries on where it stopped)
+      if (!again) list = list.filter((it) => !it.sorted); if (!list.length) { busy(); if (!quiet) toast('These are all sorted by the AI already (✓).'); return 0; }
+      // (the page sorts at most 300 a go: more in one page ran out of memory; Sort with AI again carries on, and whole sets go to the
+      // maintenance tool: server/clipart-maintain.js sort)
+      const all = list.length, PAGE_MAX = 300; if (list.length > PAGE_MAX) list = list.slice(0, PAGE_MAX);
+      const taken = new Set(items.map((it) => it.name.toLowerCase())); let n = 0, stop = false, toSend = [];
+      const J = list.length > 3 ? jobStrip('Sort with AI', { onStop: () => { stop = true; } }) : null;
+      const send = async () => { const S = toSend; toSend = []; if (S.length && serverUrl && serverOk) { try { await L.push(S); } catch (e) { /* Sync sends them later */ } } L.tell && L.tell(); };
       for (const it of list) {
-        busy(`Sorting ${++n} of ${list.length}: ${it.name}…`);
+        if (stop) break; n++; busy(J ? '' : `Sorting ${n} of ${list.length}: ${it.name}…`); if (J) J.step(`now: ${it.name}`, n - 1, list.length);
         let src; try { src = it.png ? await createImageBitmap(it.png) : !it.svg && it.thumb ? await createImageBitmap(await (await fetch(it.thumb)).blob()) : await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = L.svgUrl(it.svg); }); } catch (e) { continue; }
-        const c = document.createElement('canvas'); c.width = src.width || 224; c.height = src.height || 224; c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+        const c = document.createElement('canvas'); c.width = Math.min(src.width || 224, 512); c.height = Math.min(src.height || 224, 512); c.getContext('2d').drawImage(src, 0, 0, c.width, c.height); if (src.close) src.close(); // (released at once: thousands kept made the page run out of memory)
         const t0 = performance.now(), lessons = await L.lessons(), ai = window.CraftKeys ? await CraftKeys.track('local', () => N.name(c, { lessons, describe: describeOn() })) : await N.name(c, { lessons, describe: describeOn() }); it.ai = ai.words; it.vec = ai.vec; if (ai.description) it.description = ai.description;
         if (window.CraftKeys) CraftKeys.activity('local', { what: `Sort “${it.name}”`, model: describeOn() ? 'CLIP + Florence-2 (this computer)' : 'CLIP (this computer)', ms: Math.round(performance.now() - t0), came: `${ai.name} · ${ai.category}${ai.description ? ' · “' + ai.description + '”' : ''}` });
         // the names side by side: the one it came with (kept for good), what the AI sees, and the nearest word on the lists
@@ -69,10 +76,13 @@
         if (!KNOWN().includes(it.category || '') || again) it.category = it.checked && !again ? it.category : ai.category;
         it.style = it.style || ai.style; it.form = it.form || ai.form; it.tags = [...new Set([...(it.tags || []), ...ai.tags])];
         if (placeholderName(it.name) || (again && !it.checked)) { taken.delete(it.name.toLowerCase()); let nm = ai.name; for (let k = 2; taken.has(nm.toLowerCase()); k++) nm = `${ai.name}_${String(k).padStart(3, '0')}`; it.name = nm; taken.add(nm.toLowerCase()); }
-        await L.put(it);
+        it.sorted = `${describeOn() ? 'CLIP + Florence-2' : 'CLIP'} · ${new Date().toISOString()}`; if (it.serverId) { it.changed = true; toSend.push(it); }
+        await L.put(it, true); if (toSend.length >= 25) await send();
       }
-      busy(); if (!quiet) toast(`Sorted ${list.length} picture${list.length === 1 ? '' : 's'}: each has a category, style, form and tags.`);
-      return list.length;
+      await send(); busy(); const done = n; // (the one being sorted when Stop was pressed is finished and counted)
+      if (J) J.end(stop ? `stopped: ${done.toLocaleString()} sorted, ${(all - done).toLocaleString()} left (Sort with AI carries on with those)` : all > done ? `${done.toLocaleString()} sorted, ${(all - done).toLocaleString()} still to do: Sort with AI again does the next ${Math.min(300, all - done)}; for a whole set use the maintenance tool (server › start-maintenance)` : `done: ${done.toLocaleString()} sorted`);
+      else if (!quiet) toast(`Sorted ${done} picture${done === 1 ? '' : 's'}: each has a category, style, form and tags.`);
+      return done;
     });
   }
   // after new pictures come in: sorted at once if the AI is already here, otherwise the button in the menu offers it
@@ -155,9 +165,10 @@
   }
   // A progress strip for a long server job (Sync, Get, the opening check): only what it is doing now, step by step (how
   // many of how many, how fast, how long so far), apart from the picture totals in the count line
-  function jobStrip(title) {
+  function jobStrip(title, { onStop } = {}) {
     document.querySelectorAll('.job-strip').forEach((x) => x.remove());
-    const el = document.createElement('div'); el.className = 'arc-strip job-strip'; el.innerHTML = '<div class="arc-bar"><i></i></div><span class="arc-strip-t"></span><button class="btn ghost sm" type="button" data-job="hide">Hide</button>'; document.body.append(el);
+    const el = document.createElement('div'); el.className = 'arc-strip job-strip'; el.innerHTML = `<div class="arc-bar"><i></i></div><span class="arc-strip-t"></span>${onStop ? '<button class="btn ghost sm" type="button" data-job="stop">Stop</button>' : ''}<button class="btn ghost sm" type="button" data-job="hide">Hide</button>`; document.body.append(el);
+    el.addEventListener('click', (e) => { const b = e.target.closest('[data-job=stop]'); if (b && onStop) { onStop(); b.disabled = true; b.textContent = 'Stopping…'; } });
     el.addEventListener('click', (e) => { if (e.target.closest('[data-job=hide]')) el.hidden = true; });
     const t0 = performance.now(); let ph0 = '', p0 = 0, n0 = 0, last = 0;
     const secs = () => (performance.now() - t0) / 1000, dur = (x) => (x >= 90 ? `${Math.round(x / 60)} min` : `${Math.max(1, Math.round(x))} s`);
@@ -168,7 +179,7 @@
       el.querySelector('.arc-bar i').style.width = of ? `${(100 * (n || 0)) / of}%` : '0%';
     };
     const WORDS = { dedupe: 'took out copies of the same server picture', list: 'reading the server’s list', save: 'saving the details', files: 'updating pictures kept with their files' };
-    return { step, pullStep: (n, t, ph) => step(WORDS[ph] || 'getting', n, t), end(text) { el.hidden = false; el.querySelector('.arc-strip-t').textContent = `${title}: ${text} · ${dur(secs())}`; el.querySelector('.arc-bar i').style.width = '100%'; const b = el.querySelector('[data-job]'); b.textContent = 'Close'; setTimeout(() => el.remove(), 12000); } };
+    return { step, pullStep: (n, t, ph) => step(WORDS[ph] || 'getting', n, t), end(text) { el.hidden = false; el.querySelector('.arc-strip-t').textContent = `${title}: ${text} · ${dur(secs())}`; el.querySelector('.arc-bar i').style.width = '100%'; el.querySelector('[data-job=stop]')?.remove(); const b = el.querySelector('[data-job=hide]'); b.textContent = 'Close'; setTimeout(() => el.remove(), 12000); } };
   }
   // Send to the server now (right-click): the chosen pictures sent as they are here, whatever is marked (a force update)
   async function forceSend(S) { if (!S.length) return; try { busy(`Sending ${S.length}…`); const d = await L.push(S, (k, t) => busy(`Sending ${k} of ${t}…`)); busy(); await reload(); if (onServer()) loadServer(); toast(`Sent to the server: ${d.length === 1 ? `“${d[0].name}”` : `${d.length} pictures`}.`); } catch (e) { busy(); fail(e); } }
@@ -286,6 +297,7 @@
         if (it.serverId) it.changed = true; it.edited = new Date().toISOString(); await L.put(it); n++; } catch (e) { no++; } }
     busy(); await reload(); sendNow(S); toast(kind === 'svg' ? `${n} SVG${n === 1 ? '' : 's'} added${no ? `; ${no} did not match their picture (kept as PNG only)` : ''}.` : `${n} PNG${n === 1 ? '' : 's'} drawn again from the SVG${no ? `; ${no} failed` : ''}.`);
   }
+  const aiMark = (it) => (it.sorted ? `<i class="aimark done" title="Sorted by an AI: ${esc(String(it.sorted).replace(' · ', ', '))}">✓</i>` : '<i class="aimark" title="Not sorted by an AI yet">○</i>');
   const LOCK = '<i class="lock" title="Only me: on the server only with your key"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" fill="currentColor"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2.4"/></svg></i>';
   // Pages of 600: the grid only ever holds one page (here and on the server), however big the library grows; a bar above and
   // below goes to the previous or next page or to any page typed in. Another category or search starts at page 1.
@@ -352,12 +364,13 @@
       + (bookRows.length ? `<div class="work-head">Books <small class="hint">(one open at a time)</small></div>` + [...new Set(bookRows.map((r) => r.set))].map((k) => { const rows = bookRows.filter((r) => r.set === k); return `<div class="book-set"><span>${esc(rows[0].name)}</span><b>${rows.reduce((a, r) => a + r.n, 0).toLocaleString()}</b></div>` + rows.map((r) => `<button type="button" class="cat book${bookKey(openBook) === bookKey(r) ? ' open' : ''}" data-book="${esc(bookKey(r))}" aria-current="${cat === '#book:' + bookKey(r)}" title="${bookKey(openBook) === bookKey(r) ? 'Open now' : 'Open this book (the one open now is put away)'}"><span>Book ${r.no} <small class="hint">(${r.from.toLocaleString()}–${(r.from + r.n - 1).toLocaleString()})</small></span><b>${r.n.toLocaleString()}</b></button>`).join(''); }).join('') : '')
       + `<div class="work-head">Categories</div>` + KNOWN().map((c) => branch(c, c, count.get(c) || 0, count.get(c) ? groupBy(items.filter((it) => it.category === c), subjectOf).map(([sj, n]) => ['#sub:' + c + '|' + sj, sj, n]) : [], !count.get(c))).join('')
       + (unsorted ? catBtn(['#unsorted', 'Not sorted yet', unsorted]) : '')
+      + (() => { const d = items.filter((it) => it.sorted).length; return items.length ? `<div class="work-head">Sorting by AI</div>` + catBtn(['#ai:done', '✓ Sorted by AI', d]) + catBtn(['#ai:todo', '○ Not sorted by AI yet', items.length - d]) : ''; })()
       + (() => { const f = FMTS.map(([k, l]) => ['#fmt:' + k, l, items.filter((it) => fmtIs(it, k)).length]).filter(([, , n]) => n); return f.length ? `<div class="work-head">By format</div>` + f.map(catBtn).join('') : ''; })()
       + (toSort ? `<button type="button" class="btn outline sort-ai" data-act="sort-ai" title="The AI looks at each picture and gives it a category, style, form and tags (and a name, where it only has a number)">Sort ${toSort} with AI</button>` : '')
       + (srcs.length ? `<div class="work-head">From sheets and files</div>` + srcs.map(([k, l, n]) => branch('#src:' + k, l, n, groupBy(items.filter((it) => srcOf(it) === k), (it) => (KNOWN().includes(it.category || '') ? it.category : 'Not sorted yet')).map(([c, m]) => ['#srcat:' + k + '|' + c, c, m]))).join('') : '')
       + `<div class="work-head">Working area</div>` + catBtn(['#work', 'Files imported from', work.length]);
     const S = shown(), g = $('grid'), keepY = g.scrollTop; g.style.setProperty('--tile', size + 'px');
-    g.innerHTML = onServer() ? (srv.items.map((x) => `<button type="button" class="tile" role="option" data-srv-id="${esc(x.id)}" aria-selected="${srvSel === x.id}" title="${esc(x.name)}${x.category ? ' · ' + esc(x.category) : ''}"><span class="pic"><img src="${esc((x.links || {}).thumb || (x.links || {}).png || (x.links || {}).svg || '')}" alt="" loading="lazy"></span><span class="nm">${esc(x.name)}</span>${x.privacy === 'me' ? LOCK : ''}${keptOf(x) ? '<i class="used">kept</i>' : ''}${fmtBadge(x)}</button>`).join('')  || `<p class="hint" style="padding:16px">${srv.loading ? 'Asking the server…' : 'Nothing on the server matches.'}</p>`) : cat === '#work' ? S.map((w) => `<button type="button" class="tile" role="option" data-id="${w.id}" aria-selected="${sel.has(w.id)}" title="${esc(w.fileName)}"><span class="pic">${w.thumb ? `<img src="${w.thumb}" alt="" loading="lazy">` : ''}</span><span class="nm">${esc(w.name)}</span>${w.used ? `<i class="used">${w.used} made</i>` : ''}<i class="fmt">${esc((w.fileName.split('.').pop() || '').toUpperCase())}</i></button>`).join('') : S.slice(page * PAGE, (page + 1) * PAGE).map((it) => `<button type="button" class="tile" role="option" data-id="${it.id}" aria-selected="${sel.has(it.id)}" title="${esc(it.name)}${it.category ? ' · ' + esc(it.category) : ''}"><span class="pic"><img src="${it.thumb}" alt="" loading="lazy"></span><span class="nm">${esc(it.name)}</span>${it.privacy === 'me' ? LOCK : ''}${fmtBadge(it)}</button>`).join('');
+    g.innerHTML = onServer() ? (srv.items.map((x) => `<button type="button" class="tile" role="option" data-srv-id="${esc(x.id)}" aria-selected="${srvSel === x.id}" title="${esc(x.name)}${x.category ? ' · ' + esc(x.category) : ''}"><span class="pic"><img src="${esc((x.links || {}).thumb || (x.links || {}).png || (x.links || {}).svg || '')}" alt="" loading="lazy"></span><span class="nm">${esc(x.name)}</span>${aiMark(x)}${x.privacy === 'me' ? LOCK : ''}${keptOf(x) ? '<i class="used">kept</i>' : ''}${fmtBadge(x)}</button>`).join('')  || `<p class="hint" style="padding:16px">${srv.loading ? 'Asking the server…' : 'Nothing on the server matches.'}</p>`) : cat === '#work' ? S.map((w) => `<button type="button" class="tile" role="option" data-id="${w.id}" aria-selected="${sel.has(w.id)}" title="${esc(w.fileName)}"><span class="pic">${w.thumb ? `<img src="${w.thumb}" alt="" loading="lazy">` : ''}</span><span class="nm">${esc(w.name)}</span>${w.used ? `<i class="used">${w.used} made</i>` : ''}<i class="fmt">${esc((w.fileName.split('.').pop() || '').toUpperCase())}</i></button>`).join('') : S.slice(page * PAGE, (page + 1) * PAGE).map((it) => `<button type="button" class="tile" role="option" data-id="${it.id}" aria-selected="${sel.has(it.id)}" title="${esc(it.name)}${it.category ? ' · ' + esc(it.category) : ''}"><span class="pic"><img src="${it.thumb}" alt="" loading="lazy"></span><span class="nm">${esc(it.name)}</span>${aiMark(it)}${it.privacy === 'me' ? LOCK : ''}${fmtBadge(it)}</button>`).join('');
     { const total = onServer() ? srv.total : cat === '#work' ? 0 : S.length, bar = pageBar(total); if (bar) g.insertAdjacentHTML('beforeend', bar); $('gridnav').innerHTML = cat === '#work' ? '' : navBar(total) + azBar() + countLine(); $('gridnav').hidden = cat === '#work'; }
     g.scrollTop = keepY; // (redrawn in place: choosing a picture does not jump the grid)
     const showIt = startOpen || (!items.length && cat !== '#work' && !onServer()); $('start').hidden = !showIt; if (showIt) renderStart();
@@ -1150,7 +1163,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
       for (const it of list) {
         busy(`Asking ${C.NAMES[C.provider()]}: ${++n} of ${list.length}, ${it.name}…`);
         let src; try { src = it.png ? await createImageBitmap(it.png) : !it.svg && it.thumb ? await createImageBitmap(await (await fetch(it.thumb)).blob()) : await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = L.svgUrl(it.svg); }); } catch (e) { continue; }
-        const c = document.createElement('canvas'); c.width = src.width || 512; c.height = src.height || 512; c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+        const c = document.createElement('canvas'); c.width = Math.min(src.width || 512, 1024); c.height = Math.min(src.height || 512, 1024); c.getContext('2d').drawImage(src, 0, 0, c.width, c.height); if (src.close) src.close();
         let a; try { a = await C.look(c, lists); } catch (e) { busy(); if (!done) throw e; toast(`${done} done, then: ${e.message}`); return done; }
         if (!it.original) it.original = it.name;
         if (a.name) { taken.delete(it.name.toLowerCase()); let nm = a.name; for (let k = 2; taken.has(nm.toLowerCase()); k++) nm = `${a.name}_${String(k).padStart(3, '0')}`; it.name = nm; taken.add(nm.toLowerCase()); it.seen = a.name; }

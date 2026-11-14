@@ -8,3 +8,4 @@ server/debug.log
 server/debug.log.old
 config.js
 lib/ai-build/node_modules/
+server/maintain.log

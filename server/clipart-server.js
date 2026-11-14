@@ -67,7 +67,7 @@ function saveSettings(s) { try { fs.writeFileSync(SETTINGS, GUARD + JSON.stringi
 
 // ------------------------------------------------------------------ the item: what every database keeps
 // Columns are plain text and numbers so SQLite, MySQL and MariaDB hold them the same way.
-const COLS = ['id', 'type', 'name', 'original', 'seen', 'matched', 'category', 'style', 'form', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash', 'privacy', 'added', 'changed', 'files'];
+const COLS = ['id', 'type', 'name', 'original', 'seen', 'matched', 'category', 'style', 'form', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash', 'privacy', 'sorted', 'added', 'changed', 'files'];
 const FILE_KINDS = ['png', 'svg', 'anim', 'orig', 'thumb', 'model']; // the files one item may have (model: a 3D mesh)
 const TYPES = ['clipart', 'model']; // what an item is: clip art, or a 3D model (its png/thumb are pictures of it)
 const MIME = { png: 'image/png', svg: 'image/svg+xml', gif: 'image/gif', webp: 'image/webp', apng: 'image/apng', jpg: 'image/jpeg', jpeg: 'image/jpeg', avif: 'image/avif', bmp: 'image/bmp', ico: 'image/x-icon', tif: 'image/tiff', tiff: 'image/tiff', json: 'application/json', zip: 'application/zip', glb: 'model/gltf-binary', gltf: 'model/gltf+json', obj: 'model/obj', stl: 'model/stl', ply: 'application/ply', '3mf': 'model/3mf' };
@@ -87,10 +87,10 @@ async function uniqueName(db, name, id) {
 
 // ------------------------------------------------------------------ databases (drivers): sqlite, mysql/mariadb, json
 // columns added since the first version: an older database gets them when it is opened
-const ADDED = ['type VARCHAR(20)', 'style VARCHAR(40)', 'form VARCHAR(40)', 'original VARCHAR(200)', 'seen VARCHAR(200)', 'matched VARCHAR(200)', 'privacy VARCHAR(10)'];
+const ADDED = ['type VARCHAR(20)', 'style VARCHAR(40)', 'form VARCHAR(40)', 'original VARCHAR(200)', 'seen VARCHAR(200)', 'matched VARCHAR(200)', 'privacy VARCHAR(10)', 'sorted VARCHAR(120)'];
 const SCHEMA = (big) => `CREATE TABLE IF NOT EXISTS items (id VARCHAR(40) PRIMARY KEY, type VARCHAR(20), name VARCHAR(200) NOT NULL, original VARCHAR(200), seen VARCHAR(200), matched VARCHAR(200), category VARCHAR(200), style VARCHAR(40), form VARCHAR(40), tags ${big}, description ${big},
   kind VARCHAR(20), width INTEGER, height INTEGER, frames INTEGER, colours INTEGER, source VARCHAR(500), author VARCHAR(200), licence VARCHAR(200),
-  hash VARCHAR(64), privacy VARCHAR(10), added VARCHAR(40), changed VARCHAR(40), files ${big})`;
+  hash VARCHAR(64), privacy VARCHAR(10), sorted VARCHAR(120), added VARCHAR(40), changed VARCHAR(40), files ${big})`;
 
 function sqliteDb(dir) {
   const { DatabaseSync } = require('node:sqlite');
@@ -100,7 +100,7 @@ function sqliteDb(dir) {
   const q = (sql, ...a) => d.prepare(sql).all(...a), one = (sql, ...a) => d.prepare(sql).get(...a);
   return {
     kind: 'sqlite', where: dir, filesDir: path.join(dir, 'files'),
-    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0, all = true, since = '', order = '', starts = '' } = {}) { const [w, a] = filter(text, category, type, all, since, starts); return { total: one(`SELECT COUNT(*) n FROM items ${w}`, ...a).n, items: q(`SELECT * FROM items ${w} ORDER BY ${order === 'changed' ? 'changed, id' : 'name COLLATE NOCASE'} LIMIT ? OFFSET ?`, ...a, +limit, +offset).map(fromRow) }; },
+    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0, all = true, since = '', order = '', starts = '', unsorted = false } = {}) { const [w, a] = filter(text, category, type, all, since, starts, unsorted); return { total: one(`SELECT COUNT(*) n FROM items ${w}`, ...a).n, items: q(`SELECT * FROM items ${w} ORDER BY ${order === 'changed' ? 'changed, id' : 'name COLLATE NOCASE'} LIMIT ? OFFSET ?`, ...a, +limit, +offset).map(fromRow) }; },
     async get(id) { return fromRow(one('SELECT * FROM items WHERE id = ?', id)); },
     async byName(name) { return fromRow(one('SELECT * FROM items WHERE name = ? COLLATE NOCASE', name)); },
     async namesLike(base) { return q("SELECT id, name FROM items WHERE name = ? COLLATE NOCASE OR name LIKE ? ESCAPE '\\'", base, base.replace(/[\\%_]/g, '\\$&') + '\\_%'); },
@@ -114,8 +114,9 @@ function sqliteDb(dir) {
 // a search: every word must be found in the name, tags, category or description
 // (starts: names beginning with these letters, or '0-9' (a digit) or '#' (neither a letter nor a digit): the A–Z bar)
 const startsOk = (name, s) => { if (!s) return true; const c = String(name || '').charAt(0); return s === '0-9' ? /[0-9]/.test(c) : s === '#' ? !/[a-z0-9]/i.test(c) : String(name || '').toLowerCase().startsWith(String(s).toLowerCase()); };
-function filter(text, category, type, all = true, since = '', starts = '') {
-  const w = [], a = [];
+// (unsorted: only the pictures no AI has sorted yet: what the maintenance tool asks for)
+function filter(text, category, type, all = true, since = '', starts = '', unsorted = false) {
+  const w = [], a = []; if (unsorted) w.push("COALESCE(sorted, '') = ''");
   if (starts === '0-9') w.push("(SUBSTR(name, 1, 1) BETWEEN '0' AND '9')"); else if (starts === '#') w.push("NOT (UPPER(SUBSTR(name, 1, 1)) BETWEEN 'A' AND 'Z' OR SUBSTR(name, 1, 1) BETWEEN '0' AND '9')"); else if (starts) { w.push("LOWER(name) LIKE ? ESCAPE '!'"); a.push(String(starts).toLowerCase().replace(/[!%_]/g, (c) => '!' + c) + '%'); } if (!all) w.push("COALESCE(privacy, '') <> 'me'"); if (since) { w.push('changed > ?'); a.push(String(since)); } if (type) { w.push("COALESCE(type, 'clipart') = ?"); a.push(type); } for (const word of String(text).toLowerCase().split(/\s+/).filter(Boolean)) { w.push("LOWER(CONCAT_WS(' ', name, original, seen, matched, tags, category, style, form, description)) LIKE ?"); a.push(`%${word}%`); }
   if (category !== null && category !== undefined) { w.push("COALESCE(category, '') = ?"); a.push(category); }
   return [w.length ? 'WHERE ' + w.join(' AND ') : '', a];
@@ -140,7 +141,7 @@ function mysqlDb(url) {
   const q = async (sql, a = []) => { await ready; return (await pool.query(sql, a))[0]; };
   return {
     kind: 'mysql', where: `${u.host}${u.pathname}`, filesDir,
-    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0, all = true, since = '', order = '', starts = '' } = {}) { const [w, a] = filter(text, category, type, all, since, starts); return { total: (await q(`SELECT COUNT(*) n FROM items ${w}`, a))[0].n, items: (await q(`SELECT * FROM items ${w} ORDER BY ${order === 'changed' ? 'changed, id' : 'name'} LIMIT ? OFFSET ?`, [...a, +limit, +offset])).map(fromRow) }; },
+    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0, all = true, since = '', order = '', starts = '', unsorted = false } = {}) { const [w, a] = filter(text, category, type, all, since, starts, unsorted); return { total: (await q(`SELECT COUNT(*) n FROM items ${w}`, a))[0].n, items: (await q(`SELECT * FROM items ${w} ORDER BY ${order === 'changed' ? 'changed, id' : 'name'} LIMIT ? OFFSET ?`, [...a, +limit, +offset])).map(fromRow) }; },
     async get(id) { return fromRow((await q('SELECT * FROM items WHERE id = ?', [id]))[0]); },
     async byName(name) { return fromRow((await q('SELECT * FROM items WHERE name = ?', [name]))[0]); },
     async namesLike(base) { return q("SELECT id, name FROM items WHERE name = ? OR name LIKE ?", [base, base.replace(/[\\%_]/g, '\\$&') + '\\_%']); },
@@ -167,7 +168,7 @@ function jsonDb(dir) {
   const save = () => fs.writeFileSync(f, JSON.stringify({ library: lib.library, made: new Date().toISOString(), by: 'Craft clip-art server', items: items.map((it) => ({ ...it, ...it.files, files: undefined })) }, null, 1));
   return {
     kind: 'json', where: dir, filesDir: dir, named: true,
-    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0, all = true, since = '', order = '', starts = '' } = {}) { const words = String(text).toLowerCase().split(/\s+/).filter(Boolean), m = items.filter((it) => (all || it.privacy !== 'me') && (!since || String(it.changed || '') > since) && startsOk(it.name, starts) && (category === null || category === undefined || (it.category || '') === category) && words.every((w) => [it.name, it.original, it.seen, it.matched, (it.tags || []).join(' '), it.category, it.style, it.form, it.description].join(' ').toLowerCase().includes(w))).sort((a, b) => (order === 'changed' ? String(a.changed || '').localeCompare(String(b.changed || '')) || String(a.id).localeCompare(String(b.id)) : a.name.localeCompare(b.name, undefined, { numeric: true }))); return { total: m.length, items: m.slice(+offset, +offset + +limit) }; },
+    async list({ q: text = '', category = null, type = null, limit = 200, offset = 0, all = true, since = '', order = '', starts = '', unsorted = false } = {}) { const words = String(text).toLowerCase().split(/\s+/).filter(Boolean), m = items.filter((it) => (all || it.privacy !== 'me') && (!since || String(it.changed || '') > since) && startsOk(it.name, starts) && (!unsorted || !it.sorted) && (category === null || category === undefined || (it.category || '') === category) && words.every((w) => [it.name, it.original, it.seen, it.matched, (it.tags || []).join(' '), it.category, it.style, it.form, it.description].join(' ').toLowerCase().includes(w))).sort((a, b) => (order === 'changed' ? String(a.changed || '').localeCompare(String(b.changed || '')) || String(a.id).localeCompare(String(b.id)) : a.name.localeCompare(b.name, undefined, { numeric: true }))); return { total: m.length, items: m.slice(+offset, +offset + +limit) }; },
     async get(id) { return items.find((it) => it.id === id); },
     async byName(name) { return items.find((it) => it.name.toLowerCase() === String(name).toLowerCase()); },
     async namesLike(base) { const b = base.toLowerCase(); return items.filter((it) => it.name.toLowerCase() === b || it.name.toLowerCase().startsWith(b + '_')); },
@@ -425,7 +426,7 @@ function serve(S) {
       if (p[1] === 'import' && req.method === 'POST') { const made = await importEntries(lib, unzip(await body(req)), { category: Q.category, privacy: Q.privacy }); return send(res, 200, { added: made.length, items: made.map((it) => shown(req, lib, it)) }); }
       if (p[1] === 'items') {
         const id = p[2];
-        if (!id && req.method === 'GET') { const r = await db.list({ q: Q.q || '', category: Q.category, type: Q.type, limit: Math.min(+Q.limit || 200, 5000), offset: +Q.offset || 0, all: mayWrite(req), since: Q.since || '', order: Q.order || '', starts: Q.starts || '' }); const hidden = mayWrite(req) ? 0 : (await db.list({ limit: 1 })).total - (await db.list({ limit: 1, all: false })).total; return send(res, 200, { total: r.total, hidden, items: r.items.map((it) => shown(req, lib, it)) }); } // (hidden: pictures only for me, left out because the key was not sent)
+        if (!id && req.method === 'GET') { const r = await db.list({ q: Q.q || '', category: Q.category, type: Q.type, limit: Math.min(+Q.limit || 200, 5000), offset: +Q.offset || 0, all: mayWrite(req), since: Q.since || '', order: Q.order || '', starts: Q.starts || '', unsorted: !!Q.unsorted }); const hidden = mayWrite(req) ? 0 : (await db.list({ limit: 1 })).total - (await db.list({ limit: 1, all: false })).total; return send(res, 200, { total: r.total, hidden, items: r.items.map((it) => shown(req, lib, it)) }); } // (hidden: pictures only for me, left out because the key was not sent)
         // POST: a new item (or PATCH an old one) as JSON; pictures inside as base64: { png: 'base64', pngExt: 'png', svg: '<svg…' }
         if ((!id && req.method === 'POST') || (id && req.method === 'PATCH')) {
           const j = JSON.parse((await body(req)).toString('utf8') || '{}'), pics = {};

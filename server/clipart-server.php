@@ -7,7 +7,7 @@
    clipart-server.php/clipart/Name.png. Changes need the key (on the setup page; the apps ask for it once). */
 declare(strict_types=1);
 const VERSION = '1.0';
-const COLS = ['id', 'type', 'name', 'original', 'seen', 'matched', 'category', 'style', 'form', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash', 'privacy', 'added', 'changed', 'files'];
+const COLS = ['id', 'type', 'name', 'original', 'seen', 'matched', 'category', 'style', 'form', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash', 'privacy', 'sorted', 'added', 'changed', 'files'];
 const FILE_KINDS = ['png', 'svg', 'anim', 'orig', 'thumb', 'model']; // model: a 3D mesh
 // a thumbnail (at most 160 pixels, see-through kept) made from a picture, when this PHP has GD; else null
 function make_thumb(string $b): ?string {
@@ -106,17 +106,18 @@ class Library {
     $big = $this->mysql ? 'MEDIUMTEXT' : 'TEXT';
     $this->db->exec("CREATE TABLE IF NOT EXISTS items (id VARCHAR(40) PRIMARY KEY, type VARCHAR(20), name VARCHAR(200) NOT NULL, original VARCHAR(200), seen VARCHAR(200), matched VARCHAR(200), category VARCHAR(200), style VARCHAR(40), form VARCHAR(40), tags $big, description $big,
       kind VARCHAR(20), width INTEGER, height INTEGER, frames INTEGER, colours INTEGER, source VARCHAR(500), author VARCHAR(200), licence VARCHAR(200),
-      hash VARCHAR(64), privacy VARCHAR(10), added VARCHAR(40), changed VARCHAR(40), files $big)" . ($this->mysql ? ' CHARACTER SET utf8mb4' : ''));
+      hash VARCHAR(64), privacy VARCHAR(10), sorted VARCHAR(120), added VARCHAR(40), changed VARCHAR(40), files $big)" . ($this->mysql ? ' CHARACTER SET utf8mb4' : ''));
     if ($this->mysql) $this->db->exec('CREATE TABLE IF NOT EXISTS files (item VARCHAR(40) NOT NULL, kind VARCHAR(20) NOT NULL, name VARCHAR(250), data LONGBLOB, PRIMARY KEY (item, kind))');
     // columns added since the first version: an older database gets them now
-    foreach (['type VARCHAR(20)', 'style VARCHAR(40)', 'form VARCHAR(40)', 'original VARCHAR(200)', 'seen VARCHAR(200)', 'matched VARCHAR(200)', 'privacy VARCHAR(10)'] as $c) try { $this->db->exec("ALTER TABLE items ADD COLUMN $c"); } catch (Throwable $e) { /* has it */ }
+    foreach (['type VARCHAR(20)', 'style VARCHAR(40)', 'form VARCHAR(40)', 'original VARCHAR(200)', 'seen VARCHAR(200)', 'matched VARCHAR(200)', 'privacy VARCHAR(10)', 'sorted VARCHAR(120)'] as $c) try { $this->db->exec("ALTER TABLE items ADD COLUMN $c"); } catch (Throwable $e) { /* has it */ }
   }
   private function q(string $sql, array $a = []): array { $s = $this->db->prepare($sql); $s->execute($a); return $s->fetchAll(); }
   private function row(?array $r): ?array { if (!$r) return null; $r['tags'] = array_values(array_filter(array_map('trim', explode(',', (string) $r['tags'])), 'strlen')); $r['files'] = json_decode($r['files'] ?: '{}', true) ?: []; foreach (['width', 'height', 'frames', 'colours'] as $k) if ($r[$k] !== null) $r[$k] = (int) $r[$k]; return $r; }
   private function nocase(): string { return $this->mysql ? '' : ' COLLATE NOCASE'; }
   // (starts: names beginning with these letters, or '0-9' (a digit) or '#' (neither a letter nor a digit): the A–Z bar)
-  function filter(string $text, ?string $cat, ?string $type = null, bool $everyone = true, ?string $since = null, string $starts = ''): array {
-    $w = []; $a = [];
+  // (unsorted: only the pictures no AI has sorted yet: what the maintenance tool asks for)
+  function filter(string $text, ?string $cat, ?string $type = null, bool $everyone = true, ?string $since = null, string $starts = '', bool $unsorted = false): array {
+    $w = []; $a = []; if ($unsorted) $w[] = "COALESCE(sorted, '') = ''";
     if ($starts === '0-9') $w[] = "(SUBSTR(name, 1, 1) BETWEEN '0' AND '9')"; elseif ($starts === '#') $w[] = "NOT (UPPER(SUBSTR(name, 1, 1)) BETWEEN 'A' AND 'Z' OR SUBSTR(name, 1, 1) BETWEEN '0' AND '9')"; elseif ($starts !== '') { $w[] = "LOWER(name) LIKE ? ESCAPE '!'"; $a[] = str_replace(['!', '%', '_'], ['!!', '!%', '!_'], mb_strtolower($starts)) . '%'; } if (!$everyone) $w[] = "COALESCE(privacy, '') <> 'me'"; if ($since) { $w[] = 'changed > ?'; $a[] = $since; } if ($type) { $w[] = "COALESCE(type, 'clipart') = ?"; $a[] = $type; } $all = $this->mysql ? "CONCAT_WS(' ', name, original, seen, matched, tags, category, style, form, description)" : "(COALESCE(name,'') || ' ' || COALESCE(original,'') || ' ' || COALESCE(seen,'') || ' ' || COALESCE(matched,'') || ' ' || COALESCE(tags,'') || ' ' || COALESCE(category,'') || ' ' || COALESCE(style,'') || ' ' || COALESCE(form,'') || ' ' || COALESCE(description,''))";
     foreach (preg_split('/\s+/', mb_strtolower($text), -1, PREG_SPLIT_NO_EMPTY) as $word) { $w[] = "LOWER($all) LIKE ?"; $a[] = "%$word%"; }
     if ($cat !== null) { $w[] = "COALESCE(category, '') = ?"; $a[] = $cat; }
@@ -124,8 +125,8 @@ class Library {
   }
   // (order 'changed': the order they were added or changed, new ones at the end: a reader paging through while pictures are
   // being added misses none; else by name)
-  function list(string $text = '', ?string $cat = null, int $limit = 200, int $offset = 0, ?string $type = null, bool $all = true, ?string $since = null, string $order = '', string $starts = ''): array {
-    [$w, $a] = $this->filter($text, $cat, $type, $all, $since, $starts);
+  function list(string $text = '', ?string $cat = null, int $limit = 200, int $offset = 0, ?string $type = null, bool $all = true, ?string $since = null, string $order = '', string $starts = '', bool $unsorted = false): array {
+    [$w, $a] = $this->filter($text, $cat, $type, $all, $since, $starts, $unsorted);
     return ['total' => (int) $this->q("SELECT COUNT(*) n FROM items $w", $a)[0]['n'], 'items' => array_map([$this, 'row'], $this->q("SELECT * FROM items $w ORDER BY " . ($order === 'changed' ? 'changed, id' : "name{$this->nocase()}") . " LIMIT $limit OFFSET $offset", $a))];
   }
   function get(string $id): ?array { return $this->row($this->q('SELECT * FROM items WHERE id = ?', [$id])[0] ?? null); }
@@ -297,7 +298,7 @@ try {
     header('Content-Disposition: attachment; filename="' . slug($lib->name) . ' clip art' . ($sqlite ? ' (SQLite)' : '') . '.sql"');
     echo '-- Craft clip-art library “' . $lib->name . '”, ' . now() . ": the items and their pictures (files).\n-- " . ($sqlite ? 'SQLite: sqlite3 clipart.sqlite < this.sql' : 'MySQL/MariaDB: mysql -u USER -p DATABASE < this.sql, or phpMyAdmin › Import') . "\n";
     if (!$sqlite) echo "SET NAMES utf8mb4;\n";
-    echo "DROP TABLE IF EXISTS items;\nDROP TABLE IF EXISTS files;\nCREATE TABLE IF NOT EXISTS items (id VARCHAR(40) PRIMARY KEY, type VARCHAR(20), name VARCHAR(200) NOT NULL, original VARCHAR(200), seen VARCHAR(200), matched VARCHAR(200), category VARCHAR(200), style VARCHAR(40), form VARCHAR(40), tags $big, description $big, kind VARCHAR(20), width INTEGER, height INTEGER, frames INTEGER, colours INTEGER, source VARCHAR(500), author VARCHAR(200), licence VARCHAR(200), hash VARCHAR(64), privacy VARCHAR(10), added VARCHAR(40), changed VARCHAR(40), files $big)$cs;\n";
+    echo "DROP TABLE IF EXISTS items;\nDROP TABLE IF EXISTS files;\nCREATE TABLE IF NOT EXISTS items (id VARCHAR(40) PRIMARY KEY, type VARCHAR(20), name VARCHAR(200) NOT NULL, original VARCHAR(200), seen VARCHAR(200), matched VARCHAR(200), category VARCHAR(200), style VARCHAR(40), form VARCHAR(40), tags $big, description $big, kind VARCHAR(20), width INTEGER, height INTEGER, frames INTEGER, colours INTEGER, source VARCHAR(500), author VARCHAR(200), licence VARCHAR(200), hash VARCHAR(64), privacy VARCHAR(10), sorted VARCHAR(120), added VARCHAR(40), changed VARCHAR(40), files $big)$cs;\n";
     echo 'CREATE TABLE IF NOT EXISTS files (item VARCHAR(40) NOT NULL, kind VARCHAR(20) NOT NULL, name VARCHAR(250), data ' . ($sqlite ? 'BLOB' : 'LONGBLOB') . ", PRIMARY KEY (item, kind))$cs;\nBEGIN;\n";
     for ($off = 0; ; $off += 200) { $r = $lib->list('', null, 200, $off); if (!$r['items']) break;
       foreach ($r['items'] as $it) { $v = []; foreach (COLS as $c) $v[] = $q($c === 'tags' ? implode(', ', $it['tags']) : ($c === 'files' ? json_encode((object) $it['files'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) : ($it[$c] ?? null)));
@@ -332,7 +333,7 @@ try {
   }
   if ($what === 'items') {
     $id = $p[2] ?? null;
-    if (!$id && $method === 'GET') { $r = $lib->list($Q['q'] ?? '', $Q['category'] ?? null, min((int) ($Q['limit'] ?? 200) ?: 200, 5000), (int) ($Q['offset'] ?? 0), $Q['type'] ?? null, $may_write, ($Q['since'] ?? '') !== '' ? (string) $Q['since'] : null, (string) ($Q['order'] ?? ''), (string) ($Q['starts'] ?? '')); out(200, ['total' => $r['total'], 'hidden' => $may_write ? 0 : (int) $lib->list('', null, 1, 0, null, true)['total'] - (int) $lib->list('', null, 1, 0, null, false)['total'], 'items' => array_map(fn ($it) => $shown($lib, $it), $r['items'])]); } // (hidden: pictures only for me, left out of this list because the key was not sent)
+    if (!$id && $method === 'GET') { $r = $lib->list($Q['q'] ?? '', $Q['category'] ?? null, min((int) ($Q['limit'] ?? 200) ?: 200, 5000), (int) ($Q['offset'] ?? 0), $Q['type'] ?? null, $may_write, ($Q['since'] ?? '') !== '' ? (string) $Q['since'] : null, (string) ($Q['order'] ?? ''), (string) ($Q['starts'] ?? ''), !empty($Q['unsorted'])); out(200, ['total' => $r['total'], 'hidden' => $may_write ? 0 : (int) $lib->list('', null, 1, 0, null, true)['total'] - (int) $lib->list('', null, 1, 0, null, false)['total'], 'items' => array_map(fn ($it) => $shown($lib, $it), $r['items'])]); } // (hidden: pictures only for me, left out of this list because the key was not sent)
     if ((!$id && $method === 'POST') || ($id && $method === 'PATCH')) {
       $j = json_decode($body() ?: '{}', true) ?: []; $pics = [];
       foreach (FILE_KINDS as $k) if (array_key_exists($k, $j)) { $pics[$k] = $j[$k] === null ? null : ($k === 'svg' && empty($j['svgBase64']) ? $j[$k] : base64_decode($j[$k])); $pics[$k . 'Ext'] = $j[$k . 'Ext'] ?? null; unset($j[$k]); }
