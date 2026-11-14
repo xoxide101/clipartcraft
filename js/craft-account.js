@@ -87,11 +87,49 @@
     if (!el) { el = document.createElement('button'); el.type = 'button'; }
     el.classList.add('craft-acct-btn');
     if (!document.getElementById('craft-acct-css')) { const s = document.createElement('style'); s.id = 'craft-acct-css'; s.textContent = '.craft-acct-btn{border:1px solid rgba(255,255,255,.55);background:transparent;color:#fff;border-radius:14px;padding:3px 11px;font:inherit;font-size:12.5px;cursor:pointer;white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis}.craft-acct-btn:hover{background:rgba(255,255,255,.2)}.craft-acct-btn[hidden]{display:none}'; document.head.append(s); }
-    const draw = () => { const u = user(); el.textContent = u ? `👤 ${u.display || u.name}` : 'Log in'; el.title = u ? `Logged in as ${u.name}: your account, keys and settings` : 'Log in for your own settings, keys and saved work in every Craft app (the apps work without it too)'; el.hidden = !server(); };
-    el.addEventListener('click', () => window.open(pageUrl(), 'craft-account'));
+    const draw = () => { const u = user(); el.textContent = u ? `👤 ${u.display || u.name}` : 'Log in'; el.title = u ? `Logged in as ${u.name}: your account, keys and settings` : 'Log in for your own settings, keys and saved work in every Craft app (the apps work without it too)'; };
+    el.addEventListener('click', () => (user() ? accountMenu(el) : loginDialog()));
     window.addEventListener('craft-account', draw); draw(); return el;
   }
   window.addEventListener('storage', (e) => { if (e.key === STATE) tell(); });
+
+  // logging in from inside an app (also an app opened from a file, or from another web address than the account page)
+  const esc = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  function box(html) {
+    document.querySelectorAll('.cacc-back').forEach((x) => x.remove());
+    if (!document.getElementById('cacc-css')) { const s = document.createElement('style'); s.id = 'cacc-css'; s.textContent = `.cacc-back{position:fixed;inset:0;background:rgba(0,0,0,.5);display:grid;place-items:center;z-index:10000;padding:16px}.cacc{background:var(--panel,#1f2129);color:var(--text,#e8e9ee);border:1px solid var(--line,#3a3e4c);border-radius:12px;width:min(420px,100%);padding:16px 18px;font:14px/1.45 "Segoe UI",system-ui,sans-serif;box-shadow:0 20px 60px rgba(0,0,0,.5)}.cacc h3{margin:0 0 10px;font-size:16px}.cacc label{display:grid;gap:3px;margin:0 0 9px}.cacc input{padding:7px 9px;border-radius:7px;border:1px solid var(--line,#3a3e4c);background:var(--panel-2,#2a2d38);color:inherit;font:inherit}.cacc .row{display:flex;gap:8px;justify-content:flex-end;align-items:center;flex-wrap:wrap;margin-top:6px}.cacc button{padding:7px 14px;border-radius:7px;border:1px solid var(--line,#3a3e4c);background:var(--panel-2,#2a2d38);color:inherit;font:inherit;cursor:pointer}.cacc button.main{background:var(--accent,#5b8cff);border-color:var(--accent,#5b8cff);color:#fff}.cacc .dim{color:var(--dim,#9aa0b0);font-size:12.5px}.cacc .bad{color:#f87171}.cacc a{color:#8fb0ff}`; document.head.append(s); }
+    const back = document.createElement('div'); back.className = 'cacc-back'; back.innerHTML = `<div class="cacc" role="dialog">${html}</div>`; document.body.append(back);
+    back.addEventListener('click', (e) => { if (e.target === back || e.target.closest('[data-x]')) back.remove(); });
+    return back;
+  }
+  function loginDialog() {
+    const sv = server(), b = box(`<h3>Log in</h3><p class="dim" style="margin:0 0 10px">One user ID for every Craft app: your settings, keys and saved work follow you. The app works without it too.</p>
+      <label><span>Account server</span><input data-f="srv" value="${esc(sv)}" placeholder="http://your-site/craft/accountcraft/account.php"></label>
+      <label><span>User ID or email</span><input data-f="name" autocomplete="username"></label>
+      <label><span>Password</span><input data-f="pw" type="password" autocomplete="current-password"></label>
+      <div class="dim" data-f="msg"></div>
+      <div class="row"><a data-f="ask" href="#" target="_blank" rel="noopener" style="margin-right:auto">Ask for access</a><button type="button" data-x>Cancel</button><button type="button" class="main" data-f="go">Log in</button></div>`);
+    const f = (k) => b.querySelector(`[data-f=${k}]`), srv = () => f('srv').value.trim().replace(/\/+$/, '').replace(/\/(api)?$/, '');
+    const link = () => { const u = srv(); f('ask').href = u ? u.replace(/account\.php$/, '') : '#'; }; f('srv').addEventListener('input', link); link();
+    if (sv && /^https?:$/.test(location.protocol) && sv.startsWith(location.origin)) f('srv').closest('label').hidden = true;   // (worked out from this page: nothing to type)
+    setTimeout(() => (f('srv').closest('label').hidden || f('srv').value ? f('name') : f('srv')).focus(), 0);
+    const go = async () => {
+      const u = srv(); if (!/^https?:\/\/[^\s]+account\.php$/.test(u)) { f('msg').innerHTML = '<span class="bad">Give the account server’s address, ending in account.php.</span>'; return; }
+      try { localStorage.setItem(SERVER, u); } catch (e) { /* blocked */ }
+      if (/^http:/.test(u) && !/\/\/(localhost|127\.|192\.168\.|10\.)/.test(u)) f('msg').textContent = 'Note: plain http over the internet: the password travels unprotected.';
+      f('go').disabled = true; f('go').textContent = 'Logging in…';
+      try { await login(f('name').value.trim(), f('pw').value); b.remove(); }
+      catch (e) { f('msg').innerHTML = `<span class="bad">${esc(e.message)}</span>`; f('go').disabled = false; f('go').textContent = 'Log in'; }
+    };
+    f('go').addEventListener('click', go); f('pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+  }
+  function accountMenu() {
+    const u = user(), b = box(`<h3>👤 ${esc(u.display || u.name)}</h3><p class="dim" style="margin:0 0 10px">Logged in as <b>${esc(u.name)}</b>${u.role === 'admin' ? ' (admin)' : ''} at ${esc(server().replace(/\/account\.php$/, ''))}.</p>
+      <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-f="forget" checked style="width:auto"> Forget my keys in this browser when I log out</label>
+      <div class="row"><button type="button" data-f="page" style="margin-right:auto">My account…</button><button type="button" data-x>Close</button><button type="button" class="main" data-f="out">Log out</button></div>`);
+    b.querySelector('[data-f=page]').addEventListener('click', () => { window.open(pageUrl(), 'craft-account'); b.remove(); });
+    b.querySelector('[data-f=out]').addEventListener('click', async () => { await logout({ keepKeys: !b.querySelector('[data-f=forget]').checked }); b.remove(); });
+  }
 
   // things every app shares that follow you (kept in your account as 'craft' / 'settings'): this browser's copies are
   // filled from the account when an app opens or you log in, and sent back when they change here
@@ -114,5 +152,5 @@
   // on opening: is the login still good (ended elsewhere, or switched off)? then your shared settings
   if (user()) refresh().then((r) => { if (r) pullShared(); });
 
-  window.CraftAccount = { user, server, pageUrl, button, api, login, signup, logout, changePassword, refresh, get, put, all, remove, lockKeys, unlockKeys, localKeys, useKeys, hasCrypto };
+  window.CraftAccount = { user, server, pageUrl, button, loginDialog, api, login, signup, logout, changePassword, refresh, get, put, all, remove, lockKeys, unlockKeys, localKeys, useKeys, hasCrypto };
 })();
