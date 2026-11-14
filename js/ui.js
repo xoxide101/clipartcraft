@@ -1037,7 +1037,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
   });
   const tb = window.CraftTitlebar({ appName: 'ClipArtCraft', storageKey: 'clipartcraft', colors: ['#ea580c', '#b23a0a'], mount: $('app'), toast, logo: LOGO, menus: () => [], ribbon,
     quick: [{ icon: 'wand', title: 'Start (wizard)', run: () => act('start') }, { icon: 'open', title: 'Import pictures', key: 'Ctrl+O', run: () => act('add') }, { icon: 'export', title: 'Export (ZIP)', run: () => act('export-all') }],
-    getTitle: () => 'Clip-art library', getStatus: () => ({ text: `${items.length} item${items.length === 1 ? '' : 's'}` }), getInfo: () => [], rightEls: [] });
+    getTitle: () => 'Clip-art library', getStatus: () => ({ text: `${items.length} item${items.length === 1 ? '' : 's'}` }), getInfo: () => [], rightEls: [window.CraftAccount && CraftAccount.button && CraftAccount.button()] });
   const app = $('app'); app.prepend(ribbon.el); app.prepend(tb.el);
   // Touch up as a page of its own (the tab between Home and Server): the chosen picture, kept with its changes while
   // the other tabs are looked at; another picture asks first when this one has changes not saved
