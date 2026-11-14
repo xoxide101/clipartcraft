@@ -41,19 +41,20 @@ Answer with the SVG code only, starting with <svg and ending with </svg>.`;
   }
 
   // ------------------------------------------------------------------ on this computer
-  const LOCALS = ['http://localhost:11434/v1', 'http://localhost:1234/v1'];
+  const LOCALS = ['http://localhost:11434/v1', 'http://localhost:1234/v1', 'http://127.0.0.1:9931/v1', 'http://127.0.0.1:8080/v1'];
   async function answers(url, ms = 1500) { const c = new AbortController(), t = setTimeout(() => c.abort(), ms); try { const r = await fetch(url, { signal: c.signal }); return r.ok ? r : null; } catch (e) { return null; } finally { clearTimeout(t); } }
   // the local chat servers that answer (Ollama, LM Studio, the address typed in) and their models (not embedding ones)
-  const nameOf = (u) => (/11434/.test(u) ? 'Ollama' : /1234/.test(u) ? 'LM Studio' : 'Local AI server');
+  const nameOf = (u) => (/11434/.test(u) ? 'Ollama' : /:1234/.test(u) ? 'LM Studio' : /9931|8080/.test(u) ? 'llama.cpp' : 'Local AI server');
   async function localServers() {
     const out = [];
     for (const u of [...new Set([S.localUrl, ...LOCALS].filter(Boolean).map((x) => x.replace(/\/+$/, '')))]) { const r = await answers(u + '/models'); if (!r) continue; try { const j = await r.json(), list = (j.data || j.models || []).map((x) => x.id || x.name).filter((x) => x && !/embed/i.test(x)); if (list.length) out.push({ url: u, models: list, name: nameOf(u) }); } catch (e) { /* not that */ } }
     return out;
   }
   // the one to use: the server and model chosen (when it still answers), else the first found
-  async function findLocal() { const all = await localServers(); const lc = all.find((x) => x.url === S.localUrl) || all[0]; return lc ? { ...lc, all } : null; }
+  const drawChoice = () => { const CH = window.CraftAISettings && CraftAISettings.choice('draw'); return CH && CH.where === 'local' ? CH : null; };
+  async function findLocal() { const CH = drawChoice(); if (CH) { const u = CH.base + '/v1'; if (await answers(u + '/models')) return { url: u, models: [CH.model], name: CraftAISettings.KIND[CH.kind] || 'AI server', all: [] }; } const all = await localServers(); const lc = all.find((x) => x.url === S.localUrl) || all[0]; return lc ? { ...lc, all } : null; }
   async function findPainter() { const u = (S.sdUrl || 'http://127.0.0.1:7860').replace(/\/+$/, ''); return (await answers(u + '/sdapi/v1/sd-models')) ? u : ''; }
-  const bestLocal = (list) => (S.localModel && list.includes(S.localModel) ? S.localModel : list.find((x) => /coder/i.test(x)) || list.find((x) => /qwen|llama|mistral|gemma|phi|deepseek|nemotron/i.test(x)) || list[0]);
+  const bestLocal = (list) => (drawChoice() && list.includes(drawChoice().model) ? drawChoice().model : S.localModel && list.includes(S.localModel) ? S.localModel : list.find((x) => /coder/i.test(x)) || list.find((x) => /qwen|llama|mistral|gemma|phi|deepseek|nemotron/i.test(x)) || list[0]);
   async function drawLocal(prompt) {
     const lc = await findLocal(); if (!lc) throw new Error('No local AI found on this computer: start Ollama (with a model such as qwen2.5-coder) or LM Studio (its server on), or choose Cloud.');
     const m = bestLocal(lc.models), t0 = performance.now();

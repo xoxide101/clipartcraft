@@ -34,6 +34,7 @@
 
   async function api(method, path, body) {
     const s = state(), h = { 'content-type': 'application/json' }; if (s && s.token && s.server === server()) h['x-craft-token'] = s.token;
+    try { const ak = sessionStorage.getItem('craft-admin-key'); if (ak) h['x-craft-admin-key'] = ak; } catch (e) { /* blocked */ }   // (the admin key: only while this tab is open)
     let r; try { r = await fetch(server() + '/api/' + path, { method, headers: h, body: body === undefined ? undefined : JSON.stringify(body) }); }
     catch (e) { throw new Error('The account server could not be reached.'); }
     const j = await r.json().catch(() => ({}));
