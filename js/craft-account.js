@@ -152,5 +152,6 @@
   // on opening: is the login still good (ended elsewhere, or switched off)? then your shared settings
   if (user()) refresh().then((r) => { if (r) pullShared(); });
 
-  window.CraftAccount = { user, server, pageUrl, button, loginDialog, api, login, signup, logout, changePassword, refresh, get, put, all, remove, lockKeys, unlockKeys, localKeys, useKeys, hasCrypto };
+  const allowed = (app) => { const u = user(); return !u || !Array.isArray(u.apps) || u.apps.includes(app); };   // (an app not given to this user keeps nothing in the account)
+  window.CraftAccount = { user, server, pageUrl, button, loginDialog, api, allowed, login, signup, logout, changePassword, refresh, get, put, all, remove, lockKeys, unlockKeys, localKeys, useKeys, hasCrypto };
 })();
