@@ -137,7 +137,15 @@ function mysqlDb(url) {
     catch (e) { const [rows] = await c.query('SHOW DATABASES LIKE ?', [dbName]); if (!rows.length) throw new Error(`The database “${dbName}” does not exist yet, and this login may not make it (${e.message}). Make it in phpMyAdmin, or use a login that may create databases.`); }
     finally { await c.end(); }
   })();
-  const pool = mysql.createPool(how(dbName)), ready = made.then(() => pool.query(SCHEMA('MEDIUMTEXT'))).then(() => pool.query(FILES_TABLE)).then(() => Promise.all(ADDED.map((c) => pool.query(`ALTER TABLE items ADD COLUMN ${c}`).catch(() => {})))).catch((e) => { throw new Error('The MySQL/MariaDB database could not be opened: ' + e.message); });
+  // utf8mb4 always: a database made elsewhere may default to latin1 / utf8mb3, which turns away names and AI descriptions
+  // with curly quotes (’), Chinese or Japanese text and emoji ("Incorrect string value"). An items table made that way is
+  // converted once (lossless; the files table is left alone, it holds the pictures and could be very big).
+  const CS = ' CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci';
+  const toMb4 = async () => {
+    const [r] = await pool.query("SELECT TABLE_COLLATION c FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'items'");
+    if (r[0] && !/^utf8mb4/i.test(r[0].c || '')) { dlog('db', `items table is ${r[0].c}: converting it to utf8mb4 (once)`); await pool.query(`ALTER TABLE items CONVERT TO${CS}`); dlog('db', 'items table is utf8mb4 now'); }
+  };
+  const pool = mysql.createPool(how(dbName)), ready = made.then(() => pool.query(SCHEMA('MEDIUMTEXT') + CS)).then(() => pool.query(FILES_TABLE + CS)).then(toMb4).then(() => Promise.all(ADDED.map((c) => pool.query(`ALTER TABLE items ADD COLUMN ${c}`).catch(() => {})))).catch((e) => { throw new Error('The MySQL/MariaDB database could not be opened: ' + e.message); });
   const q = async (sql, a = []) => { await ready; return (await pool.query(sql, a))[0]; };
   return {
     kind: 'mysql', where: `${u.host}${u.pathname}`, filesDir,
