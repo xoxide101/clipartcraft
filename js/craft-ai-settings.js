@@ -25,7 +25,9 @@
   const read = () => { try { const s = JSON.parse(localStorage.getItem(STORE) || 'null'); return { ...s, jobs: { ...(s && s.jobs) }, servers: (s && s.servers) || [], named: (s && s.named) || [] }; } catch (e) { return { jobs: {}, servers: [], named: [] }; } };   // named: AccountCraft › Local AI
   const write = (s) => { try { localStorage.setItem(STORE, JSON.stringify(s)); } catch (e) { /* blocked */ } window.dispatchEvent(new CustomEvent('craft-keys')); };
   const keys = () => { try { return (JSON.parse(localStorage.getItem(KEYS) || 'null') || {}).keys || {}; } catch (e) { return {}; } };
-  async function get(url, opts = {}, ms = 2500) { const c = new AbortController(), t = setTimeout(() => c.abort(), ms); try { const r = await fetch(url, { ...opts, signal: c.signal }); return r.ok ? await r.json() : null; } catch (e) { return null; } finally { clearTimeout(t); } }
+  // a server of yours that asks for a key (llama.cpp listening on your network makes one): kept with your keys as 'local:<address>'
+  const authFor = (url) => { const k = keys(), b = Object.keys(k).filter((x) => x.startsWith('local:') && url.startsWith(x.slice(6))).sort((x, y) => y.length - x.length)[0]; return b && k[b] ? { authorization: 'Bearer ' + k[b] } : {}; };
+  async function get(url, opts = {}, ms = 2500) { opts = { ...opts, headers: { ...authFor(url), ...(opts.headers || {}) } }; const c = new AbortController(), t = setTimeout(() => c.abort(), ms); try { const r = await fetch(url, { ...opts, signal: c.signal }); return r.ok ? await r.json() : null; } catch (e) { return null; } finally { clearTimeout(t); } }
 
   // ------------------------------------------------------------------ finding the AI programs
   async function probe(kind, base) {
@@ -94,11 +96,11 @@
     const c = new AbortController(), t = setTimeout(() => c.abort(), ms);
     try {
       if (kind === 'ollama') {
-        const r = await fetch(base + '/api/chat', { method: 'POST', signal: c.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, stream: false, think: false, ...(json ? { format: 'json' } : {}), options: { temperature: 0.2 }, messages: [...(system ? [{ role: 'system', content: system }] : []), { role: 'user', content: prompt, ...(image ? { images: [image] } : {}) }] }) });
+        const r = await fetch(base + '/api/chat', { method: 'POST', signal: c.signal, headers: { 'content-type': 'application/json', ...authFor(base) }, body: JSON.stringify({ model, stream: false, think: false, ...(json ? { format: 'json' } : {}), options: { temperature: 0.2 }, messages: [...(system ? [{ role: 'system', content: system }] : []), { role: 'user', content: prompt, ...(image ? { images: [image] } : {}) }] }) });
         const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `Ollama said ${r.status}`); return (j.message && j.message.content) || '';
       }
       const content = image ? [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: 'data:image/png;base64,' + image } }] : prompt;
-      const r = await fetch(base + '/v1/chat/completions', { method: 'POST', signal: c.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, temperature: 0.2, messages: [...(system ? [{ role: 'system', content: system }] : []), { role: 'user', content }], ...(json && kind === 'llamacpp' ? { response_format: { type: 'json_object' } } : {}) }) });
+      const r = await fetch(base + '/v1/chat/completions', { method: 'POST', signal: c.signal, headers: { 'content-type': 'application/json', ...authFor(base) }, body: JSON.stringify({ model, temperature: 0.2, messages: [...(system ? [{ role: 'system', content: system }] : []), { role: 'user', content }], ...(json && kind === 'llamacpp' ? { response_format: { type: 'json_object' } } : {}) }) });
       const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error((j.error && (j.error.message || j.error)) || `${KIND[kind] || 'The AI'} said ${r.status}`);
       return String(((j.choices || [])[0] || {}).message?.content || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
     } catch (e) { if (e.name === 'AbortError') throw new Error('The AI took too long to answer.'); throw e; } finally { clearTimeout(t); }
