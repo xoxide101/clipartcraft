@@ -9,6 +9,9 @@
      CraftAccount.login(name, password)  → user (and the keys unlocked)      logout({ keepKeys })
      CraftAccount.get(app, key) / put(app, key, value) / all(app) / remove(app, key)
      CraftAccount.lockKeys(keys, password) / unlockKeys(password)   (the vault: 'craft' / 'vault')
+     CraftAccount.lock(obj, password) / unlock(box, password)       (the same lock, for keys files)
+     CraftAccount.keyUse(app, provider, key, status, note)          (an app notes how a key did: only the key's ID is kept)
+     A site's AccountCraft can name the one account server for every Craft app (Site › One account server): the apps follow it.
      CraftAccount.button(el)             a Log in / your-name button that opens the account page
    Changes fire window 'craft-account' (also when another app or tab logs in or out). */
 (function () {
@@ -153,5 +156,42 @@
   if (user()) refresh().then((r) => { if (r) pullShared(); });
 
   const allowed = (app) => { const u = user(); return !u || !Array.isArray(u.apps) || u.apps.includes(app); };   // (an app not given to this user keeps nothing in the account)
-  window.CraftAccount = { user, server, pageUrl, button, loginDialog, api, allowed, login, signup, logout, changePassword, refresh, get, put, all, remove, lockKeys, unlockKeys, localKeys, useKeys, hasCrypto };
+  // ------------------------------------------------------------------ key use: which app used which key, and how it went
+  // (only the key's ID, the start of its SHA-256; kept in this browser under 'craft-key-use' and, logged in, in 'craft' / 'keys-use')
+  const USE = 'craft-key-use'; let useTimer = 0;
+  async function keyId(k) {
+    const b = enc.encode(String(k || '').trim()); if (!b.length) return '';
+    const h = subtle() ? new Uint8Array(await crypto.subtle.digest('SHA-256', b)) : JS() ? JS().sha256(b) : null; if (!h) return '';
+    const s = Array.from(h.slice(0, 4), (x) => x.toString(16).padStart(2, '0')).join('').toUpperCase(); return s.slice(0, 4) + '-' + s.slice(4);
+  }
+  async function keyUse(app, provider, key, status, note = '') {
+    try {
+      const id = await keyId(key); if (!id) return;
+      const all = read(USE) || {}, e = all[id] || (all[id] = { p: provider, apps: {} }), a = e.apps[app] || (e.apps[app] = { n: 0, fails: 0 });
+      const ok = status >= 200 && status < 300, t = new Date().toISOString(); a.n++; a.last = t; a.status = status; a.ok = ok;
+      if (ok) a.lastOk = t; else { a.fails++; a.note = String(note || '').slice(0, 200); }
+      write(USE, all); clearTimeout(useTimer); useTimer = setTimeout(sendUse, 4000);
+    } catch (err) { /* only a note */ }
+  }
+  async function sendUse() {
+    if (!user()) return;
+    try {
+      const mine = read(USE) || {}, there = (await get('craft', 'keys-use')) || {};
+      for (const [id, e] of Object.entries(mine)) { const t = there[id] || (there[id] = { p: e.p, apps: {} }); for (const [app, a] of Object.entries(e.apps)) { const b = t.apps[app]; if (!b || (a.last || '') >= (b.last || '')) t.apps[app] = a; } }
+      await put('craft', 'keys-use', there);
+    } catch (err) { /* next time */ }
+  }
+  // one account server for every Craft app: when this site's AccountCraft names another one (its 'home'), use that
+  (async () => {
+    try {
+      const HOME = 'craft-account-home', had = localStorage.getItem(HOME), set = localStorage.getItem(SERVER);
+      if (set && set !== had) return;                    // chosen by hand in the login dialog: leave it
+      if (location.pathname.includes('/accountcraft/')) return;   // AccountCraft's own page always manages its own site
+      const own = (() => { localStorage.removeItem(SERVER); const s = server(); if (set) localStorage.setItem(SERVER, set); return s; })(); if (!own) return;
+      const r = await fetch(own + '/api/info'); const j = await r.json().catch(() => ({})); const home = (j.home || '').trim();
+      if (home && home !== own) { if (set !== home) { localStorage.setItem(SERVER, home); localStorage.setItem(HOME, home); tell(); } }
+      else if (had) { localStorage.removeItem(HOME); if (set === had) { localStorage.removeItem(SERVER); tell(); } }
+    } catch (err) { /* not there */ }
+  })();
+  window.CraftAccount = { user, server, pageUrl, button, loginDialog, api, allowed, login, signup, logout, changePassword, refresh, get, put, all, remove, lockKeys, unlockKeys, localKeys, useKeys, hasCrypto, lock, unlock, keyUse, keyId };
 })();

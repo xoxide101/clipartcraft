@@ -24,14 +24,15 @@
   function imageCraftKeys() { try { const s = JSON.parse(localStorage.getItem('imagecraft-cloud') || 'null'); return s && s.keys ? PROVIDERS.filter((p) => (s.keys[p] || '').trim()).reduce((o, p) => ({ ...o, [p]: s.keys[p].trim() }), {}) : {}; } catch (e) { return {}; } }
 
   async function call(url, opts, who) {
-    let r; try { r = await (window.CraftKeys ? CraftKeys.track('cloud', fetch(url, opts)) : fetch(url, opts)); } catch (e) { throw new Error(`${NAMES[who]} could not be reached (no internet, or the browser blocked it).`); }
+    const note = (st, why) => { if (window.CraftAccount && CraftAccount.keyUse) CraftAccount.keyUse('clipartcraft', who, cfg.keys[who], st, why); };   // which key, and how it went (AccountCraft › Keys)
+    let r; try { r = await (window.CraftKeys ? CraftKeys.track('cloud', fetch(url, opts)) : fetch(url, opts)); } catch (e) { note(0, 'not reached'); throw new Error(`${NAMES[who]} could not be reached (no internet, or the browser blocked it).`); }
     const t = await r.text(); let j = null; try { j = JSON.parse(t); } catch (e) { /* not JSON */ }
     if (!r.ok) {
-      const m = (j && j.error && (j.error.message || j.error.type)) || t.slice(0, 200);
+      const m = (j && j.error && (j.error.message || j.error.type)) || t.slice(0, 200); note(r.status, m);
       if (/quota|billing|credit balance|insufficient_quota|insufficient credits|more credits/i.test(t)) throw new Error(`${NAMES[who]}: this account has no paid credit for it yet. ${m}`);
       throw new Error(`${NAMES[who]}: ${r.status === 401 || r.status === 403 ? 'the key was refused (check it in Cloud AI settings). ' : ''}${m}`);
     }
-    return j;
+    note(r.status); return j;
   }
   const anthHeaders = (k, json) => ({ ...(json ? { 'content-type': 'application/json' } : {}), 'x-api-key': k, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' });
   const orHeaders = (k) => ({ 'content-type': 'application/json', Authorization: `Bearer ${k}`, 'X-Title': 'ClipArtCraft' });
