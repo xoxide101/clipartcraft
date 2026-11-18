@@ -53,7 +53,7 @@
     const j = await get(base + '/v1/models');   // llama.cpp (and any OpenAI-style server)
     if (j && Array.isArray(j.data)) {
       const ll = j.data.some((m) => m.owned_by === 'llamacpp');
-      return { kind: ll ? 'llamacpp' : 'openai-style', name: ll ? KIND.llamacpp : 'AI server', base, models: j.data.map((m) => { const inp = (m.architecture && m.architecture.input_modalities) || null; return { id: m.id, sees: inp ? inp.includes('image') : null, loaded: m.status ? m.status.value === 'loaded' : undefined }; }) };
+      return { kind: ll ? 'llamacpp' : 'openai-style', name: ll ? KIND.llamacpp : 'AI server', base, models: j.data.map((m) => { const inp = (m.architecture && m.architecture.input_modalities) || null; return { id: m.id, sees: inp ? inp.includes('image') : null, loaded: m.status ? m.status.value === 'loaded' : undefined, incomplete: !!(m.status && m.status.value === 'incomplete') }; }) };
     }
     return null;
   }
@@ -63,6 +63,9 @@
     // your named servers (AccountCraft › Local AI) first, with their kind and name; then the usual places here, and addresses added in the apps
     const s = read(), named = s.named.filter((n) => !n.off), list = named.map((n) => [n.kind === 'nvidia' || n.kind === 'other' ? 'openai' : n.kind, n.base]).concat(DEFAULTS.map(([k, b]) => [k, b]), s.servers.map((b) => ['auto', b]));
     const seen = new Set(), found = (await Promise.all(list.map(([k, b]) => probe(k, b)))).filter((x) => x && !seen.has(x.base) && seen.add(x.base));
+    // the same program reached two ways (localhost here, and its network address in your list): keep the named one
+    const same = (a, b) => a.kind === b.kind && a.models.length === b.models.length && a.models.every((m, i) => m.id === b.models[i].id);
+    for (let i = found.length - 1; i >= 0; i--) { const f = found[i]; if (named.some((n) => n.base.replace(/\/+$/, '') === f.base)) continue; if (found.some((g, j) => j !== i && named.some((n) => n.base.replace(/\/+$/, '') === g.base) && same(f, g))) found.splice(i, 1); }
     for (const f of found) { const n = named.find((x) => x.base.replace(/\/+$/, '') === f.base); if (n) { f.label = n.name; if (n.kind === 'nvidia') f.name = KIND.nvidia; } }
     cache = found; cacheAt = Date.now(); return found;
   }
@@ -75,6 +78,7 @@
     for (const srv of found) for (const m of srv.models) {
       if (job === 'paint' ? !m.paints : m.paints) continue;
       if (job === 'see' && m.sees === false) continue;
+      if (m.incomplete) continue;   // not fully downloaded yet
       o.push({ value: `local|${srv.kind}|${srv.base}|${m.id}`, label: `${m.id}`, group: m.cloud ? 'Ollama Cloud (through Ollama here)' : `${isLocal(srv.base) ? 'This computer' : 'Your network'}: ${srv.label ? srv.label + ' (' + srv.name + ')' : srv.name}`, note: [m.sees ? 'sees pictures' : m.sees === null ? 'pictures: unknown' : '', m.thinks ? 'thinks' : '', m.gb ? `${m.gb} GB` : '', m.loaded ? 'loaded' : ''].filter(Boolean).join(', ') });
     }
     const k = keys();
