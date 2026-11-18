@@ -105,6 +105,17 @@
     back.addEventListener('click', (e) => { if (e.target === back || e.target.closest('[data-x]')) back.remove(); });
     return back;
   }
+  // an account made for you by the admin: the first time, choose your own password (the starting one stops working)
+  function choosePassword(old) {
+    const b = box(`<h3>Choose your own password</h3><p class="dim" style="margin:0 0 10px">The admin made this account with a starting password. Choose your own now: only you will know it.</p>
+      <label><span>New password (8 or more)</span><input data-f="n1" type="password" autocomplete="new-password"></label>
+      <label><span>The new password again</span><input data-f="n2" type="password" autocomplete="new-password"></label>
+      <div class="dim" data-f="msg"></div><div class="row"><button type="button" class="main" data-f="go">Use it</button></div>`);
+    const f = (k) => b.querySelector(`[data-f=${k}]`); setTimeout(() => f('n1').focus(), 0);
+    f('go').onclick = async () => { const n = f('n1').value; if (n.length < 8) return void (f('msg').innerHTML = '<span class="bad">Use at least 8 characters.</span>'); if (n !== f('n2').value) return void (f('msg').innerHTML = '<span class="bad">The two are not the same.</span>');
+      if (n === old) return void (f('msg').innerHTML = '<span class="bad">Choose a new one, not the starting password.</span>');
+      f('go').disabled = true; try { await changePassword(old, n); await refresh(); b.remove(); } catch (e) { f('msg').innerHTML = `<span class="bad">${esc(e.message)}</span>`; f('go').disabled = false; } };
+  }
   function loginDialog() {
     const sv = server(), b = box(`<h3>Log in</h3><p class="dim" style="margin:0 0 10px">One user ID for every Craft app: your settings, keys and saved work follow you. The app works without it too.</p>
       <label><span>Account server</span><input data-f="srv" value="${esc(sv)}" placeholder="http://your-site/craft/accountcraft/account.php"></label>
@@ -121,7 +132,7 @@
       try { localStorage.setItem(SERVER, u); } catch (e) { /* blocked */ }
       if (/^http:/.test(u) && !/\/\/(localhost|127\.|192\.168\.|10\.)/.test(u)) f('msg').textContent = 'Note: plain http over the internet: the password travels unprotected.';
       f('go').disabled = true; f('go').textContent = 'Logging in…';
-      try { await login(f('name').value.trim(), f('pw').value); b.remove(); }
+      try { const who = await login(f('name').value.trim(), f('pw').value); if (who && who.mustChange) return choosePassword(f('pw').value); b.remove(); }
       catch (e) { f('msg').innerHTML = `<span class="bad">${esc(e.message)}</span>`; f('go').disabled = false; f('go').textContent = 'Log in'; }
     };
     f('go').addEventListener('click', go); f('pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
@@ -193,5 +204,5 @@
       else if (had) { localStorage.removeItem(HOME); if (set === had) { localStorage.removeItem(SERVER); tell(); } }
     } catch (err) { /* not there */ }
   })();
-  window.CraftAccount = { user, server, pageUrl, button, loginDialog, api, allowed, login, signup, logout, changePassword, refresh, get, put, all, remove, lockKeys, unlockKeys, localKeys, useKeys, hasCrypto, lock, unlock, keyUse, keyId };
+  window.CraftAccount = { user, server, pageUrl, button, loginDialog, api, allowed, login, signup, logout, changePassword, refresh, get, put, all, remove, lockKeys, unlockKeys, localKeys, useKeys, hasCrypto, lock, unlock, keyUse, keyId, choosePassword };
 })();
