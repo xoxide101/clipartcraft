@@ -96,15 +96,16 @@
   function setChoice(job, value) { const s = read(); if (value) s.jobs[job] = value; else delete s.jobs[job]; write(s); }
 
   // ------------------------------------------------------------------ asking a local or network AI (one way for all of them)
-  async function ask({ kind, base, model, prompt, system = '', image = null, json = false, ms = 180000 }) {
+  // schema: a JSON schema the answer must fill (Ollama: format; LM Studio / llama.cpp: response_format json_schema)
+  async function ask({ kind, base, model, prompt, system = '', image = null, json = false, schema = null, ms = 180000 }) {
     const c = new AbortController(), t = setTimeout(() => c.abort(), ms);
     try {
       if (kind === 'ollama') {
-        const r = await fetch(base + '/api/chat', { method: 'POST', signal: c.signal, headers: { 'content-type': 'application/json', ...authFor(base) }, body: JSON.stringify({ model, stream: false, think: false, ...(json ? { format: 'json' } : {}), options: { temperature: 0.2 }, messages: [...(system ? [{ role: 'system', content: system }] : []), { role: 'user', content: prompt, ...(image ? { images: [image] } : {}) }] }) });
+        const r = await fetch(base + '/api/chat', { method: 'POST', signal: c.signal, headers: { 'content-type': 'application/json', ...authFor(base) }, body: JSON.stringify({ model, stream: false, think: false, ...(schema ? { format: schema } : json ? { format: 'json' } : {}), keep_alive: '10m', options: { temperature: 0.2, ...(image ? { num_ctx: 8192 } : {}) }, messages: [...(system ? [{ role: 'system', content: system }] : []), { role: 'user', content: prompt, ...(image ? { images: [image] } : {}) }] }) });
         const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `Ollama said ${r.status}`); return (j.message && j.message.content) || '';
       }
       const content = image ? [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: 'data:image/png;base64,' + image } }] : prompt;
-      const r = await fetch(base + '/v1/chat/completions', { method: 'POST', signal: c.signal, headers: { 'content-type': 'application/json', ...authFor(base) }, body: JSON.stringify({ model, temperature: 0.2, messages: [...(system ? [{ role: 'system', content: system }] : []), { role: 'user', content }], ...(json && kind === 'llamacpp' ? { response_format: { type: 'json_object' } } : {}) }) });
+      const r = await fetch(base + '/v1/chat/completions', { method: 'POST', signal: c.signal, headers: { 'content-type': 'application/json', ...authFor(base) }, body: JSON.stringify({ model, temperature: 0.2, messages: [...(system ? [{ role: 'system', content: system }] : []), { role: 'user', content }], ...(schema ? { response_format: { type: 'json_schema', json_schema: { name: 'answer', schema, strict: false } } } : json && kind === 'llamacpp' ? { response_format: { type: 'json_object' } } : {}) }) });
       const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error((j.error && (j.error.message || j.error)) || `${KIND[kind] || 'The AI'} said ${r.status}`);
       return String(((j.choices || [])[0] || {}).message?.content || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
     } catch (e) { if (e.name === 'AbortError') throw new Error('The AI took too long to answer.'); throw e; } finally { clearTimeout(t); }
