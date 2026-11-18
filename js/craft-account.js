@@ -127,7 +127,7 @@
     f('go').addEventListener('click', go); f('pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
   }
   function accountMenu() {
-    const u = user(), b = box(`<h3>👤 ${esc(u.display || u.name)}</h3><p class="dim" style="margin:0 0 10px">Logged in as <b>${esc(u.name)}</b>${u.role === 'admin' ? ' (admin)' : ''} at ${esc(server().replace(/\/account\.php$/, ''))}.</p>
+    const u = user(), b = box(`<h3>👤 ${esc(u.display || u.name)}</h3><p class="dim" style="margin:0 0 10px">Logged in as <b>${esc(u.name)}</b>${u.role === 'owner' ? ' (main site admin)' : u.role === 'admin' ? ' (admin)' : ''} at ${esc(server().replace(/\/account\.php$/, ''))}.</p>
       <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-f="forget" checked style="width:auto"> Forget my keys in this browser when I log out</label>
       <div class="row"><button type="button" data-f="page" style="margin-right:auto">My account…</button><button type="button" data-x>Close</button><button type="button" class="main" data-f="out">Log out</button></div>`);
     b.querySelector('[data-f=page]').addEventListener('click', () => { window.open(pageUrl(), 'craft-account'); b.remove(); });

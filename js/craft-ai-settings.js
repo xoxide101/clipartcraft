@@ -19,10 +19,10 @@
   const STORE = 'craft-ai-choices', KEYS = 'craft-ai-keys';
   const JOBS = [['see', 'Look at pictures', 'name, sort and describe pictures'], ['draw', 'Make drawings', 'SVG drawings from words'], ['paint', 'Make pictures', 'pictures from words, and redrawing'], ['chat', 'Write and answer', 'text, help and the Ask box']];
   const DEFAULTS = [['ollama', 'http://localhost:11434'], ['lmstudio', 'http://localhost:1234'], ['llamacpp', 'http://127.0.0.1:9931'], ['llamacpp', 'http://127.0.0.1:8080'], ['a1111', 'http://127.0.0.1:7860']];
-  const KIND = { ollama: 'Ollama', lmstudio: 'LM Studio', llamacpp: 'llama.cpp', a1111: 'Automatic1111 / Forge' };
+  const KIND = { ollama: 'Ollama', lmstudio: 'LM Studio', llamacpp: 'llama.cpp', a1111: 'Automatic1111 / Forge', nvidia: 'NVIDIA NIM', other: 'AI server' };
   const CLOUD = [['anthropic', 'Claude (Anthropic)', ['see', 'draw', 'chat']], ['gemini', 'Gemini (Google)', ['see', 'draw', 'paint', 'chat']], ['openai', 'GPT (OpenAI)', ['see', 'draw', 'paint', 'chat']], ['openrouter', 'OpenRouter', ['see', 'draw', 'chat']], ['ollama', 'Ollama Cloud', ['see', 'draw', 'chat']], ['runware', 'Runware', ['paint']], ['together', 'Together.ai', ['see', 'draw', 'paint', 'chat']]];
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const read = () => { try { const s = JSON.parse(localStorage.getItem(STORE) || 'null'); return { jobs: { ...(s && s.jobs) }, servers: (s && s.servers) || [] }; } catch (e) { return { jobs: {}, servers: [] }; } };
+  const read = () => { try { const s = JSON.parse(localStorage.getItem(STORE) || 'null'); return { ...s, jobs: { ...(s && s.jobs) }, servers: (s && s.servers) || [], named: (s && s.named) || [] }; } catch (e) { return { jobs: {}, servers: [], named: [] }; } };   // named: AccountCraft › Local AI
   const write = (s) => { try { localStorage.setItem(STORE, JSON.stringify(s)); } catch (e) { /* blocked */ } window.dispatchEvent(new CustomEvent('craft-keys')); };
   const keys = () => { try { return (JSON.parse(localStorage.getItem(KEYS) || 'null') || {}).keys || {}; } catch (e) { return {}; } };
   async function get(url, opts = {}, ms = 2500) { const c = new AbortController(), t = setTimeout(() => c.abort(), ms); try { const r = await fetch(url, { ...opts, signal: c.signal }); return r.ok ? await r.json() : null; } catch (e) { return null; } finally { clearTimeout(t); } }
@@ -58,8 +58,10 @@
   let cache = null, cacheAt = 0;
   async function scan({ force = false } = {}) {
     if (cache && !force && Date.now() - cacheAt < 60000) return cache;
-    const s = read(), list = DEFAULTS.map(([k, b]) => [k, b]).concat(s.servers.map((b) => ['auto', b]));
+    // your named servers (AccountCraft › Local AI) first, with their kind and name; then the usual places here, and addresses added in the apps
+    const s = read(), named = s.named.filter((n) => !n.off), list = named.map((n) => [n.kind === 'nvidia' || n.kind === 'other' ? 'openai' : n.kind, n.base]).concat(DEFAULTS.map(([k, b]) => [k, b]), s.servers.map((b) => ['auto', b]));
     const seen = new Set(), found = (await Promise.all(list.map(([k, b]) => probe(k, b)))).filter((x) => x && !seen.has(x.base) && seen.add(x.base));
+    for (const f of found) { const n = named.find((x) => x.base.replace(/\/+$/, '') === f.base); if (n) { f.label = n.name; if (n.kind === 'nvidia') f.name = KIND.nvidia; } }
     cache = found; cacheAt = Date.now(); return found;
   }
   const isLocal = (b) => /\/\/(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(b + '/');
@@ -71,7 +73,7 @@
     for (const srv of found) for (const m of srv.models) {
       if (job === 'paint' ? !m.paints : m.paints) continue;
       if (job === 'see' && m.sees === false) continue;
-      o.push({ value: `local|${srv.kind}|${srv.base}|${m.id}`, label: `${m.id}`, group: m.cloud ? 'Ollama Cloud (through Ollama here)' : `${isLocal(srv.base) ? 'This computer' : 'Your network'}: ${srv.name}`, note: [m.sees ? 'sees pictures' : m.sees === null ? 'pictures: unknown' : '', m.thinks ? 'thinks' : '', m.gb ? `${m.gb} GB` : '', m.loaded ? 'loaded' : ''].filter(Boolean).join(', ') });
+      o.push({ value: `local|${srv.kind}|${srv.base}|${m.id}`, label: `${m.id}`, group: m.cloud ? 'Ollama Cloud (through Ollama here)' : `${isLocal(srv.base) ? 'This computer' : 'Your network'}: ${srv.label ? srv.label + ' (' + srv.name + ')' : srv.name}`, note: [m.sees ? 'sees pictures' : m.sees === null ? 'pictures: unknown' : '', m.thinks ? 'thinks' : '', m.gb ? `${m.gb} GB` : '', m.loaded ? 'loaded' : ''].filter(Boolean).join(', ') });
     }
     const k = keys();
     for (const [id, name, jobs] of CLOUD) if (jobs.includes(job)) o.push({ value: `cloud|${id}`, label: name, group: 'Cloud (your keys)', note: k[id] ? 'key saved' : 'no key yet', off: !k[id] });
@@ -154,5 +156,5 @@
     draw(); if (!found) scan().then((f) => { found = f; draw(); });
   }
 
-  window.CraftAISettings = { open, scan, options, choice, setChoice, ask, JOBS, KIND };
+  window.CraftAISettings = { open, scan, probe, options, choice, setChoice, ask, JOBS, KIND };
 })();
