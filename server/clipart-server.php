@@ -156,6 +156,19 @@ class Library {
     @file_put_contents($this->files . '/' . $f, $r['data']); return $r['data'];
   }
   // every picture file in the folder that the database has not got yet, copied into it
+  /* PNG check: every picture should have a PNG (the apps use it; thumbnails come from it). Lists the ones with none, and the
+     ones whose PNG is listed but whose data is nowhere (neither in the folder nor in the database: a save that was cut off) */
+  function png_check(): array {
+    $inDb = []; if ($this->mysql) foreach ($this->q("SELECT item FROM files WHERE kind = 'png' AND data IS NOT NULL AND LENGTH(data) > 0") as $r) $inDb[$r['item']] = 1;
+    $has = function (array $f, string $k, string $id) use (&$inDb): bool { if (empty($f[$k])) return false; if ($k === 'png' && isset($inDb[$id])) return true; if (is_file($this->files . '/' . $f[$k])) return true; return $this->mysql && (bool) ($this->q('SELECT 1 x FROM files WHERE item = ? AND kind = ? AND LENGTH(data) > 0', [$id, $k])[0] ?? null); };
+    $out = []; $total = 0;
+    foreach ($this->q('SELECT id, name, files, changed FROM items') as $r) {
+      $total++; $f = json_decode($r['files'] ?: '{}', true) ?: [];
+      if (!empty($f['png']) && $has($f, 'png', $r['id'])) continue;
+      $out[] = ['id' => $r['id'], 'name' => $r['name'], 'why' => empty($f['png']) ? 'none' : 'lost', 'changed' => $r['changed'], 'from' => array_values(array_filter(['svg', 'orig', 'anim'], fn ($k) => $has($f, $k, $r['id'])))];
+    }
+    return ['total' => $total, 'missing' => $out];
+  }
   function files_to_db(): int {
     if (!$this->mysql) return 0; $have = []; foreach ($this->q('SELECT item, kind FROM files') as $r) $have[$r['item'] . '|' . $r['kind']] = 1; $n = 0;
     for ($off = 0; ; $off += 500) { $r = $this->list('', null, 500, $off); if (!$r['items']) break;
@@ -327,6 +340,7 @@ try {
   if ($what === 'info') out(200, ['server' => 'Craft clip-art server (PHP)', 'version' => VERSION, 'api' => 1, 'limits' => body_limits(512 << 20, $packet), 'writable' => $may_write, 'account' => $acct ? ['name' => $me_name, 'right' => $arole, 'groups' => $groups] : null, 'main' => $C['main'], 'libraries' => array_map(fn ($c) => ['name' => $c['name'], 'database' => $c['db'] ?? 'sqlite'], $C['connections']),
     'reach' => ['kind' => 'php', 'host' => gethostname() ?: '', 'shared' => true, 'here' => $base, 'addresses' => array_values(array_unique(array_filter([$base, !empty($_SERVER['SERVER_ADDR']) && $_SERVER['SERVER_ADDR'] !== '127.0.0.1' && $_SERVER['SERVER_ADDR'] !== '::1' ? preg_replace('#//[^/:]+#', '//' . (str_contains($_SERVER['SERVER_ADDR'], ':') ? '[' . $_SERVER['SERVER_ADDR'] . ']' : $_SERVER['SERVER_ADDR']), $base, 1) : ''])))]]);
   $lib = $lib_of($Q['library'] ?? null); $lib->viewer = $see_all ? null : ['owner' => $me_name, 'groups' => $groups];
+  if ($what === 'pngcheck' && $method === 'GET') { if (!$see_all) fail(403, 'The PNG check needs the key, or the login of an editor or the admin.'); out(200, $lib->png_check()); }
   if ($what === 'categories') out(200, $lib->categories($see_all));
   if ($what === 'letters') out(200, $lib->letters((string) ($Q['q'] ?? ''), isset($Q['category']) ? (string) $Q['category'] : null, $see_all, (string) ($Q['starts'] ?? ''), (int) ($Q['depth'] ?? 1)));
   // a SQL copy of the library with the pictures themselves (files table, as hex): MySQL/MariaDB, or SQLite (to keep offline)

@@ -410,6 +410,9 @@
     return n;
   }
   // the server's SVG of one of its pictures taken away (it did not match the PNG)
+  // the PNG check on the server (one look at every picture), and a PNG sent for one picture
+  async function pngCheck() { return call('/api/pngcheck'); }
+  async function sendServerPng(id, blob) { const lim = await serverMax(), b = await shrinkTo(blob, Math.floor(lim * 0.9)); return call('/api/items/' + encodeURIComponent(id), { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ png: await b64(b), pngExt: 'png' }) }); }
   async function dropServerSvg(id) { return call('/api/items/' + encodeURIComponent(id), { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ svg: null }) }); }
   async function deleteOnServer(ids) { await meta('deleteQueue', [...new Set([...((await meta('deleteQueue')) || []), ...ids])]); return sendDeletes(); }
   async function deleteItems(items, { server = false } = {}) {
@@ -461,5 +464,5 @@
   window.addEventListener('craft-account', () => { if (followReady) follow(true); });
   setTimeout(() => { followReady = true; follow(true); }, 4000); setInterval(() => follow(false), 30000);
   window.addEventListener('beforeunload', () => { follow(false); });
-  window.CraftClipart = { follow, inBook, setKeyOf, books, bookIds, main, book, bookList, toBooks, BOOK, BOOK_FILES, dedupe, facts, files, serverOriginals, tell: () => changed(), zip, DB, lists, lessons, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, deleteItems, deleteOnServer, sendDeletes, notHere, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip, stampPng, stampSvg, coreSum, sumsOf, svgMatch, traceMatched, pixelsOfItem, dropServerSvg, MATCH, svgUnits, scaleFor, svgPng, TARGET };
+  window.CraftClipart = { pngCheck, sendServerPng, shrinkTo, follow, inBook, setKeyOf, books, bookIds, main, book, bookList, toBooks, BOOK, BOOK_FILES, dedupe, facts, files, serverOriginals, tell: () => changed(), zip, DB, lists, lessons, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, deleteItems, deleteOnServer, sendDeletes, notHere, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip, stampPng, stampSvg, coreSum, sumsOf, svgMatch, traceMatched, pixelsOfItem, dropServerSvg, MATCH, svgUnits, scaleFor, svgPng, TARGET };
 })();
