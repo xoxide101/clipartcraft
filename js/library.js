@@ -418,5 +418,40 @@
   async function lessons(value) { return value === undefined ? (await meta('lessons')) || [] : meta('lessons', value); }
   // the original IDs of every picture on the server (a big archive skips those it has), read a page of 5,000 at a time
   async function serverOriginals() { const out = new Set(); for (let off = 0; ; off += 5000) { const r = await call(`/api/items?limit=5000&offset=${off}`); r.items.forEach((x) => x.original && out.add(x.original)); if (!r.items.length || off + r.items.length >= r.total) break; } return out; }
-  window.CraftClipart = { inBook, setKeyOf, books, bookIds, main, book, bookList, toBooks, BOOK, BOOK_FILES, dedupe, facts, files, serverOriginals, tell: () => changed(), zip, DB, lists, lessons, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, deleteItems, deleteOnServer, sendDeletes, notHere, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip, stampPng, stampSvg, coreSum, sumsOf, svgMatch, traceMatched, pixelsOfItem, dropServerSvg, MATCH, svgUnits, scaleFor, svgPng, TARGET };
+  // ---- what follows your login (AccountCraft, 'clipartcraft' / 'mine'): your word lists, what the AI learned from your
+  // corrections, your view choices and the clip-art server's address. Not: the pictures (they go to the server when you send
+  // them), the storage books (this browser's own), keys (they travel locked with your account's keys).
+  const FOLLOW_PREFS = ['clipartcraft-tree', 'clipartcraft-size', 'clipartcraft-editor', 'clipartcraft-describe', 'clipartcraft-book', 'clipartcraft-slicer', 'clipartcraft-make', 'clipartcraft-ai', 'clipartcraft-import-2'];
+  const FOLLOW_KEY = 'clipartcraft-follow';
+  const followA = () => { const A = window.CraftAccount; return A && A.user && A.user() && (!A.allowed || A.allowed('clipartcraft')) ? A : null; };
+  async function mineNow() {
+    const prefs = {}; for (const k of FOLLOW_PREFS) { try { const v = localStorage.getItem(k); if (v != null) prefs[k] = v; } catch (e) { /* blocked */ } }
+    return { lists: (await meta('lists')) || null, lessons: (await meta('lessons')) || [], server: (await meta('server')) || '', prefs };
+  }
+  let followLast = '', followBusy = false;
+  async function follow(first) {
+    const A = followA(); if (!A || followBusy) return; followBusy = true;
+    try {
+      const st = (() => { try { return JSON.parse(localStorage.getItem(FOLLOW_KEY) || '{}'); } catch (e) { return {}; } })(), mine = await mineNow(), txt = JSON.stringify(mine);
+      if (first) {
+        const there = await A.get('clipartcraft', 'mine');
+        if (there && there.savedAt && there.savedAt !== st.synced && (!st.sent || txt === st.sent)) {
+          // the account has newer (saved in another browser) and this one has no changes of its own: take it
+          const v = there.value || {}; if (v.lists) await meta('lists', v.lists); if (Array.isArray(v.lessons)) await meta('lessons', v.lessons); if (v.server) await meta('server', v.server);
+          for (const [k, x] of Object.entries(v.prefs || {})) if (FOLLOW_PREFS.includes(k)) { try { localStorage.setItem(k, x); } catch (e) { /* blocked */ } }
+          const took = JSON.stringify(await mineNow()); localStorage.setItem(FOLLOW_KEY, JSON.stringify({ synced: there.savedAt, sent: took })); followLast = took;
+          window.dispatchEvent(new CustomEvent('clipart-followed')); return;
+        }
+      }
+      if (txt === followLast || txt === st.sent) { followLast = txt; return; }
+      const savedAt = new Date().toISOString(); await A.put('clipartcraft', 'mine', { savedAt, value: mine });
+      localStorage.setItem(FOLLOW_KEY, JSON.stringify({ synced: savedAt, sent: txt })); followLast = txt;
+    } catch (e) { /* not now: next time */ } finally { followBusy = false; }
+  }
+  // (only once the app has started: taking things while it is still setting itself up can be overwritten by it)
+  let followReady = false;
+  window.addEventListener('craft-account', () => { if (followReady) follow(true); });
+  setTimeout(() => { followReady = true; follow(true); }, 4000); setInterval(() => follow(false), 30000);
+  window.addEventListener('beforeunload', () => { follow(false); });
+  window.CraftClipart = { follow, inBook, setKeyOf, books, bookIds, main, book, bookList, toBooks, BOOK, BOOK_FILES, dedupe, facts, files, serverOriginals, tell: () => changed(), zip, DB, lists, lessons, server, serverKey, serverInfo, push, pull, pending, forgetPending, guard, removeFromServer, deleteItems, deleteOnServer, sendDeletes, notHere, all, get, put, remove, add, makeItem, fromZip, toZip, toFolder, fromFolder, pickFolder, folder, onChange: (f) => { listeners.add(f); return () => listeners.delete(f); }, svgUrl, unzip, stampPng, stampSvg, coreSum, sumsOf, svgMatch, traceMatched, pixelsOfItem, dropServerSvg, MATCH, svgUnits, scaleFor, svgPng, TARGET };
 })();

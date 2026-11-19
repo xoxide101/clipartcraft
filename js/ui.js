@@ -1133,6 +1133,8 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
   // cancel a file: off the list (and out of the working area if nothing was ever made from it)
   async function dropUndone(w) { if (!w) return; if (!w.used) await WA.remove(w.id); else { w.pending = ''; await WA.put(w); } }
   // the user's own lists (categories with their words, styles, forms), kept in the shared store
+  // your word lists and choices, come from your account (saved in another browser)
+  window.addEventListener('clipart-followed', () => { loadLists(); try { toast('Your word lists, the AI’s lessons and your choices came from your account.'); } catch (e) { /* starting */ } });
   async function loadLists() { try { const l = await L.lists(); if (l && window.CraftNamer) CraftNamer.configure(l); } catch (e) { /* the starting lists */ } }
   function editLists() {
     const N = window.CraftNamer; if (!N) return; let l = N.lists(), tab = 'categories';
