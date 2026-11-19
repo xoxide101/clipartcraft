@@ -154,9 +154,9 @@ button.ctb-chip:hover { background: rgba(255,255,255,.3); }
 .ctb-mega .ctb-mi kbd { font: 11px ui-monospace, Consolas, monospace; opacity: .7; }
 .ctb-mega .ctb-mh { padding: 6px 10px 3px 30px; font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; opacity: .6; }
 .ctb-mega hr { border: 0; border-top: 1px solid var(--line, #d5d9e1); margin: 5px 4px; }
-@media (max-width: 1100px) { .ctb-info { display: none; } }
+/* small screens: the search box is left out of the title bar (every command is in the logo menu); the quick buttons give way before the page gets wider than the screen */ @media (max-width: 900px) { .ctb-search { display: none !important; } } .ctb-left { flex: 0 1 auto; min-width: 0; overflow: hidden; } .ctb-left > * { flex: none; } @media (max-width: 1100px) { .ctb-info { display: none; } }
 @media (max-width: 820px) { .ctb-status { display: none; } .ctb-search { flex-basis: 200px; } .ctb-q.text { display: none; } }
-@media (max-width: 620px) { .ctb-mid { display: none; } .ctb-search { flex: 1; } }
+@media (max-width: 620px) { .ctb-mid { display: none; } .ctb-search { flex: 1 1 0; min-width: 0; } .ctb-kbd { display: none; } .ctb { gap: 6px; padding: 0 6px; }  } /* phones and flip phones: the title bar never makes the page wider than the screen; the search folds to its magnifier and opens across the bar when tapped */ @media (max-width: 400px) { .ctb-search { flex: 0 0 34px; } .ctb-search input { padding: 0 0 0 29px; color: transparent; } .ctb-search input::placeholder { color: transparent; } .ctb-search input:focus { position: fixed; left: 6px; right: 6px; top: 5px; width: auto; z-index: 3100; color: #1d2330; padding-right: 10px; } .ctb-search:focus-within > svg { position: fixed; left: 14px; top: 19px; z-index: 3101; } .ctb-list { position: fixed; left: 6px; right: 6px; top: 40px; width: auto; min-width: 0; } .ctb-q.ctb-more { display: none; } } @media (max-width: 620px) { .ctb .ctb-ai { display: none !important; } }
 /* Ribbon */
 .crb { background: var(--panel, #fff); border-bottom: 1px solid var(--line, #d5d9e1); min-width: 0; user-select: none; }
 .crb-tabs { display: flex; align-items: flex-end; gap: 2px; padding: 5px 10px 0; background: var(--panel-2, #eef0f4); border-bottom: 1px solid var(--line, #d5d9e1); overflow-x: auto; scrollbar-width: none; }
