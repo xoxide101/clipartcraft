@@ -264,7 +264,11 @@ $mine = fn (?array $it): bool => $it !== null && ($it['privacy'] ?? '') === 'me'
 $shown = function (Library $lib, ?array $it) use ($base, $C, $pass, $mine) { if (!$it) return null; $L = $lib->name === $C['main'] ? '' : rawurlencode($lib->name) . '/'; $links = []; $t = '?' . implode('&', array_filter(['v=' . preg_replace('/\D/', '', (string) ($it['changed'] ?? '')), $mine($it) ? 't=' . $pass($it) : ''])); // (v: the time it last changed, so a changed picture has a new link and no browser shows an old copy)
   foreach ($it['files'] as $k => $f) $links[$k] = "$base/clipart/$L" . rawurlencode($it['name']) . ($k === 'png' || $k === 'svg' ? '' : ".$k") . '.' . ext_of($f) . $t;
   unset($it['files']); $it['links'] = (object) $links; $it['library'] = $lib->name; return $it; };
+// what this PHP lets in (php.ini): the apps make what they send fit, instead of the limits being raised
+function ini_bytes(string $k): int { $v = trim((string) ini_get($k)); if ($v === '' || $v === '-1') return 0; $n = (int) $v; $u = strtolower(substr($v, -1)); return $u === 'g' ? $n << 30 : ($u === 'm' ? $n << 20 : ($u === 'k' ? $n << 10 : $n)); }
+function body_limits(int $app): array { $post = ini_bytes('post_max_size'); $mem = ini_bytes('memory_limit'); $max = $app; if ($post) $max = min($max, $post); if ($mem) $max = min($max, intdiv($mem, 6));   // a picture is unpacked several times over (JSON, base64, thumbnails) return ['maxBody' => $max, 'postMax' => $post, 'memory' => $mem, 'uploadMax' => ini_bytes('upload_max_filesize')]; }
 $body = fn () => file_get_contents('php://input');
+if (in_array($method, ['POST', 'PUT', 'PATCH'], true) && ($cl = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0)) > body_limits(512 << 20)['maxBody'] + 200) fail(413, 'That is too big for this server (' . round($cl / 1048576, 1) . ' MB; it takes up to ' . round(body_limits(512 << 20)['maxBody'] / 1048576, 1) . ' MB).', ['limits' => body_limits(512 << 20)]);
 
 try {
   // pictures: /clipart/[library/]Name.png | Name.svg | Name.thumb.png | Name.anim.gif
@@ -283,7 +287,7 @@ try {
   }
   $what = $p[1] ?? '';
   // where it can be reached from: the web server's own address (whoever can open this site can use it)
-  if ($what === 'info') out(200, ['server' => 'Craft clip-art server (PHP)', 'version' => VERSION, 'api' => 1, 'writable' => $may_write, 'main' => $C['main'], 'libraries' => array_map(fn ($c) => ['name' => $c['name'], 'database' => $c['db'] ?? 'sqlite'], $C['connections']),
+  if ($what === 'info') out(200, ['server' => 'Craft clip-art server (PHP)', 'version' => VERSION, 'api' => 1, 'limits' => body_limits(512 << 20), 'writable' => $may_write, 'main' => $C['main'], 'libraries' => array_map(fn ($c) => ['name' => $c['name'], 'database' => $c['db'] ?? 'sqlite'], $C['connections']),
     'reach' => ['kind' => 'php', 'host' => gethostname() ?: '', 'shared' => true, 'here' => $base, 'addresses' => array_values(array_unique(array_filter([$base, !empty($_SERVER['SERVER_ADDR']) && $_SERVER['SERVER_ADDR'] !== '127.0.0.1' && $_SERVER['SERVER_ADDR'] !== '::1' ? preg_replace('#//[^/:]+#', '//' . (str_contains($_SERVER['SERVER_ADDR'], ':') ? '[' . $_SERVER['SERVER_ADDR'] . ']' : $_SERVER['SERVER_ADDR']), $base, 1) : ''])))]]);
   $lib = $lib_of($Q['library'] ?? null);
   if ($what === 'categories') out(200, $lib->categories($may_write));

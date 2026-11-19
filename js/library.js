@@ -258,6 +258,21 @@
   async function fromFolder(h, opts = {}) { h = h || (await folder(true)) || (await pickFolder()); const entries = []; for await (const [name, e] of h.entries()) if (e.kind === 'file' && /\.(png|jpe?g|gif|webp|svg|json)$/i.test(name)) entries.push({ name, bytes: new Uint8Array(await (await e.getFile()).arrayBuffer()) }); return fromEntries(entries, { source: h.name, ...opts }); }
 
   // ------------------------------------------------------------------ the clip-art server (optional)
+  // what the server takes in one go (it says, from its php.ini); asked once
+  let maxBody = 0;
+  async function serverMax() { if (maxBody) return maxBody; try { const i = await serverInfo(); maxBody = (i.limits && i.limits.maxBody) || 7 << 20; } catch (e) { maxBody = 7 << 20; } return maxBody; }
+  // a picture made to fit in about `bytes` (sent as base64: a third more): smaller each step, keeping its kind (PNG keeps clear parts)
+  async function shrinkTo(blob, bytes) {
+    if (!blob || blob.size * 1.37 <= bytes) return blob;
+    let img; try { img = await createImageBitmap(blob); } catch (e) { return blob; }
+    let k = Math.sqrt(bytes / (blob.size * 1.37)) * 0.95, out = blob;
+    for (let i = 0; i < 8 && out.size * 1.37 > bytes; i++, k *= 0.85) {
+      const c = document.createElement('canvas'); c.width = Math.max(16, Math.round(img.width * k)); c.height = Math.max(16, Math.round(img.height * k));
+      const x = c.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(img, 0, 0, c.width, c.height);
+      out = await new Promise((ok) => c.toBlob(ok, blob.type === 'image/jpeg' ? 'image/jpeg' : 'image/png', 0.88)) || out;
+    }
+    return out;
+  }
   const b64 = (blob) => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result).replace(/^data:[^,]*,/, '')); r.onerror = () => no(r.error); r.readAsDataURL(blob); });
   const NUMS = ['width', 'height', 'frames', 'colours'];
   const META = ['type', 'name', 'original', 'seen', 'matched', 'category', 'style', 'form', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash', 'privacy', 'sorted'];
@@ -284,7 +299,16 @@
       if (st.png) { j.png = await b64(st.png); j.pngExt = it.png.type === 'image/jpeg' ? 'jpg' : 'png'; }
       if (st.svg) j.svg = st.svg; else if (it.noSvg && it.serverId) j.svg = null; if (it.anim) { j.anim = await b64(it.anim); j.animExt = (it.anim.type.split('/')[1] || 'gif').replace('apng', 'png'); }
       if (it.thumb) { j.thumb = it.thumb.replace(/^data:[^,]*,/, ''); j.thumbExt = 'png'; }
-      let s; try { s = await call(it.serverId ? '/api/items/' + it.serverId : '/api/items', { method: it.serverId ? 'PATCH' : 'POST', body: JSON.stringify(j) }); } catch (e) { if (!it.serverId || !/No such item/.test(e.message)) throw e; delete it.serverId; s = await call('/api/items', { method: 'POST', body: JSON.stringify(j) }); }
+      // too big for the server: the moving version stays home, then the picture is made smaller until it fits
+      const limit = await serverMax(), size = () => JSON.stringify(j).length, fit = async (lim) => {
+        if (size() <= lim) return; if (j.anim) { delete j.anim; delete j.animExt; j.animLeftHome = true; } if (size() <= lim) return;
+        if (st.png) { const room = lim - (size() - (j.png || '').length); j.png = await b64(await shrinkTo(st.png, Math.max(64 << 10, room))); j.shrunk = true; } if (size() <= lim) return;
+        if (j.svg && j.svg.length > lim / 2) { delete j.svg; j.svgLeftHome = true; } };
+      await fit(limit * 0.95);
+      // sent; refused as too big (by the server, or a proxy in front of it): made smaller and tried again (twice at most)
+      const send = async () => { try { return await call(it.serverId ? '/api/items/' + it.serverId : '/api/items', { method: it.serverId ? 'PATCH' : 'POST', body: JSON.stringify(j) }); } catch (e) { if (!it.serverId || !/No such item/.test(e.message)) throw e; delete it.serverId; return call('/api/items', { method: 'POST', body: JSON.stringify(j) }); } };
+      let s; for (let tries = 0; ; tries++) { try { s = await send(); break; } catch (e) { if (tries < 2 && /413|too big|too large|entity/i.test(e.message)) { await fit(size() * 0.5); continue; } throw e; } }
+      if (j.shrunk || j.animLeftHome || j.svgLeftHome) it.serverNote = `made to fit the server (${Math.round(limit / 1048576 * 10) / 10} MB at a time): ${[j.shrunk && 'a smaller picture', j.animLeftHome && 'without its moving version', j.svgLeftHome && 'without its drawing'].filter(Boolean).join(', ')}; this computer keeps the full one`;
       it.serverId = s.id; it.links = s.links; it.name = s.name; it.serverChanged = s.changed; it.thumbFrom = s.changed; delete it.changed; if (here) await tx('items', 'readwrite', (st) => req(st.put(it))); out.push(it); progress(++n, items.length);
       if (here) { left.delete(it.id); await meta('pushQueue', [...left]); }
     }
