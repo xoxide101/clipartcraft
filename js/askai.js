@@ -14,8 +14,17 @@
   let last = ''; try { last = localStorage.getItem(KEY) || ''; } catch (e) { /* blocked storage */ }
   const mode = () => (window.CraftKeys ? CraftKeys.mode() : 'both');
   async function get(url, opts = {}, ms = 2000) { const c = new AbortController(), t = setTimeout(() => c.abort(), ms); try { const r = await fetch(url, { ...opts, signal: c.signal }); return r.ok ? await r.json() : null; } catch (e) { return null; } finally { clearTimeout(t); } }
-  // the AIs on this computer that see pictures
+  // the AIs that see pictures on your own AI servers (AccountCraft › Local AI: this computer and your network, by name),
+  // through the shared AI settings; without them, LM Studio and Ollama on this computer
   async function locals() {
+    if (window.CraftAISettings && CraftAISettings.scan) {
+      try { const out = [];
+        for (const s of await CraftAISettings.scan({ force: true })) for (const m of s.models || []) {
+          if (m.paints || m.incomplete || m.sees === false || (m.sees !== true && !m.cloud)) continue;
+          out.push({ kind: 'local', name: m.cloud ? 'Ollama Cloud' : (s.label || s.name), url: s.base + '/v1', model: m.id, note: [m.loaded ? 'loaded' : '', m.gb ? m.gb + ' GB' : '', /localhost|127\.0\.0\.1/.test(s.base) ? 'this computer' : s.base.replace(/^https?:\/\//, '')].filter(Boolean).join(' · ') });
+        }
+        return out.sort((a, b) => a.name.localeCompare(b.name) || a.model.localeCompare(b.model));
+      } catch (e) { /* the usual way below */ } }
     const out = [];
     const lms = await get('http://localhost:1234/api/v0/models');
     if (lms) for (const m of lms.data || []) if (m.type === 'vlm') out.push({ kind: 'local', name: 'LM Studio', url: 'http://localhost:1234/v1', model: m.id, note: m.state === 'loaded' ? 'loaded' : 'loads when asked' });
@@ -29,6 +38,8 @@
     return new Promise((done) => {
       const C = window.CraftCloud, back = document.createElement('div'); back.className = 'lists-dlg ask'; back.setAttribute('role', 'dialog'); back.setAttribute('aria-label', 'Ask an AI');
       let list = null; const m = mode();
+      // the AI chosen for this job in the AI settings (it follows your login) goes first
+      try { const ch = window.CraftAISettings && CraftAISettings.choice && CraftAISettings.choice('see'); if (ch) last = ch.where === 'cloud' ? `cloud|${ch.provider}` : ch.where === 'local' ? `local|${ch.base}/v1|${ch.model}` : ch.where === 'browser' ? 'browser' : last; } catch (e) { /* none */ }
       const draw = () => {
         const browser = [{ kind: 'browser', label: 'CLIP + Florence-2', note: 'built in: names from the word lists' }];
         const cloud = C ? C.PROVIDERS.filter((p) => C.has(p)).map((p) => ({ kind: 'cloud', provider: p, label: C.NAMES[p], note: 'your key: a fraction of a cent a picture' })) : [];
@@ -37,7 +48,7 @@
         back.innerHTML = `<div class="lists-in ask-in"><div class="lists-head"><b>Ask an AI</b><span class="grow"></span><span class="hint">${count} picture${count === 1 ? '' : 's'}</span></div>
           <p class="hint">Who looks at ${count === 1 ? 'it' : 'them'} and gives the name, category, style, form, tags and a description. Only AIs that can see pictures are listed.</p>
           ${group('In this browser', 'nothing sent anywhere', browser, false, '')}
-          ${group('This computer', 'LM Studio and Ollama: nothing leaves the computer', here, m === 'cloud', list ? 'No model that sees pictures is running here: in LM Studio get one such as Gemma 3, in Ollama gemma3 or qwen2.5vl (and have the app open).' : 'Asking LM Studio and Ollama…')}
+          ${group('Your AI servers', 'this computer and your network (AccountCraft › Local AI): nothing leaves your network', here, m === 'cloud', list ? 'No model that sees pictures answered: in LM Studio get one such as Gemma 3, in Ollama gemma3 or qwen2.5vl; servers on other computers go in AccountCraft › Local AI.' : 'Asking your AI servers…')}
           ${oc.length ? group('Ollama Cloud', 'runs on Ollama’s servers', oc, m === 'local', '') : ''}
           ${group('Cloud', 'sent to that company, with your own key', cloud, m === 'local', 'No cloud AI key yet (the key in the title bar: AI settings).')}
           ${m !== 'both' ? `<p class="hint">The title bar is set to ${m === 'local' ? 'this computer only' : 'cloud'}: ${m === 'local' ? 'the cloud ones are off' : 'the ones on this computer are off'}.</p>` : ''}

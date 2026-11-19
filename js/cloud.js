@@ -7,9 +7,10 @@
 (function () {
   'use strict';
   const KEY = 'clipartcraft-cloud';
-  const NAMES = { anthropic: 'Claude (Anthropic)', gemini: 'Gemini (Google)', openai: 'GPT (OpenAI)', openrouter: 'OpenRouter (many models)' };
-  const PROVIDERS = Object.keys(NAMES);
-  let cfg = { keys: { anthropic: '', gemini: '', openai: '', openrouter: '' }, provider: '', model: '' };
+  const NAMES = { anthropic: 'Claude (Anthropic)', gemini: 'Gemini (Google)', openai: 'GPT (OpenAI)', openrouter: 'OpenRouter (many models)', together: 'Together.ai (open models)', runware: 'Runware (pictures)' };
+  // who looks at pictures and writes (Runware only makes pictures)
+  const PROVIDERS = Object.keys(NAMES).filter((p) => p !== 'runware');
+  let cfg = { keys: { anthropic: '', gemini: '', openai: '', openrouter: '', together: '', runware: '' }, provider: '', model: '' };
   try { const s = JSON.parse(localStorage.getItem(KEY) || 'null'); if (s) cfg = { keys: { ...cfg.keys, ...(s.keys || {}) }, provider: s.provider || '', model: s.model || '' }; } catch (e) { /* blocked storage */ }
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) { /* blocked storage */ } };
   // the keys every Craft app shares (AI settings in the title bar): they fill in what this one has not got, and keys
@@ -36,13 +37,17 @@
   }
   const anthHeaders = (k, json) => ({ ...(json ? { 'content-type': 'application/json' } : {}), 'x-api-key': k, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' });
   const orHeaders = (k) => ({ 'content-type': 'application/json', Authorization: `Bearer ${k}`, 'X-Title': 'ClipArtCraft' });
+  // the ones that speak OpenAI's chat: where, and with which headers
+  const chatAt = (p, k) => ({ url: { openrouter: 'https://openrouter.ai/api/v1', together: 'https://api.together.xyz/v1' }[p] || 'https://api.openai.com/v1', headers: p === 'openrouter' ? orHeaders(k) : { 'content-type': 'application/json', Authorization: `Bearer ${k}` } });
 
   // which models the key can use that look at pictures, the cheap quick ones first
-  async function models(p) {
+  async function models(p, any = false) {
     const k = (cfg.keys[p] || '').trim(); if (!k) return [];
     let list = [];
     if (p === 'anthropic') { const j = await call('https://api.anthropic.com/v1/models?limit=100', { headers: anthHeaders(k) }, p); list = (j.data || []).map((m) => ({ id: m.id, name: m.display_name || m.id })); }
     else if (p === 'gemini') { const j = await call(`https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=${encodeURIComponent(k)}`, {}, p); list = (j.models || []).filter((m) => (m.supportedGenerationMethods || []).includes('generateContent') && !/embedding|aqa|tts|image|audio|live/i.test(m.name)).map((m) => ({ id: m.name.replace(/^models\//, ''), name: m.displayName || m.name })); }
+    else if (p === 'together') { const j = await call('https://api.together.xyz/v1/models', { headers: { Authorization: `Bearer ${k}` } }, p); list = (Array.isArray(j) ? j : j.data || []).filter((m) => (m.type || 'chat') === 'chat' && (any || /vision|vl\b|-vl-|llama-4|gemma-3|pixtral/i.test(m.id))).map((m) => ({ id: m.id, name: m.display_name || m.id })); }
+    else if (p === 'runware') list = [];
     else if (p === 'openrouter') { const j = await call('https://openrouter.ai/api/v1/models', { headers: orHeaders(k) }, p); list = (j.data || []).filter((m) => (m.architecture?.input_modalities || []).includes('image') && !(m.architecture?.output_modalities || []).includes('image')).map((m) => ({ id: m.id, name: m.name || m.id })); }
     else { const j = await call('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${k}` } }, p); list = (j.data || []).filter((m) => /^(gpt-4o|gpt-4\.1|gpt-5|o3|o4)/.test(m.id) && !/audio|realtime|transcribe|tts|search/.test(m.id)).map((m) => ({ id: m.id, name: m.id })); }
     const quick = /haiku|flash|mini|nano|lite/i;
@@ -51,7 +56,7 @@
   // the model to use: the one chosen, or a quick, cheap one that can see
   async function model(p) {
     if (cfg.provider === p && cfg.model) return cfg.model;
-    const list = await models(p), pref = { anthropic: /haiku/i, gemini: /flash(?!.*(lite|thinking))/i, openai: /^gpt-(5|4\.1|4o)-mini$/i, openrouter: /gemini.*flash/i }[p];
+    const list = await models(p), pref = { anthropic: /haiku/i, gemini: /flash(?!.*(lite|thinking))/i, openai: /^gpt-(5|4\.1|4o)-mini$/i, openrouter: /gemini.*flash/i, together: /llama-4-scout|llama-3\.2-11b-vision|qwen2\.5-vl/i }[p] || /./;
     const m = (list.find((x) => pref.test(x.id)) || list[0] || {}).id; if (!m) throw new Error(`${NAMES[p]}: that key has no model that can look at pictures.`);
     return m;
   }
@@ -85,7 +90,7 @@ Answer with JSON only, in this form: {"name": "...", "category": "...", "style":
   async function lookLocal(canvas, lists, { url, model, name }) {
     const t0 = performance.now(), label = `${model} (${name})`, track = (pr) => (window.CraftKeys && CraftKeys.track ? CraftKeys.track(name === 'Ollama Cloud' ? 'cloud' : 'local', pr) : pr), where = name === 'Ollama Cloud' ? 'cloud' : 'local';
     try {
-      const r = await track(fetch(url + '/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, temperature: 0.2, messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${jpeg(canvas)}` } }, { type: 'text', text: promptFor(lists) }] }] }) }));
+      const r = await track(fetch(url + '/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json', ...(window.CraftAISettings && CraftAISettings.authFor ? CraftAISettings.authFor(url) : {}) }, body: JSON.stringify({ model, temperature: 0.2, messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${jpeg(canvas)}` } }, { type: 'text', text: promptFor(lists) }] }] }) }));
       if (!r.ok) throw new Error(`${name} said ${r.status}: ${(await r.text()).slice(0, 200)}`);
       const text = (await r.json()).choices?.[0]?.message?.content || '', a = answerOf(text, lists, label);
       if (window.CraftKeys) CraftKeys.activity(where, { what: 'Name and sort a picture', model: label, ms: Math.round(performance.now() - t0), came: text.slice(0, 300) });
@@ -103,8 +108,8 @@ Answer with JSON only, in this form: {"name": "...", "category": "...", "style":
       const j = await call(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent?key=${encodeURIComponent(k)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ inline_data: { mime_type: 'image/jpeg', data: b64 } }, { text: prompt }] }], generationConfig: { temperature: 0.2, responseMimeType: 'application/json' } }) }, p);
       text = ((j.candidates || [])[0]?.content?.parts || []).map((x) => x.text || '').join('');
     } else {
-      const url = p === 'openrouter' ? 'https://openrouter.ai/api/v1/chat/completions' : 'https://api.openai.com/v1/chat/completions', headers = p === 'openrouter' ? orHeaders(k) : { 'content-type': 'application/json', Authorization: `Bearer ${k}` };
-      const j = await call(url, { method: 'POST', headers, body: JSON.stringify({ model: m, response_format: { type: 'json_object' }, messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${b64}` } }, { type: 'text', text: prompt }] }] }) }, p);
+      const { url: base, headers } = chatAt(p, k), url = base + '/chat/completions';
+      const j = await call(url, { method: 'POST', headers, body: JSON.stringify({ model: m, ...(p === 'together' ? {} : { response_format: { type: 'json_object' } }), messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${b64}` } }, { type: 'text', text: prompt }] }] }) }, p);
       text = j.choices?.[0]?.message?.content || '';
     }
     const js = text.match(/\{[\s\S]*\}/); if (!js) throw new Error(`${NAMES[p]} did not answer in the expected form.`); logIt({ m, came: text.slice(0, 300) });
@@ -120,14 +125,14 @@ Answer with JSON only, in this form: {"name": "...", "category": "...", "style":
   // ------------------------------------------------------------------ making pictures (Make with AI, js/makeai.js)
   // A drawing (SVG) is written by a text model (Claude, Gemini, GPT, OpenRouter: a capable one, not the quickest);
   // a picture (PNG) by an image model: GPT-image (OpenAI), Gemini's image model, or one of OpenRouter's. Claude makes no pictures.
-  const DRAWERS = { anthropic: /sonnet|opus/i, gemini: /pro(?!.*(image|tts|vision))/i, openai: /^gpt-(5|4\.1)(?!.*(mini|nano))/i, openrouter: /anthropic\/claude.*sonnet|google\/gemini.*pro/i };
-  async function drawModel(p) { if (cfg.provider === p && cfg.drawModel) return cfg.drawModel; const list = await models(p); const m = (list.find((x) => DRAWERS[p].test(x.id)) || list.find((x) => !/haiku|flash|mini|nano|lite/i.test(x.id)) || list[0] || {}).id; if (!m) throw new Error(`${NAMES[p]}: that key has no model to draw with.`); return m; }
+  const DRAWERS = { anthropic: /sonnet|opus/i, gemini: /pro(?!.*(image|tts|vision))/i, openai: /^gpt-(5|4\.1)(?!.*(mini|nano))/i, openrouter: /anthropic\/claude.*sonnet|google\/gemini.*pro/i, together: /qwen.*coder|deepseek-v3|llama-3\.3-70b|qwen2\.5-72b/i };
+  async function drawModel(p) { if (cfg.provider === p && cfg.drawModel) return cfg.drawModel; const list = await models(p, true); const m = (list.find((x) => DRAWERS[p].test(x.id)) || list.find((x) => !/haiku|flash|mini|nano|lite/i.test(x.id)) || list[0] || {}).id; if (!m) throw new Error(`${NAMES[p]}: that key has no model to draw with.`); return m; }
   async function chat(p, m, prompt, max = 16000) {
     const k = cfg.keys[p].trim();
     if (p === 'anthropic') { const j = await call('https://api.anthropic.com/v1/messages', { method: 'POST', headers: anthHeaders(k, true), body: JSON.stringify({ model: m, max_tokens: max, messages: [{ role: 'user', content: prompt }] }) }, p); return (j.content || []).map((c) => c.text || '').join(''); }
     if (p === 'gemini') { const j = await call(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent?key=${encodeURIComponent(k)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: max } }) }, p); return ((j.candidates || [])[0]?.content?.parts || []).map((x) => x.text || '').join(''); }
-    const url = p === 'openrouter' ? 'https://openrouter.ai/api/v1/chat/completions' : 'https://api.openai.com/v1/chat/completions', headers = p === 'openrouter' ? orHeaders(k) : { 'content-type': 'application/json', Authorization: `Bearer ${k}` };
-    const j = await call(url, { method: 'POST', headers, body: JSON.stringify({ model: m, messages: [{ role: 'user', content: prompt }] }) }, p); return j.choices?.[0]?.message?.content || '';
+    const { url, headers } = chatAt(p, k);
+    const j = await call(url + '/chat/completions', { method: 'POST', headers, body: JSON.stringify({ model: m, messages: [{ role: 'user', content: prompt }] }) }, p); return j.choices?.[0]?.message?.content || '';
   }
   async function draw(prompt, who) {
     const p = who && has(who) ? who : provider(); if (!p) throw new Error('No cloud AI key yet: add one in the AI settings.'); const t0 = performance.now(), m = await drawModel(p);
@@ -135,13 +140,16 @@ Answer with JSON only, in this form: {"name": "...", "category": "...", "style":
     catch (e) { if (window.CraftKeys) CraftKeys.activity('cloud', { what: 'Draw a picture (SVG)', model: `${m} (${NAMES[p]})`, ok: false, came: e.message }); throw e; }
   }
   // which providers with a key can paint (make a picture)
-  const PAINTERS = ['openai', 'gemini', 'openrouter'];
+  const PAINTERS = ['openai', 'gemini', 'openrouter', 'together', 'runware'];
   const canPaint = () => PAINTERS.filter(has);
   async function paint(prompt, who, { transparent = true } = {}) {
-    const p = who && PAINTERS.includes(who) && has(who) ? who : canPaint()[0]; if (!p) throw new Error('Making a picture needs a key for GPT (OpenAI), Gemini or OpenRouter (Claude makes no pictures).');
+    const p = who && PAINTERS.includes(who) && has(who) ? who : canPaint()[0]; if (!p) throw new Error('Making a picture needs a key for GPT (OpenAI), Gemini, OpenRouter, Together.ai or Runware (Claude makes no pictures).');
     const k = cfg.keys[p].trim(), t0 = performance.now(); let m = '', b64 = '', type = 'image/png';
     try {
       if (p === 'openai') { m = 'gpt-image-1'; const j = await call('https://api.openai.com/v1/images/generations', { method: 'POST', headers: { 'content-type': 'application/json', Authorization: `Bearer ${k}` }, body: JSON.stringify({ model: m, prompt, size: '1024x1024', ...(transparent ? { background: 'transparent' } : {}), output_format: 'png' }) }, p); b64 = j.data?.[0]?.b64_json || ''; }
+      else if (p === 'together') { m = 'black-forest-labs/FLUX.1-schnell'; const j = await call('https://api.together.xyz/v1/images/generations', { method: 'POST', headers: { 'content-type': 'application/json', Authorization: `Bearer ${k}` }, body: JSON.stringify({ model: m, prompt, width: 1024, height: 1024, steps: 4, n: 1, response_format: 'b64_json' }) }, p); b64 = j.data?.[0]?.b64_json || ''; }
+      else if (p === 'runware') { m = 'runware:100@1'; const j = await call('https://api.runware.ai/v1', { method: 'POST', headers: { 'content-type': 'application/json', Authorization: `Bearer ${k}` }, body: JSON.stringify([{ taskType: 'imageInference', taskUUID: crypto.randomUUID ? crypto.randomUUID() : '00000000-0000-4000-8000-' + Date.now().toString(16).padStart(12, '0').slice(-12), positivePrompt: prompt, model: m, width: 1024, height: 1024, numberResults: 1, outputType: 'base64Data', outputFormat: 'PNG' }]) }, p);
+        if (j.errors && j.errors[0]) throw new Error(`Runware: ${j.errors[0].message || j.errors[0].code}`); b64 = j.data?.[0]?.imageBase64Data || ''; }
       else if (p === 'gemini') {
         const all = await call(`https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=${encodeURIComponent(k)}`, {}, p), list = (all.models || []).map((x) => x.name.replace(/^models\//, '')).filter((x) => /image/i.test(x) && !/imagen/i.test(x));
         m = list.find((x) => /flash.*image/i.test(x)) || list[0]; if (!m) throw new Error('Gemini: that key has no image model.');

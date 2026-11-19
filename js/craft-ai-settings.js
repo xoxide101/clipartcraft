@@ -20,7 +20,7 @@
   const JOBS = [['see', 'Look at pictures', 'name, sort and describe pictures'], ['draw', 'Make drawings', 'SVG drawings from words'], ['paint', 'Make pictures', 'pictures from words, and redrawing'], ['chat', 'Write and answer', 'text, help and the Ask box']];
   const DEFAULTS = [['ollama', 'http://localhost:11434'], ['lmstudio', 'http://localhost:1234'], ['llamacpp', 'http://127.0.0.1:9931'], ['llamacpp', 'http://127.0.0.1:8080'], ['a1111', 'http://127.0.0.1:7860']];
   const KIND = { ollama: 'Ollama', lmstudio: 'LM Studio', llamacpp: 'llama.cpp', a1111: 'Automatic1111 / Forge', nvidia: 'NVIDIA NIM', other: 'AI server' };
-  const CLOUD = [['anthropic', 'Claude (Anthropic)', ['see', 'draw', 'chat']], ['gemini', 'Gemini (Google)', ['see', 'draw', 'paint', 'chat']], ['openai', 'GPT (OpenAI)', ['see', 'draw', 'paint', 'chat']], ['openrouter', 'OpenRouter', ['see', 'draw', 'chat']], ['ollama', 'Ollama Cloud', ['see', 'draw', 'chat']], ['runware', 'Runware', ['paint']], ['together', 'Together.ai', ['see', 'draw', 'paint', 'chat']]];
+  const CLOUD = [['anthropic', 'Claude (Anthropic)', ['see', 'draw', 'chat']], ['gemini', 'Gemini (Google)', ['see', 'draw', 'paint', 'chat']], ['openai', 'GPT (OpenAI)', ['see', 'draw', 'paint', 'chat']], ['openrouter', 'OpenRouter', ['see', 'draw', 'paint', 'chat']], ['ollama', 'Ollama Cloud', ['see', 'draw', 'chat']], ['runware', 'Runware', ['paint']], ['together', 'Together.ai', ['see', 'draw', 'paint', 'chat']]];
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const read = () => { try { const s = JSON.parse(localStorage.getItem(STORE) || 'null'); return { ...s, jobs: { ...(s && s.jobs) }, servers: (s && s.servers) || [], named: (s && s.named) || [] }; } catch (e) { return { jobs: {}, servers: [], named: [] }; } };   // named: AccountCraft › Local AI
   const write = (s) => { try { localStorage.setItem(STORE, JSON.stringify(s)); } catch (e) { /* blocked */ } window.dispatchEvent(new CustomEvent('craft-keys')); };
@@ -82,7 +82,8 @@
       o.push({ value: `local|${srv.kind}|${srv.base}|${m.id}`, label: `${m.id}`, group: m.cloud ? 'Ollama Cloud (through Ollama here)' : `${isLocal(srv.base) ? 'This computer' : 'Your network'}: ${srv.label ? srv.label + ' (' + srv.name + ')' : srv.name}`, note: [m.sees ? 'sees pictures' : m.sees === null ? 'pictures: unknown' : '', m.thinks ? 'thinks' : '', m.gb ? `${m.gb} GB` : '', m.loaded ? 'loaded' : ''].filter(Boolean).join(', ') });
     }
     const k = keys();
-    for (const [id, name, jobs] of CLOUD) if (jobs.includes(job)) o.push({ value: `cloud|${id}`, label: name, group: 'Cloud (your keys)', note: k[id] ? 'key saved' : 'no key yet', off: !k[id] });
+    for (const [id, name, jobs] of CLOUD) if (jobs.includes(job) && id !== 'ollama')   /* Ollama Cloud: web pages cannot ask it; its models come through your Ollama (the ':cloud' ones) */
+      o.push({ value: `cloud|${id}`, label: name, group: 'Cloud (your keys)', note: k[id] ? 'key saved' : 'no key yet', off: !k[id] });
     return o;
   }
   function parse(v) {
@@ -163,5 +164,5 @@
     draw(); if (!found) scan().then((f) => { found = f; draw(); });
   }
 
-  window.CraftAISettings = { open, scan, probe, options, choice, setChoice, ask, JOBS, KIND };
+  window.CraftAISettings = { open, scan, probe, authFor, options, choice, setChoice, ask, JOBS, KIND };
 })();
