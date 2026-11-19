@@ -266,7 +266,7 @@ $shown = function (Library $lib, ?array $it) use ($base, $C, $pass, $mine) { if 
   unset($it['files']); $it['links'] = (object) $links; $it['library'] = $lib->name; return $it; };
 // what this PHP lets in (php.ini): the apps make what they send fit, instead of the limits being raised
 function ini_bytes(string $k): int { $v = trim((string) ini_get($k)); if ($v === '' || $v === '-1') return 0; $n = (int) $v; $u = strtolower(substr($v, -1)); return $u === 'g' ? $n << 30 : ($u === 'm' ? $n << 20 : ($u === 'k' ? $n << 10 : $n)); }
-function body_limits(int $app): array { $post = ini_bytes('post_max_size'); $mem = ini_bytes('memory_limit'); $max = $app; if ($post) $max = min($max, $post); if ($mem) $max = min($max, intdiv($mem, 6));   // a picture is unpacked several times over (JSON, base64, thumbnails) return ['maxBody' => $max, 'postMax' => $post, 'memory' => $mem, 'uploadMax' => ini_bytes('upload_max_filesize')]; }
+function body_limits(int $app): array { $post = ini_bytes('post_max_size'); $mem = ini_bytes('memory_limit'); $max = $app; if ($post) $max = min($max, $post); if ($mem) $max = min($max, intdiv($mem, 6)); /* a picture is unpacked several times over (JSON, base64, thumbnails) */ return ['maxBody' => $max, 'postMax' => $post, 'memory' => $mem, 'uploadMax' => ini_bytes('upload_max_filesize')]; }
 $body = fn () => file_get_contents('php://input');
 if (in_array($method, ['POST', 'PUT', 'PATCH'], true) && ($cl = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0)) > body_limits(512 << 20)['maxBody'] + 200) fail(413, 'That is too big for this server (' . round($cl / 1048576, 1) . ' MB; it takes up to ' . round(body_limits(512 << 20)['maxBody'] / 1048576, 1) . ' MB).', ['limits' => body_limits(512 << 20)]);
 
