@@ -140,6 +140,12 @@
     srv.loading = false; render();
   }
   // a read from the server with the key (when there is one): it shows the pictures only for me too
+  // your companies and locations (AccountCraft): who-may-see choices for a picture
+  let groupsCache = null, groupsAsked = false;
+  const myGroups = () => groupsCache || [];
+  function loadGroups() { const A = window.CraftAccount; if (groupsAsked || !A || !A.user || !A.user()) return; groupsAsked = true;
+    A.api('GET', 'locations').then((r) => { const out = [], seen = new Set(); for (const l of r.locations || []) { if (l.company && !seen.has('co:' + l.company)) { seen.add('co:' + l.company); out.push(['co:' + l.company, `Everyone at ${l.companyName || 'the company'}`]); } out.push(['loc:' + l.id, `Everyone at ${l.name}${l.number && !String(l.name).includes(l.number) ? ' #' + l.number : ''}`]); } groupsCache = out; }).catch(() => { groupsAsked = false; }); }
+  window.addEventListener('craft-account', () => { groupsCache = null; groupsAsked = false; });
   const keyFetch = async (url) => { const k = await L.serverKey(); return fetch(url, k ? { headers: { 'x-craft-key': k } } : {}); };
   // A picture that is on the server, changed here (saved in Touch up or Edit the drawing, its details changed): sent
   // straight away when the server answers (else it stays marked, and Sync sends it). One send at a time, the rest queued.
@@ -420,9 +426,10 @@
   function makeAi(prompt) { if (!window.ClipArtMake) return; ClipArtMake.open({ toast, prompt, categories: KNOWN(), done: async (it) => { await reload(); if (!onServer() && cat !== '#work') { sel = new Set([it.id]); last = it.id; render(); } } }); }
   // who can see it (Everyone / Only me), and where it came from: its source, author and licence (for several: those they share)
   function detailsMore(S, one) {
+    loadGroups();
     const same = (k) => (new Set(S.map((x) => x[k] || '')).size === 1 ? S[0][k] || '' : ''), pv = same('privacy'), mixed = !one && new Set(S.map((x) => x.privacy || '')).size > 1;
     const box = (k, label, ph) => `<label class="field"><span>${label}</span><input class="input" data-f="${k}" value="${esc(same(k))}" placeholder="${esc(!one && new Set(S.map((x) => x[k] || '')).size > 1 ? '(different: leave as they are)' : ph)}"></label>`;
-    return `<label class="field"><span>Who can see ${one ? 'it' : 'them'}</span><select class="input" data-f="privacy">${mixed ? '<option value="" selected>(leave as they are)</option>' : ''}<option value="everyone" ${!mixed && pv !== 'me' ? 'selected' : ''}>Everyone</option><option value="me" ${!mixed && pv === 'me' ? 'selected' : ''}>Only me (on the server: only with your key)</option></select></label>
+    return `<label class="field"><span>Who can see ${one ? 'it' : 'them'}</span><select class="input" data-f="privacy">${mixed ? '<option value="" selected>(leave as they are)</option>' : ''}<option value="everyone" ${!mixed && !pv ? 'selected' : ''}>Everyone</option><option value="me" ${!mixed && pv === 'me' ? 'selected' : ''}>Only me (you, and the clip-art editors)</option>${myGroups().map(([v, n]) => `<option value="${esc(v)}" ${!mixed && pv === v ? 'selected' : ''}>${esc(n)}</option>`).join('')}${!mixed && /^(co|loc):/.test(pv) && !myGroups().some(([v]) => v === pv) ? `<option value="${esc(pv)}" selected>a company or location you are not in</option>` : ''}</select></label>
       <details class="names-more"${S.some((x) => x.source || x.author || x.licence) ? ' open' : ''}><summary>Where ${one ? 'it' : 'they'} came from</summary><div class="two">${box('source', 'Source', 'a site, a pack, a sheet…')}${box('author', 'Author', '')}</div>${box('licence', 'Licence', 'CC0, own work, for use with Office…')}<p class="hint">These go inside the PNG and SVG when they are sent to the server or saved in a ZIP.</p></details>`;
   }
   // a drop-down from one of the lists; a value not on the list is still shown (marked), and several chosen can be "unchanged"
@@ -611,7 +618,7 @@
     const f = e.target.dataset.f; if (!f) return; const S = chosen(), v = e.target.value.trim(); if (e.target.tagName === 'SELECT' && S.length > 1 && !v) return;
     const teachIt = S.length === 1 && S[0].vec && ['name', 'category', 'style', 'form'].includes(f);
     for (const it of S) { if (f === 'name' && v) it.name = v; if (f === 'category') it.category = v; if (f === 'style' || f === 'form') it[f] = v; if (['original', 'seen', 'matched', 'description'].includes(f)) it[f] = e.target.value.trim();
-      if (['source', 'author', 'licence'].includes(f) && (S.length === 1 || v)) it[f] = v; if (f === 'privacy' && v) it.privacy = v === 'me' ? 'me' : '';
+      if (['source', 'author', 'licence'].includes(f) && (S.length === 1 || v)) it[f] = v; if (f === 'privacy' && v) it.privacy = v === 'me' || /^(co|loc):/.test(v) ? v : '';
       if (['source', 'author', 'licence', 'privacy'].includes(f) && it.serverId) it.changed = true; it.checked = true; if (f === 'tags') it.tags = S.length === 1 ? v.split(',').map((t) => t.trim()).filter(Boolean) : [...new Set([...(it.tags || []), ...v.split(',').map((t) => t.trim()).filter(Boolean)])]; await L.put(it); }
     for (const it of S) if (it.serverId) { it.changed = true; await L.put(it); }
     sendNow(S);

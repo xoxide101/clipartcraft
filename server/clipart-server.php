@@ -7,7 +7,7 @@
    clipart-server.php/clipart/Name.png. Changes need the key (on the setup page; the apps ask for it once). */
 declare(strict_types=1);
 const VERSION = '1.0';
-const COLS = ['id', 'type', 'name', 'original', 'seen', 'matched', 'category', 'style', 'form', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash', 'privacy', 'sorted', 'added', 'changed', 'files'];
+const COLS = ['id', 'type', 'name', 'original', 'seen', 'matched', 'category', 'style', 'form', 'tags', 'description', 'kind', 'width', 'height', 'frames', 'colours', 'source', 'author', 'licence', 'hash', 'privacy', 'owner', 'sorted', 'added', 'changed', 'files'];
 const FILE_KINDS = ['png', 'svg', 'anim', 'orig', 'thumb', 'model']; // model: a 3D mesh
 // a thumbnail (at most 160 pixels, see-through kept) made from a picture, when this PHP has GD; else null
 function make_thumb(string $b): ?string {
@@ -106,11 +106,16 @@ class Library {
     $big = $this->mysql ? 'MEDIUMTEXT' : 'TEXT';
     $this->db->exec("CREATE TABLE IF NOT EXISTS items (id VARCHAR(40) PRIMARY KEY, type VARCHAR(20), name VARCHAR(200) NOT NULL, original VARCHAR(200), seen VARCHAR(200), matched VARCHAR(200), category VARCHAR(200), style VARCHAR(40), form VARCHAR(40), tags $big, description $big,
       kind VARCHAR(20), width INTEGER, height INTEGER, frames INTEGER, colours INTEGER, source VARCHAR(500), author VARCHAR(200), licence VARCHAR(200),
-      hash VARCHAR(64), privacy VARCHAR(10), sorted VARCHAR(120), added VARCHAR(40), changed VARCHAR(40), files $big)" . ($this->mysql ? ' CHARACTER SET utf8mb4' : ''));
+      hash VARCHAR(64), privacy VARCHAR(60), owner VARCHAR(60), sorted VARCHAR(120), added VARCHAR(40), changed VARCHAR(40), files $big)" . ($this->mysql ? ' CHARACTER SET utf8mb4' : ''));
     if ($this->mysql) $this->db->exec('CREATE TABLE IF NOT EXISTS files (item VARCHAR(40) NOT NULL, kind VARCHAR(20) NOT NULL, name VARCHAR(250), data LONGBLOB, PRIMARY KEY (item, kind))');
     // columns added since the first version: an older database gets them now
-    foreach (['type VARCHAR(20)', 'style VARCHAR(40)', 'form VARCHAR(40)', 'original VARCHAR(200)', 'seen VARCHAR(200)', 'matched VARCHAR(200)', 'privacy VARCHAR(10)', 'sorted VARCHAR(120)'] as $c) try { $this->db->exec("ALTER TABLE items ADD COLUMN $c"); } catch (Throwable $e) { /* has it */ }
+    foreach (['type VARCHAR(20)', 'style VARCHAR(40)', 'form VARCHAR(40)', 'original VARCHAR(200)', 'seen VARCHAR(200)', 'matched VARCHAR(200)', 'privacy VARCHAR(60)', 'owner VARCHAR(60)', 'sorted VARCHAR(120)'] as $c) try { $this->db->exec("ALTER TABLE items ADD COLUMN $c"); } catch (Throwable $e) { /* has it */ }
+    if ($this->mysql) { try { $this->db->exec('ALTER TABLE items MODIFY privacy VARCHAR(60)'); } catch (Throwable $e) { /* already */ } }
   }
+  // who is looking (null: they see everything). Otherwise: pictures for everyone, their own 'me' ones, their companies' and locations'
+  public $viewer = null;
+  function see(): array { $v = $this->viewer; if (!$v) return ["COALESCE(privacy, '') = ''", []]; $g = $v['groups'] ?? [];
+    return ["(COALESCE(privacy, '') = '' OR (privacy = 'me' AND owner = ?)" . ($g ? ' OR privacy IN (' . implode(',', array_fill(0, count($g), '?')) . ')' : '') . ')', array_merge([(string) ($v['owner'] ?? '')], $g)]; }
   private function q(string $sql, array $a = []): array { $s = $this->db->prepare($sql); $s->execute($a); return $s->fetchAll(); }
   private function row(?array $r): ?array { if (!$r) return null; $r['tags'] = array_values(array_filter(array_map('trim', explode(',', (string) $r['tags'])), 'strlen')); $r['files'] = json_decode($r['files'] ?: '{}', true) ?: []; foreach (['width', 'height', 'frames', 'colours'] as $k) if ($r[$k] !== null) $r[$k] = (int) $r[$k]; return $r; }
   private function nocase(): string { return $this->mysql ? '' : ' COLLATE NOCASE'; }
@@ -118,7 +123,7 @@ class Library {
   // (unsorted: only the pictures no AI has sorted yet: what the maintenance tool asks for)
   function filter(string $text, ?string $cat, ?string $type = null, bool $everyone = true, ?string $since = null, string $starts = '', bool $unsorted = false): array {
     $w = []; $a = []; if ($unsorted) $w[] = "COALESCE(sorted, '') = ''";
-    if ($starts === '0-9') $w[] = "(SUBSTR(name, 1, 1) BETWEEN '0' AND '9')"; elseif ($starts === '#') $w[] = "NOT (UPPER(SUBSTR(name, 1, 1)) BETWEEN 'A' AND 'Z' OR SUBSTR(name, 1, 1) BETWEEN '0' AND '9')"; elseif ($starts !== '') { $w[] = "LOWER(name) LIKE ? ESCAPE '!'"; $a[] = str_replace(['!', '%', '_'], ['!!', '!%', '!_'], mb_strtolower($starts)) . '%'; } if (!$everyone) $w[] = "COALESCE(privacy, '') <> 'me'"; if ($since) { $w[] = 'changed > ?'; $a[] = $since; } if ($type) { $w[] = "COALESCE(type, 'clipart') = ?"; $a[] = $type; } $all = $this->mysql ? "CONCAT_WS(' ', name, original, seen, matched, tags, category, style, form, description)" : "(COALESCE(name,'') || ' ' || COALESCE(original,'') || ' ' || COALESCE(seen,'') || ' ' || COALESCE(matched,'') || ' ' || COALESCE(tags,'') || ' ' || COALESCE(category,'') || ' ' || COALESCE(style,'') || ' ' || COALESCE(form,'') || ' ' || COALESCE(description,''))";
+    if ($starts === '0-9') $w[] = "(SUBSTR(name, 1, 1) BETWEEN '0' AND '9')"; elseif ($starts === '#') $w[] = "NOT (UPPER(SUBSTR(name, 1, 1)) BETWEEN 'A' AND 'Z' OR SUBSTR(name, 1, 1) BETWEEN '0' AND '9')"; elseif ($starts !== '') { $w[] = "LOWER(name) LIKE ? ESCAPE '!'"; $a[] = str_replace(['!', '%', '_'], ['!!', '!%', '!_'], mb_strtolower($starts)) . '%'; } if (!$everyone) { [$sw, $sa] = $this->see(); $w[] = $sw; array_push($a, ...$sa); } if ($since) { $w[] = 'changed > ?'; $a[] = $since; } if ($type) { $w[] = "COALESCE(type, 'clipart') = ?"; $a[] = $type; } $all = $this->mysql ? "CONCAT_WS(' ', name, original, seen, matched, tags, category, style, form, description)" : "(COALESCE(name,'') || ' ' || COALESCE(original,'') || ' ' || COALESCE(seen,'') || ' ' || COALESCE(matched,'') || ' ' || COALESCE(tags,'') || ' ' || COALESCE(category,'') || ' ' || COALESCE(style,'') || ' ' || COALESCE(form,'') || ' ' || COALESCE(description,''))";
     foreach (preg_split('/\s+/', mb_strtolower($text), -1, PREG_SPLIT_NO_EMPTY) as $word) { $w[] = "LOWER($all) LIKE ?"; $a[] = "%$word%"; }
     if ($cat !== null) { $w[] = "COALESCE(category, '') = ?"; $a[] = $cat; }
     return [$w ? 'WHERE ' . implode(' AND ', $w) : '', $a];
@@ -133,7 +138,7 @@ class Library {
   function by_name(string $n): ?array { return $this->row($this->q("SELECT * FROM items WHERE name = ?{$this->nocase()}", [$n])[0] ?? null); }
   // how many names begin with each letter (depth 1), or with each first three letters (depth 3): the A–Z bar
   function letters(string $text, ?string $cat, bool $all, string $starts, int $depth): array { [$w, $a] = $this->filter($text, $cat, null, $all, null, $starts); $e = $depth >= 3 ? 'LOWER(SUBSTR(name, 1, 3))' : 'UPPER(SUBSTR(name, 1, 1))'; return array_map(fn ($r) => ['k' => (string) $r['k'], 'n' => (int) $r['n']], $this->q("SELECT $e k, COUNT(*) n FROM items $w GROUP BY $e ORDER BY $e", $a)); }
-  function categories(bool $all = true): array { return array_map(fn ($r) => ['category' => $r['category'], 'n' => (int) $r['n']], $this->q("SELECT COALESCE(category, '') category, COUNT(*) n FROM items " . ($all ? '' : "WHERE COALESCE(privacy, '') <> 'me' ") . "GROUP BY COALESCE(category, '') ORDER BY category")); }
+  function categories(bool $all = true): array { return array_map(fn ($r) => ['category' => $r['category'], 'n' => (int) $r['n']], $this->q("SELECT COALESCE(category, '') category, COUNT(*) n FROM items " . ($all ? '' : 'WHERE ' . $this->see()[0] . ' ') . "GROUP BY COALESCE(category, '') ORDER BY category", $all ? [] : $this->see()[1])); }
   // names stay unique: a name already used gets _002, _003… (the first one keeps its plain name)
   function unique_name(string $name, string $id): string {
     $name = trim($name) ?: 'Untitled'; $base = preg_replace('/_\d{3,}$/', '', $name);
@@ -200,7 +205,36 @@ $local = in_array($_SERVER['REMOTE_ADDR'] ?? '', ['127.0.0.1', '::1'], true);
 $key = $_SERVER['HTTP_X_CRAFT_KEY'] ?? '';
 // the admin's login, sent with each setup call as x-craft-login: base64("user:password")
 $login_ok = (function () use ($C): bool { $t = base64_decode((string) ($_SERVER['HTTP_X_CRAFT_LOGIN'] ?? ''), true); if (!$t || ($i = strpos($t, ':')) === false) return false; return check_login($C['admin'], substr($t, 0, $i), substr($t, $i + 1)); })();
-$may_write = $local || ($C['key'] !== '' && hash_equals((string) $C['key'], $key)) || $login_ok;
+$key_ok = $local || ($C['key'] !== '' && hash_equals((string) $C['key'], $key)) || $login_ok;
+// ---- the Craft login (AccountCraft, on this web server): asked once a minute per login; only the login's hash is kept
+function acct_url(string $prefix): string { $i = strpos($prefix, '/clipartcraft/'); return ($i !== false ? substr($prefix, 0, $i) : '') . '/accountcraft/account.php'; }
+function acct_get(string $tok, string $url, string $path) {
+  $full = 'http://127.0.0.1:' . ($_SERVER['SERVER_PORT'] ?? 80) . $url;
+  $ctx = stream_context_create(['http' => ['method' => 'GET', 'timeout' => 4, 'ignore_errors' => true, 'header' => "x-craft-token: $tok\r\nHost: " . ($_SERVER['HTTP_HOST'] ?? 'localhost') . "\r\n"]]);
+  return json_decode((string) @file_get_contents("$full/api/$path", false, $ctx), true);
+}
+function acct_who(string $tok, string $url): ?array {
+  if (!preg_match('/^[a-f0-9]{64}$/', $tok)) return null;
+  $dir = __DIR__ . '/data'; $f = "$dir/acct-" . hash('sha256', $tok) . '.json';
+  if (is_file($f) && filemtime($f) > time() - 60) { $u = json_decode((string) file_get_contents($f), true); return is_array($u) && $u ? $u : null; }
+  $me = acct_get($tok, $url, 'me'); $u = is_array($me) && isset($me['user']['id']) && ($me['user']['status'] ?? '') === 'active' ? $me['user'] : null;
+  if ($u) { $l = acct_get($tok, $url, 'locations'); $g = []; foreach ((array) ($l['locations'] ?? []) as $x) { $g[] = 'loc:' . $x['id']; if (!empty($x['company'])) $g[] = 'co:' . $x['company']; } $u['groups'] = array_values(array_unique($g)); }
+  if (!is_dir($dir)) @mkdir($dir, 0775, true); @file_put_contents($f, json_encode($u ?: false));
+  if (mt_rand(1, 50) === 1) foreach ((array) glob("$dir/acct-*.json") as $g) if (filemtime($g) < time() - 3600) @unlink($g);
+  return $u;
+}
+$acct = acct_who((string) ($_SERVER['HTTP_X_CRAFT_TOKEN'] ?? ''), acct_url($prefix));
+// rights here: the main site admin is admin; others as AccountCraft says (People › Apps…): look, add, editor, admin
+$arole = null;
+if ($acct) { $apps = $acct['apps'] ?? null; if (($acct['role'] ?? '') === 'owner') $arole = 'admin'; elseif ($apps === null || in_array('clipartcraft', (array) $apps, true)) { $r = (string) (($acct['approles'] ?? [])['clipartcraft'] ?? 'look'); $arole = in_array($r, ['look', 'add', 'editor', 'admin'], true) ? $r : 'look'; } }
+$may_write = $key_ok || in_array($arole, ['add', 'editor', 'admin'], true);
+$see_all = $key_ok || in_array($arole, ['editor', 'admin'], true);
+$login_ok = $login_ok || $arole === 'admin';
+$me_name = (string) ($acct['name'] ?? ''); $groups = (array) ($acct['groups'] ?? []);
+$can_see = fn (?array $it): bool => $it !== null && ($see_all || ($it['privacy'] ?? '') === '' || (($it['privacy'] ?? '') === 'me' && $me_name !== '' && ($it['owner'] ?? '') === $me_name) || in_array($it['privacy'] ?? '', $groups, true));
+// changing one: editors and admins (and the key) any; others only their own
+$can_change = fn (?array $it): bool => $it !== null && ($see_all || ($me_name !== '' && ($it['owner'] ?? '') === $me_name));
+$may_import = $key_ok || $arole === 'admin';
 
 if ($method === 'OPTIONS') out(204, '');
 // the libraries: one per connection, opened when first used (one that is down does not stop the others)
@@ -256,7 +290,7 @@ if (($p[0] ?? '') === 'api' && ($p[1] ?? '') === 'setup') {
   fail(404, 'Not found.');
 }
 
-if ($method !== 'GET' && $method !== 'HEAD' && !$may_write) fail(403, 'Changing the library needs the key (on the server’s setup page).');
+if ($method !== 'GET' && $method !== 'HEAD' && !$may_write) fail(403, $acct ? 'Your account may look at the pictures here, not change them (AccountCraft › People › Apps… gives the right).' : 'Changing the library needs your Craft login with the right to add, or the key (on the server’s setup page).');
 // a picture only for me: its links carry its own pass (not the key), so whoever was given the link can open that one picture
 $secret = (string) (!empty($C['key']) ? $C['key'] : json_encode($C['admin'] ?? 'craft'));
 $pass = fn (array $it): string => substr(hash_hmac('sha256', (string) $it['id'], $secret), 0, 20);
@@ -276,7 +310,7 @@ try {
     $lib = count($p) > 2 ? $lib_of($p[1]) : $lib_of(null); $f = end($p);
     if (!preg_match('/^(.*?)(?:\.(thumb|anim|orig|model))?\.([a-z0-9]+)$/i', $f, $m)) fail(404, 'No such picture.');
     $it = $lib->by_name($m[1]) ?: $lib->get($m[1]); $k = $m[2] ?: (strtolower($m[3]) === 'svg' ? 'svg' : 'png');
-    if ($mine($it) && !$may_write && !hash_equals($pass($it), (string) ($Q['t'] ?? ''))) $it = null;
+    if (!$can_see($it) && !hash_equals($pass($it), (string) ($Q['t'] ?? ''))) $it = null;
     $b = $it ? ($lib->read_file($it, $k) ?? ($k === 'thumb' ? $lib->read_file($it, 'png') : null)) : null;
     if ($b === null) fail(404, 'No such picture.');
     out(200, $b, MIME[ext_of($it['files'][$k] ?? $it['files']['png'])] ?? 'application/octet-stream', ['Cache-Control' => 'no-cache']);
@@ -287,11 +321,11 @@ try {
   }
   $what = $p[1] ?? '';
   // where it can be reached from: the web server's own address (whoever can open this site can use it)
-  if ($what === 'info') out(200, ['server' => 'Craft clip-art server (PHP)', 'version' => VERSION, 'api' => 1, 'limits' => body_limits(512 << 20), 'writable' => $may_write, 'main' => $C['main'], 'libraries' => array_map(fn ($c) => ['name' => $c['name'], 'database' => $c['db'] ?? 'sqlite'], $C['connections']),
+  if ($what === 'info') out(200, ['server' => 'Craft clip-art server (PHP)', 'version' => VERSION, 'api' => 1, 'limits' => body_limits(512 << 20), 'writable' => $may_write, 'account' => $acct ? ['name' => $me_name, 'right' => $arole, 'groups' => $groups] : null, 'main' => $C['main'], 'libraries' => array_map(fn ($c) => ['name' => $c['name'], 'database' => $c['db'] ?? 'sqlite'], $C['connections']),
     'reach' => ['kind' => 'php', 'host' => gethostname() ?: '', 'shared' => true, 'here' => $base, 'addresses' => array_values(array_unique(array_filter([$base, !empty($_SERVER['SERVER_ADDR']) && $_SERVER['SERVER_ADDR'] !== '127.0.0.1' && $_SERVER['SERVER_ADDR'] !== '::1' ? preg_replace('#//[^/:]+#', '//' . (str_contains($_SERVER['SERVER_ADDR'], ':') ? '[' . $_SERVER['SERVER_ADDR'] . ']' : $_SERVER['SERVER_ADDR']), $base, 1) : ''])))]]);
-  $lib = $lib_of($Q['library'] ?? null);
-  if ($what === 'categories') out(200, $lib->categories($may_write));
-  if ($what === 'letters') out(200, $lib->letters((string) ($Q['q'] ?? ''), isset($Q['category']) ? (string) $Q['category'] : null, $may_write, (string) ($Q['starts'] ?? ''), (int) ($Q['depth'] ?? 1)));
+  $lib = $lib_of($Q['library'] ?? null); $lib->viewer = $see_all ? null : ['owner' => $me_name, 'groups' => $groups];
+  if ($what === 'categories') out(200, $lib->categories($see_all));
+  if ($what === 'letters') out(200, $lib->letters((string) ($Q['q'] ?? ''), isset($Q['category']) ? (string) $Q['category'] : null, $see_all, (string) ($Q['starts'] ?? ''), (int) ($Q['depth'] ?? 1)));
   // a SQL copy of the library with the pictures themselves (files table, as hex): MySQL/MariaDB, or SQLite (to keep offline)
   if ($what === 'export.sql') {
     if (!$may_write) fail(403, 'A copy of the database needs the key (on the server’s setup page).');
@@ -302,7 +336,7 @@ try {
     header('Content-Disposition: attachment; filename="' . slug($lib->name) . ' clip art' . ($sqlite ? ' (SQLite)' : '') . '.sql"');
     echo '-- Craft clip-art library “' . $lib->name . '”, ' . now() . ": the items and their pictures (files).\n-- " . ($sqlite ? 'SQLite: sqlite3 clipart.sqlite < this.sql' : 'MySQL/MariaDB: mysql -u USER -p DATABASE < this.sql, or phpMyAdmin › Import') . "\n";
     if (!$sqlite) echo "SET NAMES utf8mb4;\n";
-    echo "DROP TABLE IF EXISTS items;\nDROP TABLE IF EXISTS files;\nCREATE TABLE IF NOT EXISTS items (id VARCHAR(40) PRIMARY KEY, type VARCHAR(20), name VARCHAR(200) NOT NULL, original VARCHAR(200), seen VARCHAR(200), matched VARCHAR(200), category VARCHAR(200), style VARCHAR(40), form VARCHAR(40), tags $big, description $big, kind VARCHAR(20), width INTEGER, height INTEGER, frames INTEGER, colours INTEGER, source VARCHAR(500), author VARCHAR(200), licence VARCHAR(200), hash VARCHAR(64), privacy VARCHAR(10), sorted VARCHAR(120), added VARCHAR(40), changed VARCHAR(40), files $big)$cs;\n";
+    echo "DROP TABLE IF EXISTS items;\nDROP TABLE IF EXISTS files;\nCREATE TABLE IF NOT EXISTS items (id VARCHAR(40) PRIMARY KEY, type VARCHAR(20), name VARCHAR(200) NOT NULL, original VARCHAR(200), seen VARCHAR(200), matched VARCHAR(200), category VARCHAR(200), style VARCHAR(40), form VARCHAR(40), tags $big, description $big, kind VARCHAR(20), width INTEGER, height INTEGER, frames INTEGER, colours INTEGER, source VARCHAR(500), author VARCHAR(200), licence VARCHAR(200), hash VARCHAR(64), privacy VARCHAR(60), owner VARCHAR(60), sorted VARCHAR(120), added VARCHAR(40), changed VARCHAR(40), files $big)$cs;\n";
     echo 'CREATE TABLE IF NOT EXISTS files (item VARCHAR(40) NOT NULL, kind VARCHAR(20) NOT NULL, name VARCHAR(250), data ' . ($sqlite ? 'BLOB' : 'LONGBLOB') . ", PRIMARY KEY (item, kind))$cs;\nBEGIN;\n";
     for ($off = 0; ; $off += 200) { $r = $lib->list('', null, 200, $off); if (!$r['items']) break;
       foreach ($r['items'] as $it) { $v = []; foreach (COLS as $c) $v[] = $q($c === 'tags' ? implode(', ', $it['tags']) : ($c === 'files' ? json_encode((object) $it['files'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) : ($it[$c] ?? null)));
@@ -312,12 +346,13 @@ try {
       if ($off + count($r['items']) >= $r['total']) break; }
     echo "COMMIT;\n"; exit;
   }
+  if ($what === 'import' && $method === 'POST' && !$may_import) fail(403, 'Bringing in a whole set is for the clip-art admin (AccountCraft › People › Apps…).');
   if ($what === 'export.zip' || ($what === 'import' && $method === 'POST')) {
     if (!class_exists('ZipArchive')) fail(501, 'This PHP has no ZIP support (the zip extension); export and import need it.');
     $tmp = tempnam(sys_get_temp_dir(), 'cz');
     if ($what === 'export.zip') {
       $z = new ZipArchive(); $z->open($tmp, ZipArchive::OVERWRITE); $list = []; $used = [];
-      for ($off = 0; ; $off += 500) { $r = $lib->list($Q['q'] ?? '', $Q['category'] ?? null, 500, $off, $Q['type'] ?? null, $may_write); if (!$r['items']) break;
+      for ($off = 0; ; $off += 500) { $r = $lib->list($Q['q'] ?? '', $Q['category'] ?? null, 500, $off, $Q['type'] ?? null, $see_all); if (!$r['items']) break;
         foreach ($r['items'] as $it) { $b0 = slug($it['name']); $b = $b0; $k = 2; while (isset($used[strtolower($b)])) $b = $b0 . '_' . $k++; $used[strtolower($b)] = 1;
           $e = $it; unset($e['files']); foreach ($it['files'] as $fk => $f) { $nm = $b . ($fk === 'png' || $fk === 'svg' ? '' : ".$fk") . '.' . ext_of($f); $bytes = $lib->read_file($it, $fk); if ($bytes !== null) { $z->addFromString($nm, $bytes); $e[$fk] = $nm; } }
           $list[] = $e; } }
@@ -337,15 +372,19 @@ try {
   }
   if ($what === 'items') {
     $id = $p[2] ?? null;
-    if (!$id && $method === 'GET') { $r = $lib->list($Q['q'] ?? '', $Q['category'] ?? null, min((int) ($Q['limit'] ?? 200) ?: 200, 5000), (int) ($Q['offset'] ?? 0), $Q['type'] ?? null, $may_write, ($Q['since'] ?? '') !== '' ? (string) $Q['since'] : null, (string) ($Q['order'] ?? ''), (string) ($Q['starts'] ?? ''), !empty($Q['unsorted'])); out(200, ['total' => $r['total'], 'hidden' => $may_write ? 0 : (int) $lib->list('', null, 1, 0, null, true)['total'] - (int) $lib->list('', null, 1, 0, null, false)['total'], 'items' => array_map(fn ($it) => $shown($lib, $it), $r['items'])]); } // (hidden: pictures only for me, left out of this list because the key was not sent)
+    if (!$id && $method === 'GET') { $r = $lib->list($Q['q'] ?? '', $Q['category'] ?? null, min((int) ($Q['limit'] ?? 200) ?: 200, 5000), (int) ($Q['offset'] ?? 0), $Q['type'] ?? null, $see_all, ($Q['since'] ?? '') !== '' ? (string) $Q['since'] : null, (string) ($Q['order'] ?? ''), (string) ($Q['starts'] ?? ''), !empty($Q['unsorted'])); out(200, ['total' => $r['total'], 'hidden' => $may_write ? 0 : (int) $lib->list('', null, 1, 0, null, true)['total'] - (int) $lib->list('', null, 1, 0, null, false)['total'], 'items' => array_map(fn ($it) => $shown($lib, $it), $r['items'])]); } // (hidden: pictures only for me, left out of this list because the key was not sent)
     if ((!$id && $method === 'POST') || ($id && $method === 'PATCH')) {
       $j = json_decode($body() ?: '{}', true) ?: []; $pics = [];
       foreach (FILE_KINDS as $k) if (array_key_exists($k, $j)) { $pics[$k] = $j[$k] === null ? null : ($k === 'svg' && empty($j['svgBase64']) ? $j[$k] : base64_decode($j[$k])); $pics[$k . 'Ext'] = $j[$k . 'Ext'] ?? null; unset($j[$k]); }
       if ($id && !$lib->get($id)) fail(404, 'No such item.');
+      if ($id && !$can_change($lib->get($id))) fail(403, 'That picture was added by someone else: an editor or the admin changes it.');
+      if (!$id) $j['owner'] = $me_name; else unset($j['owner']);
+      if (array_key_exists('privacy', $j)) { $pv = (string) $j['privacy']; if (!($pv === '' || $pv === 'me' || (preg_match('/^(co|loc):[\w-]{1,40}$/', $pv) && ($see_all || in_array($pv, $groups, true))))) fail(400, 'Who may see it: everyone, only me, one of your companies or one of your locations.'); }
       $j['id'] = $id ?: ($j['id'] ?? null); out($id ? 200 : 201, $shown($lib, $lib->save($j, $pics)));
     }
-    if ($id && isset($p[3]) && $method === 'PUT') { if (!$lib->get($id)) fail(404, 'No such item.'); out(200, $shown($lib, $lib->save(['id' => $id], [$p[3] => $body(), $p[3] . 'Ext' => $Q['ext'] ?? ($p[3] === 'svg' ? 'svg' : 'png')]))); }
-    if ($id && $method === 'GET') { $it = $lib->get($id) ?: $lib->by_name($id); if ($mine($it) && !$may_write) $it = null; $it ? out(200, $shown($lib, $it)) : fail(404, 'No such item.'); }
+    if ($id && isset($p[3]) && $method === 'PUT') { if (!$lib->get($id)) fail(404, 'No such item.'); if (!$can_change($lib->get($id))) fail(403, 'That picture was added by someone else.'); out(200, $shown($lib, $lib->save(['id' => $id], [$p[3] => $body(), $p[3] . 'Ext' => $Q['ext'] ?? ($p[3] === 'svg' ? 'svg' : 'png')]))); }
+    if ($id && $method === 'GET') { $it = $lib->get($id) ?: $lib->by_name($id); if (!$can_see($it)) $it = null; $it ? out(200, $shown($lib, $it)) : fail(404, 'No such item.'); }
+    if ($id && $method === 'DELETE' && !($key_ok || $arole === 'admin' || $can_change($lib->get($id)))) fail(403, 'Deleting pictures others added is for the clip-art admin.');
     if ($id && $method === 'DELETE') $lib->remove($id) ? out(200, ['deleted' => $id]) : fail(404, 'No such item.');
   }
   fail(404, 'Not found.');
