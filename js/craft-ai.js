@@ -1,4 +1,4 @@
-/* ClipArtCraft AI helpers (window.CRAFTAI; ClipArtCraft's own copy of the Craft AI helpers, from ImageCraft's): small AI models that run
+/* Craft AI helpers (window.CRAFTAI; the same in every Craft app that has them: ImageCraft, ClipArtCraft): small AI models that run
    inside the browser, on the graphics card when there is one (WebGPU) or on the processor (WebAssembly) when not. No
    server, no account, no key: each model downloads once (when first used, or with "Download now"), is kept by the
    browser and works offline after that.
@@ -12,7 +12,10 @@
    The models come from huggingface.co; the library (Transformers.js, Apache-2.0) is lib/craft-ai-libs.js. */
 (function () {
   'use strict';
-  const KEY = 'clipartcraft-ai';
+  // one set of choices for every Craft app (it was each app's own: taken over once)
+  const KEY = 'craft-ai', OLD = ['imagecraft-ai', 'clipartcraft-ai'];
+  try { if (!localStorage.getItem(KEY)) { const o = OLD.map((k) => localStorage.getItem(k)).find(Boolean); if (o) localStorage.setItem(KEY, o); } } catch (e) { /* blocked */ }
+  const APP = (document.title.split(/[\s–—-]/)[0] || 'this app').trim();
   const MODELS = {
     cutout: { id: 'BritishWerewolf/U-2-Net', cpuId: 'BritishWerewolf/U-2-Netp', file: 'onnx/model.onnx', name: 'Background cut-out', what: 'Finds the main subject of a photo and takes the background away, even on busy backgrounds. (About 4 seconds a picture; on a basic computer a small, quicker version is used.)', mb: { gpu: 176, cpu: 176 }, licence: 'Apache-2.0' },
     best: { id: 'onnx-community/BEN2-ONNX', name: 'Best-quality cut-out', what: 'Finer edges (hair, fur) for the background cut-out, but slow: about 20 seconds a picture, and only with a graphics card.', mb: { gpu: 219, cpu: 219 }, licence: 'MIT', gpuOnly: true },
@@ -125,7 +128,7 @@
         } catch (e) { /* the runtime fetches them itself */ }
         res(T);
       };
-      s.onerror = () => { libP = null; rej(new Error('The AI library (lib/craft-ai-libs.js) is missing from the ClipArtCraft folder.')); };
+      s.onerror = () => { libP = null; rej(new Error('The AI library (lib/craft-ai-libs.js) is missing from the ' + APP + ' folder.')); };
       document.head.append(s);
     });
     return libP;
@@ -179,7 +182,7 @@
       try {
         let r;
         if (m.embedded) { // a model that comes with ImageCraft, wrapped as a script (a page opened from a file cannot fetch files)
-          if (!window[m.global]) await new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = m.embedded; sc.onload = res; sc.onerror = () => rej(new Error(`${m.embedded} is missing from the ClipArtCraft folder.`)); document.head.append(sc); });
+          if (!window[m.global]) await new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = m.embedded; sc.onload = res; sc.onerror = () => rej(new Error(`${m.embedded} is missing from the ${APP} folder.`)); document.head.append(sc); });
           const bytes = Uint8Array.from(atob(window[m.global]), (ch) => ch.charCodeAt(0));
           r = await T.ort.InferenceSession.create(bytes, { executionProviders: dv === 'webgpu' ? ['webgpu'] : ['wasm'], graphOptimizationLevel: 'all' }); r.isRaw = true;
         }

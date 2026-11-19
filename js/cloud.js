@@ -19,8 +19,10 @@
   const fromShared = () => { if (!K()) return; const s = K().shared(); for (const p of Object.keys(cfg.keys)) if (s.keys[p]) cfg.keys[p] = s.keys[p]; };
   fromShared(); window.addEventListener('craft-keys', (e) => { if (e.detail && e.detail.forget) { for (const p of Object.keys(cfg.keys)) cfg.keys[p] = ''; save(); return; } fromShared(); });
   const has = (p) => !!(cfg.keys[p] || '').trim();
-  // the provider in use: the one chosen, or the first with a key
-  const provider = () => (has(cfg.provider) ? cfg.provider : PROVIDERS.find(has) || '');
+  // your choice for each job (AI settings, the same in every Craft app): a cloud one is used first when its key is here
+  const choiceFor = (job) => { try { const c = window.CraftAISettings && CraftAISettings.choice(job); return c && c.where === 'cloud' ? c : null; } catch (e) { return null; } };
+  // the provider in use for a job: your choice in AI settings, else the one chosen here, else the first with a key
+  const provider = (job = 'see') => { const c = choiceFor(job); if (c && has(c.provider) && (job !== 'see' || PROVIDERS.includes(c.provider))) return c.provider; return has(cfg.provider) ? cfg.provider : PROVIDERS.find(has) || ''; };
   // ImageCraft keeps its own keys; opened from files on this computer both apps share the browser's storage, so they can be copied over
   function imageCraftKeys() { try { const s = JSON.parse(localStorage.getItem('imagecraft-cloud') || 'null'); return s && s.keys ? PROVIDERS.filter((p) => (s.keys[p] || '').trim()).reduce((o, p) => ({ ...o, [p]: s.keys[p].trim() }), {}) : {}; } catch (e) { return {}; } }
 
@@ -55,6 +57,7 @@
   }
   // the model to use: the one chosen, or a quick, cheap one that can see
   async function model(p) {
+    { const c = choiceFor('see'); if (c && c.provider === p && c.model) return c.model; }
     if (cfg.provider === p && cfg.model) return cfg.model;
     const list = await models(p), pref = { anthropic: /haiku/i, gemini: /flash(?!.*(lite|thinking))/i, openai: /^gpt-(5|4\.1|4o)-mini$/i, openrouter: /gemini.*flash/i, together: /llama-4-scout|llama-3\.2-11b-vision|qwen2\.5-vl/i }[p] || /./;
     const m = (list.find((x) => pref.test(x.id)) || list[0] || {}).id; if (!m) throw new Error(`${NAMES[p]}: that key has no model that can look at pictures.`);
@@ -126,7 +129,7 @@ Answer with JSON only, in this form: {"name": "...", "category": "...", "style":
   // A drawing (SVG) is written by a text model (Claude, Gemini, GPT, OpenRouter: a capable one, not the quickest);
   // a picture (PNG) by an image model: GPT-image (OpenAI), Gemini's image model, or one of OpenRouter's. Claude makes no pictures.
   const DRAWERS = { anthropic: /sonnet|opus/i, gemini: /pro(?!.*(image|tts|vision))/i, openai: /^gpt-(5|4\.1)(?!.*(mini|nano))/i, openrouter: /anthropic\/claude.*sonnet|google\/gemini.*pro/i, together: /qwen.*coder|deepseek-v3|llama-3\.3-70b|qwen2\.5-72b/i };
-  async function drawModel(p) { if (cfg.provider === p && cfg.drawModel) return cfg.drawModel; const list = await models(p, true); const m = (list.find((x) => DRAWERS[p].test(x.id)) || list.find((x) => !/haiku|flash|mini|nano|lite/i.test(x.id)) || list[0] || {}).id; if (!m) throw new Error(`${NAMES[p]}: that key has no model to draw with.`); return m; }
+  async function drawModel(p) { { const c = choiceFor('draw'); if (c && c.provider === p && c.model) return c.model; } if (cfg.provider === p && cfg.drawModel) return cfg.drawModel; const list = await models(p, true); const m = (list.find((x) => DRAWERS[p].test(x.id)) || list.find((x) => !/haiku|flash|mini|nano|lite/i.test(x.id)) || list[0] || {}).id; if (!m) throw new Error(`${NAMES[p]}: that key has no model to draw with.`); return m; }
   async function chat(p, m, prompt, max = 16000) {
     const k = cfg.keys[p].trim();
     if (p === 'anthropic') { const j = await call('https://api.anthropic.com/v1/messages', { method: 'POST', headers: anthHeaders(k, true), body: JSON.stringify({ model: m, max_tokens: max, messages: [{ role: 'user', content: prompt }] }) }, p); return (j.content || []).map((c) => c.text || '').join(''); }
@@ -135,7 +138,7 @@ Answer with JSON only, in this form: {"name": "...", "category": "...", "style":
     const j = await call(url + '/chat/completions', { method: 'POST', headers, body: JSON.stringify({ model: m, messages: [{ role: 'user', content: prompt }] }) }, p); return j.choices?.[0]?.message?.content || '';
   }
   async function draw(prompt, who) {
-    const p = who && has(who) ? who : provider(); if (!p) throw new Error('No cloud AI key yet: add one in the AI settings.'); const t0 = performance.now(), m = await drawModel(p);
+    const p = who && has(who) ? who : provider('draw'); if (!p) throw new Error('No cloud AI key yet: add one in the AI settings.'); const t0 = performance.now(), m = await drawModel(p);
     try { const text = await chat(p, m, prompt); if (window.CraftKeys) CraftKeys.activity('cloud', { what: 'Draw a picture (SVG)', model: `${m} (${NAMES[p]})`, ms: Math.round(performance.now() - t0), sent: prompt.slice(0, 300), came: `${text.length} characters` }); return { text, model: `${m} (${NAMES[p]})` }; }
     catch (e) { if (window.CraftKeys) CraftKeys.activity('cloud', { what: 'Draw a picture (SVG)', model: `${m} (${NAMES[p]})`, ok: false, came: e.message }); throw e; }
   }
@@ -143,7 +146,7 @@ Answer with JSON only, in this form: {"name": "...", "category": "...", "style":
   const PAINTERS = ['openai', 'gemini', 'openrouter', 'together', 'runware'];
   const canPaint = () => PAINTERS.filter(has);
   async function paint(prompt, who, { transparent = true } = {}) {
-    const p = who && PAINTERS.includes(who) && has(who) ? who : canPaint()[0]; if (!p) throw new Error('Making a picture needs a key for GPT (OpenAI), Gemini, OpenRouter, Together.ai or Runware (Claude makes no pictures).');
+    const pc = choiceFor('paint'), p = who && PAINTERS.includes(who) && has(who) ? who : pc && PAINTERS.includes(pc.provider) && has(pc.provider) ? pc.provider : canPaint()[0]; if (!p) throw new Error('Making a picture needs a key for GPT (OpenAI), Gemini, OpenRouter, Together.ai or Runware (Claude makes no pictures).');
     const k = cfg.keys[p].trim(), t0 = performance.now(); let m = '', b64 = '', type = 'image/png';
     try {
       if (p === 'openai') { m = 'gpt-image-1'; const j = await call('https://api.openai.com/v1/images/generations', { method: 'POST', headers: { 'content-type': 'application/json', Authorization: `Bearer ${k}` }, body: JSON.stringify({ model: m, prompt, size: '1024x1024', ...(transparent ? { background: 'transparent' } : {}), output_format: 'png' }) }, p); b64 = j.data?.[0]?.b64_json || ''; }
@@ -172,7 +175,9 @@ Answer with JSON only, in this form: {"name": "...", "category": "...", "style":
     NAMES, PROVIDERS, has, provider, models, look, lookLocal, imageCraftKeys, draw, paint, canPaint, model,
     ready: () => !!provider(),
     settings: () => ({ keys: { ...cfg.keys }, provider: cfg.provider, model: cfg.model }),
-    set(o) { cfg = { keys: { ...cfg.keys, ...(o.keys || {}) }, provider: o.provider ?? cfg.provider, model: o.model ?? cfg.model }; save(); if (K() && o.keys) K().share({ keys: o.keys }); },
+    set(o) { cfg = { keys: { ...cfg.keys, ...(o.keys || {}) }, provider: o.provider ?? cfg.provider, model: o.model ?? cfg.model }; save(); if (K() && o.keys) K().share({ keys: o.keys });
+      // the provider (and model) chosen here is your choice for looking at pictures in every Craft app
+      if (o.provider && window.CraftAISettings && CraftAISettings.setChoice && has(o.provider)) CraftAISettings.setChoice('see', `cloud|${o.provider}${cfg.model ? '|' + cfg.model : ''}`); },
     // where AI runs (the title bar's switch): local only, both, or cloud
     mode: () => (K() ? K().mode() : 'both'),
   };
