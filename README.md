@@ -59,6 +59,19 @@ An item in the browser store: `{ id, name, category, tags, width, height, added,
 
 Firefox keeps each page opened from disk separate, so there the library is per app; use the folder, ZIPs or the server to move it.
 
+## Your account
+
+ClipArtCraft works without a login. With a Craft account (AccountCraft, on the same web server):
+
+- **The clip-art server knows who you are** and what you may do there, as set in AccountCraft (People › Apps…):
+  *Look* (see and use), *Add* (add pictures, change your own), *Editor* (change everyone's) or *Admin*.
+- **Who can see a picture:** everyone, only you, or everyone at one of your companies or locations.
+- **Your word lists, the AI's lessons from your corrections and your choices follow your login** to any browser.
+- **AI:** the AI settings list every AI server you have (Ollama, LM Studio, llama.cpp, on this computer or your
+  network) and your cloud keys (Claude, Gemini, GPT, OpenRouter, Together.ai, Runware); your choice for each job
+  follows your login.
+- **Sizes:** the server says how much it takes at once; a picture that is too big is made smaller to fit.
+
 ## How this was made
 
 This app is **vibe coded**: its author designed and directed it in plain conversation, feature by feature, and an AI coding assistant (Claude, by Anthropic) wrote the code.

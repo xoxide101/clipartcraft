@@ -8,7 +8,7 @@
 
    Options:
      --server URL    the clip-art server (default http://localhost:3370, the one on this computer: no key needed there);
-                     for the QNAP's: --server http://192.168.43.8/craft/clipartcraft/server/clipart-server.php --key …
+                     for the QNAP's: --server http://192.168.1.20/craft/clipartcraft/server/clipart-server.php --key …
      --key KEY       the server's key (or set CLIPART_KEY): needed for a server on another computer, to see the pictures
                      only for me and to save
      --ai URL        the AI program (default: every one that answers: Ollama :11434, LM Studio :1234, llama.cpp :9931 (the Llama App) or :8080)
