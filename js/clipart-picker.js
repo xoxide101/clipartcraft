@@ -11,7 +11,12 @@
    CraftClipartPicker.open({ app, svg: true, onPick(pic) })
      pic = { name, file (a File: the SVG when svg is true and there is one, else the PNG), png: Blob, svg: string | null,
              width, height, category, style, tags }
-   CraftClipartPicker.keep({ name, file, from }) → the kept picture (My pictures)      .mine() → the list      .forget(id) */
+   CraftClipartPicker.keep({ name, file, from, source }) → the kept picture (My pictures)      .mine() → the list      .forget(id)
+     source: the app's own working file, to change it again later (like a PSD): { app, name, type, text }; the picture
+     (file) is kept with it for looking and for other apps
+   CraftClipartPicker.keepAsk({ name, from, png: async () => Blob, svg?: async () => Blob, source?: async () => { name, type, text }, pick? })
+     asks how to keep it: a picture (PNG), SVG (vector, every detail), or the working file (with a picture of it)
+   open({ …, onSource(source) }): a kept working file made by this app gets "Open it here" */
 (function () {
   'use strict';
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -60,15 +65,46 @@
       for (const p of here) if (!there.has(p.id) && !p.gone) A.put('pictures', p.id, p).catch(() => {}); } catch (e) { /* not now */ } }
     return [...all.values()].filter((p) => !p.gone).sort((a, b) => (b.saved || '').localeCompare(a.saved || ''));
   }
-  async function keep({ name, file, from = '' }) {
-    const d = await asData(file), p = { id: 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: String(name || file.name || 'Picture').replace(/\.\w+$/, ''), from, ...d, saved: new Date().toISOString() };
-    await picTx('readwrite', (s) => s.put(p)); const A = acct(); if (A) await A.put('pictures', p.id, p).catch((e) => { if (e.status === 413) throw new Error('That picture is too big for your account.'); });
+  async function keep({ name, file, from = '', source = null }) {
+    const d = await asData(file), p = { id: 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: String(name || file.name || 'Picture').replace(/\.\w+$/, ''), from, ...d, ...(source ? { source: { app: source.app || from, name: source.name || '', type: source.type || 'application/json', text: String(source.text || '') } } : {}), saved: new Date().toISOString() };
+    await picTx('readwrite', (s) => s.put(p)); const A = acct();
+    if (A) { if (JSON.stringify(p).length > 3900000) throw new Error('Kept in this browser only: it is more than your account takes at once (4 MB).');
+      await A.put('pictures', p.id, p).catch((e) => { throw new Error(e.status === 413 ? 'Kept in this browser only: it is too big for your account.' : 'Kept in this browser; your account did not answer (it goes up next time).'); }); }
     return p;
+  }
+  // how to keep it: a picture, SVG (vector), or the working file (to change it again in the app that made it)
+  function keepAsk({ name = 'Picture', from = '', png, svg, source, pick } = {}) {
+    return new Promise((done) => {
+      const opts = [svg && ['svg', 'SVG: vector, every detail', 'Sharp at any size; other apps can still change its shapes and colours.'], png && ['png', 'Picture (PNG)', 'A plain picture, as it looks now.'], source && ['source', `Working file: change it again in ${from || 'the app'}`, `The ${from || 'app'} file with everything in it (like a PSD), kept with a picture of it. Open it here again later, or save it as a file.`]].filter(Boolean);
+      const first = pick && opts.some((o) => o[0] === pick) ? pick : opts[0][0];
+      const back = document.createElement('div'); back.className = 'craft-clip'; back.style.cssText = 'position:fixed;inset:0;z-index:2147483000;display:grid;place-items:center;padding:16px;background:rgba(0,0,0,.5)';
+      back.innerHTML = `<form role="dialog" aria-modal="true" aria-label="Keep in My pictures" style="width:min(460px,100%);display:grid;gap:10px;padding:16px;border-radius:12px;border:1px solid var(--line,#555);background:var(--panel,#222);color:var(--fg,#eee);font:14px system-ui,sans-serif">
+        <b style="font-size:16px">Keep in My pictures</b><small style="opacity:.75">Every Craft app has My pictures (Clip art › My pictures)${acct() ? ', in your account on any computer' : ', in this browser'}.</small>
+        <label style="display:grid;gap:3px">Name<input data-n value="${esc(name)}" style="padding:7px 9px;border-radius:7px;border:1px solid var(--line,#555);background:var(--panel-2,#2a2a2a);color:inherit;font:inherit"></label>
+        ${opts.map(([k, l, t]) => `<label style="display:grid;grid-template-columns:auto 1fr;gap:2px 8px;padding:8px;border-radius:8px;border:1px solid var(--line,#555);cursor:pointer"><input type="radio" name="how" value="${k}" ${k === first ? 'checked' : ''} style="grid-row:span 2"><b>${esc(l)}</b><small style="opacity:.75">${esc(t)}</small></label>`).join('')}
+        <small data-msg style="min-height:1.2em;color:#f87171"></small>
+        <div style="display:flex;gap:8px;justify-content:flex-end"><button type="button" data-a="no" class="btn outline">Cancel</button><button class="btn primary">Keep</button></div></form>`;
+      const shut = (r) => { back.remove(); done(r); };
+      back.addEventListener('click', (e) => { if (e.target === back || e.target.closest('[data-a=no]')) shut(null); });
+      back.addEventListener('keydown', (e) => { if (e.key === 'Escape') shut(null); });
+      back.querySelector('form').addEventListener('submit', async (e) => {
+        e.preventDefault(); const how = back.querySelector('input[name=how]:checked').value, nm = back.querySelector('[data-n]').value.trim() || name, b = back.querySelector('form button:not([type])'), msg = back.querySelector('[data-msg]');
+        b.disabled = true; b.textContent = 'Keeping…';
+        try {
+          let p;
+          if (how === 'svg') { const s = await svg(); p = await keep({ name: nm, file: new File([s], nm + '.svg', { type: 'image/svg+xml' }), from }); }
+          else if (how === 'png') { const g = await png(); p = await keep({ name: nm, file: new File([g], nm + '.png', { type: g.type || 'image/png' }), from }); }
+          else { const [g, src] = await Promise.all([(svg && !png ? svg() : png()), source()]); p = await keep({ name: nm, file: new File([g], nm + (/svg/.test(g.type) ? '.svg' : '.png'), { type: g.type || 'image/png' }), from, source: { app: from, ...src } }); }
+          shut(p);
+        } catch (x) { b.disabled = false; b.textContent = 'Keep'; msg.textContent = x.message || String(x); if (/^Kept in this browser/.test(msg.textContent)) { b.textContent = 'Close'; b.disabled = false; b.onclick = (ev) => { ev.preventDefault(); shut({}); }; } }
+      });
+      (document.body || document.documentElement).append(back); back.querySelector('[data-n]').select();
+    });
   }
   async function forget(id) { await picTx('readwrite', (s) => s.delete(id)).catch(() => {}); const A = acct(); if (A) await A.remove('pictures', id).catch(() => {}); }
 
   // ------------------------------------------------------------------ the window
-  function open({ app = 'Craft', svg: takesSvg = true, onPick } = {}) {
+  function open({ app = 'Craft', svg: takesSvg = true, onPick, onSource } = {}) {
     let source = 'server', server = '', q = '', cat = '', items = [], total = 0, cats = [], chosen = null, localAll = null, timer = 0, minePics = null;
     const back = document.createElement('div'); back.className = 'craft-clip'; back.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;box-sizing:border-box;z-index:2147483000;display:grid;place-items:center;grid-template-rows:100%;padding:16px;background:rgba(0,0,0,.5)';
     const shut = () => back.remove();
@@ -92,6 +128,7 @@
       const sib = items.filter((x) => x !== chosen && x.subject && x.subject === chosen.subject && x.from === chosen.from);
       s.innerHTML = `<div style="display:grid;place-items:center;height:200px;border-radius:8px;background:${check}"><img src="${esc(chosen.thumbUrl)}" alt="" style="max-width:100%;max-height:200px"></div><b>${esc(chosen.name)}</b>
         <small style="opacity:.8">${[chosen.category, chosen.style, chosen.width && `${chosen.width} × ${chosen.height} px`, chosen.hasSvg ? 'PNG and SVG' : 'PNG'].filter(Boolean).map(esc).join(' · ')}</small>
+        ${chosen.pic && chosen.pic.source ? `<div style="display:grid;gap:6px;padding:8px;border-radius:8px;border:1px solid var(--line,#555)"><small><b>Working file</b> from ${esc(chosen.pic.source.app)}: everything in it, to change it again</small>${onSource && chosen.pic.source.app === app ? `<button type="button" data-a="opensrc" class="btn primary">Open it here (in ${esc(app)})</button>` : ''}<button type="button" data-a="savesrc" class="btn outline">Save the working file…</button></div>` : ''}
         ${chosen.pic ? '<button type="button" data-a="forget" class="btn outline">Remove from My pictures</button>' : '<button type="button" data-a="keepit" class="btn outline">Keep in My pictures</button>'}
         ${(chosen.tags || []).length ? `<small style="opacity:.7">${esc(chosen.tags.slice(0, 10).join(', '))}</small>` : ''}
         ${sib.length ? `<div><small style="opacity:.8">Same DNA / style</small><div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">${sib.map((x) => `<button type="button" data-i="${items.indexOf(x)}" title="${esc(x.name)}" style="width:52px;height:52px;padding:2px;border-radius:6px;border:1px solid var(--line,#555);background:${check};cursor:pointer"><img src="${esc(x.thumbUrl)}" alt="" style="max-width:100%;max-height:100%"></button>`).join('')}</div></div>` : ''}`;
@@ -100,7 +137,7 @@
     async function load(more) {
       if (source === 'mine') {
         minePics = minePics || await mine(); const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-        items = minePics.filter((p) => (!cat || p.from === cat) && words.every((w) => (p.name + ' ' + (p.from || '')).toLowerCase().includes(w))).map((p) => ({ name: p.name, category: p.from ? 'From ' + p.from : '', tags: [], width: p.w, height: p.h, thumbUrl: p.data, data: p.data, pic: p, hasSvg: /^data:image\/svg/.test(p.data), from: '' }));
+        items = minePics.filter((p) => (!cat || p.from === cat) && words.every((w) => (p.name + ' ' + (p.from || '')).toLowerCase().includes(w))).map((p) => ({ name: p.name, category: (p.from ? 'From ' + p.from : '') + (p.source ? ' · working file' : ''), tags: [], width: p.w, height: p.h, thumbUrl: p.data, data: p.data, pic: p, hasSvg: /^data:image\/svg/.test(p.data), from: '' }));
         total = items.length; if (!items.includes(chosen)) chosen = null; drawGrid(); drawSide(); return;
       }
       if (source === 'server') {
@@ -133,7 +170,7 @@
         else { if (chosen.pngUrl) png = await (await fetch(chosen.pngUrl)).blob(); if (takesSvg && chosen.svgUrl) { try { const r = await fetch(chosen.svgUrl); if (r.ok) svg = await r.text(); } catch (e) { /* the PNG will do */ } } }
         if (!png && svg && !takesSvg) png = await svgToPng(svg);
         const safe = chosen.name.replace(/[\\/:*?"<>|]+/g, '-'), file = takesSvg && svg ? new File([svg], safe + '.svg', { type: 'image/svg+xml' }) : new File([png], safe + '.png', { type: 'image/png' });
-        shut(); onPick && onPick({ name: chosen.name, file, png, svg, width: chosen.width, height: chosen.height, category: chosen.category, style: chosen.style, tags: chosen.tags });
+        shut(); onPick && onPick({ name: chosen.name, file, png, svg, source: (chosen.pic && chosen.pic.source) || null, width: chosen.width, height: chosen.height, category: chosen.category, style: chosen.style, tags: chosen.tags });
       } catch (e) { console.error(e); b.disabled = false; b.textContent = 'Insert'; $('[data-count]').textContent = 'Getting the picture failed: ' + (e.message || e); }
     }
     back.addEventListener('click', async (e) => {
@@ -142,6 +179,8 @@
       const t = e.target.closest('[data-i]'); if (t) { chosen = items[+t.dataset.i]; drawGrid(); drawSide(); return; }
       if (e.target.closest('[data-a=more]')) return load(true);
       if (e.target.closest('[data-a=addfile]')) { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.multiple = true; i.onchange = async () => { for (const f of i.files) { try { await keep({ name: f.name, file: f, from: app }); } catch (x) { $('[data-count]').textContent = x.message; } } minePics = null; await load(); await drawTabs(); }; i.click(); return; }
+      if (e.target.closest('[data-a=opensrc]') && chosen && chosen.pic && chosen.pic.source) { const s = chosen.pic.source; shut(); onSource(s); return; }
+      if (e.target.closest('[data-a=savesrc]') && chosen && chosen.pic && chosen.pic.source) { const s = chosen.pic.source, a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([s.text], { type: s.type || 'application/json' })); a.download = s.name || (chosen.name + '.json'); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); return; }
       if (e.target.closest('[data-a=forget]') && chosen && chosen.pic) { if (!confirm(`Remove “${chosen.name}” from My pictures (every Craft app)?`)) return; await forget(chosen.pic.id); minePics = null; chosen = null; await load(); await drawTabs(); return; }
       if (e.target.closest('[data-a=keepit]') && chosen) { const b = e.target.closest('[data-a=keepit]'); b.disabled = true; b.textContent = 'Keeping…';
         try { const f = chosen.item ? (chosen.item.svg ? new Blob([chosen.item.svg], { type: 'image/svg+xml' }) : chosen.item.png) : await (await fetch(chosen.svgUrl || chosen.pngUrl)).blob(); await keep({ name: chosen.name, file: new File([f], chosen.name + (/svg/.test(f.type) ? '.svg' : '.png'), { type: f.type }), from: 'Clip art' }); minePics = null; b.textContent = 'Kept in My pictures ✓'; drawTabs(); }
@@ -157,5 +196,5 @@
   }
   // an SVG drawn as a PNG (for an app that takes pictures only)
   async function svgToPng(svg) { const u = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' })); try { const img = new Image(); img.src = u; await img.decode(); const w = img.naturalWidth || 512, h = img.naturalHeight || 512, k = Math.max(1, 1024 / Math.max(w, h)), c = document.createElement('canvas'); c.width = Math.round(w * k); c.height = Math.round(h * k); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); return await new Promise((ok) => c.toBlob(ok, 'image/png')); } finally { URL.revokeObjectURL(u); } }
-  window.CraftClipartPicker = { open, keep, mine, forget };
+  window.CraftClipartPicker = { open, keep, keepAsk, mine, forget };
 })();
