@@ -1,0 +1,62 @@
+/* Craft rail (window.CraftRail): a slim bar down the left of every Craft app, to go from one app to another.
+     Top: the unified apps (one account; your work saved on the server too: AccountCraft, ShiftCraft, ICalCraft, ClipArtCraft,
+          ImageCraft, BarcodeCraft).  Bottom: the other apps (they keep their work on this computer).
+   Logged in on a web address, it shows the apps on that site your account may use (AccountCraft's api/apps); otherwise the
+   usual list. The app you are in is marked. The bar folds to a thin edge (remembered). Each app keeps what it has as you
+   work; going to another app first sends 'craft-leave' (apps that keep things on leaving do it then).
+   Each app keeps its own copy (from AccountCraft): include it after craft-account.js. */
+(function () {
+  'use strict';
+  if (window.CraftRail || window.top !== window) return;   // once, and not inside a frame
+  const UNIFIED = [['accountcraft', 'AccountCraft', '👤', 'your account: people, companies, locations, keys'], ['shiftcraft', 'ShiftCraft', '📅', 'schedules'], ['icalcraft', 'ICalCraft', '🗓', 'calendars: check, change, share'],
+    ['clipartcraft', 'ClipArtCraft', '🖼', 'clip-art library'], ['imagecraft', 'ImageCraft', '🎨', 'pictures: restore, convert'], ['barcodecraft', 'BarcodeCraft', '▥', 'barcodes and QR codes']];
+  const OTHER = [['labelcraft', 'LabelCraft', '🏷', 'labels'], ['logocraft', 'LogoCraft', '🔰', 'logos and seals'], ['presscraft', 'PressCraft', '📰', 'signs, cards, newsletters'], ['sitecraft', 'SiteCraft', '🌐', 'web sites'],
+    ['3dcraft', '3DCraft', '🧊', '3D titles and logos'], ['wordcraft', 'WordCraft', '📝', 'documents'], ['deckcraft', 'DeckCraft', '🖥', 'slides'], ['pdfcraft', 'PdfCraft', '📄', 'PDF'], ['photocraft', 'PhotoCraft', '📷', 'photos'],
+    ['vectorcraft', 'VectorCraft', '✒', 'vector drawing'], ['designcraft', 'DesignCraft', '✏', 'design'], ['gridcraft', 'GridCraft', '▦', 'grids and sheets'], ['cadcraft', 'CadCraft', '📐', 'CAD'], ['figcraft', 'FigCraft', '🧩', 'figures'],
+    ['effectcraft', 'EffectCraft', '✨', 'effects'], ['filmcraft', 'FilmCraft', '🎬', 'film'], ['soundcraft', 'SoundCraft', '🎵', 'sound'], ['lightcraft', 'LightCraft', '💡', 'lighting'], ['materialcraft', 'MaterialCraft', '🧱', 'materials'], ['texturecraft', 'TextureCraft', '🪵', 'textures']];
+  const W = 52, KEY = 'craft-rail';
+  // where this app is, and where its neighbours are (a web address, or a folder on this computer)
+  const parts = location.pathname.split('/'), file = /\.html?$/i.test(parts[parts.length - 1]) ? parts.pop() : (parts.pop(), ''), here = (parts[parts.length - 1] || '').toLowerCase();
+  const all = UNIFIED.concat(OTHER), me = all.find((a) => a[0] === here) ? here : (all.find((a) => location.pathname.toLowerCase().includes('/' + a[0] + '/')) || [''])[0];
+  const baseOf = () => { const i = location.href.toLowerCase().lastIndexOf('/' + me + '/'); return i < 0 ? null : location.href.slice(0, i + 1); };
+  const urlOf = (app) => { const b = baseOf(); if (!b) return null; return b + app + '/' + (location.protocol === 'file:' ? 'index.html' : ''); };
+  let folded = false; try { folded = localStorage.getItem(KEY) === 'folded'; } catch (e) { /* blocked */ }
+  let allowed = null;   // the apps on this site your account may use (null: the usual list)
+  const css = `.craft-rail{position:fixed;left:0;top:0;bottom:0;width:${W}px;z-index:2400;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 0;background:#14151b;border-right:1px solid #2c2f3a;font:12px/1.2 "Segoe UI",system-ui,sans-serif;overflow-y:auto;overflow-x:hidden;scrollbar-width:none}
+.craft-rail::-webkit-scrollbar{display:none}.craft-rail a{position:relative;display:grid;place-items:center;width:40px;height:38px;border-radius:9px;text-decoration:none;font-size:19px;color:#e8e9ee;flex:none}
+.craft-rail a:hover{background:#2a2d38}.craft-rail a.on{background:#2f5bea;box-shadow:0 0 0 1px #6f8ff5 inset}.craft-rail a.off{opacity:.35;cursor:default}
+.craft-rail .sep{flex:1 1 12px;min-height:12px}.craft-rail .lbl{font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:#7d8394;margin:6px 0 2px;text-align:center;line-height:1.1}
+.craft-rail .fold{width:40px;height:22px;border:0;border-radius:7px;background:none;color:#7d8394;cursor:pointer;font-size:13px}.craft-rail .fold:hover{background:#2a2d38;color:#e8e9ee}
+.craft-rail a .tip{display:none;position:fixed;left:${W + 4}px;padding:4px 9px;border-radius:7px;background:#000d;color:#fff;white-space:nowrap;font-size:12.5px;pointer-events:none;z-index:2401}
+.craft-rail a:hover .tip{display:block}.craft-rail-tab{position:fixed;left:0;top:50%;transform:translateY(-50%);z-index:2400;width:12px;height:56px;border:0;border-radius:0 7px 7px 0;background:#2f5bea;color:#fff;cursor:pointer;padding:0;font-size:11px}
+html.craft-railed body{margin-left:var(--craft-rail,0px)!important}
+@media print{.craft-rail,.craft-rail-tab{display:none!important}html.craft-railed body{margin-left:0!important}}`;
+  function paint() {
+    document.querySelectorAll('.craft-rail, .craft-rail-tab').forEach((x) => x.remove());
+    if (!document.getElementById('craft-rail-css')) { const s = document.createElement('style'); s.id = 'craft-rail-css'; s.textContent = css; document.head.append(s); }
+    document.documentElement.classList.add('craft-railed');
+    document.documentElement.style.setProperty('--craft-rail', folded ? '0px' : W + 'px');
+    if (folded) { const t = document.createElement('button'); t.className = 'craft-rail-tab'; t.title = 'Craft apps'; t.textContent = '›'; t.onclick = () => setFold(false); document.body.append(t); return; }
+    const bar = document.createElement('nav'); bar.className = 'craft-rail'; bar.setAttribute('aria-label', 'Craft apps');
+    const link = ([id, name, ic, what]) => { const a = document.createElement('a'), u = urlOf(id), may = !allowed || allowed.includes(id) || id === 'accountcraft';
+      a.className = (id === me ? 'on' : '') + (may ? '' : ' off'); a.innerHTML = `${ic}<span class="tip">${name}${what ? ' · ' + what : ''}${id === me ? ' (here)' : !may ? ' (not on this site, or not for your account)' : ''}</span>`;
+      a.setAttribute('aria-label', name); if (u && id !== me && may) a.href = u; else a.removeAttribute('href');
+      a.onclick = (e) => { if (!a.href || id === me) { e.preventDefault(); return; } window.dispatchEvent(new CustomEvent('craft-leave', { detail: { to: id } })); };
+      return a; };
+    const lbl = (t) => { const d = document.createElement('div'); d.className = 'lbl'; d.textContent = t; return d; };
+    const fold = document.createElement('button'); fold.className = 'fold'; fold.title = 'Fold the apps bar away'; fold.textContent = '‹'; fold.onclick = () => setFold(true);
+    const show = (list) => list.filter(([id]) => !allowed || allowed.includes(id) || id === me || id === 'accountcraft');
+    bar.append(fold, lbl('One account'), ...show(UNIFIED).map(link), Object.assign(document.createElement('div'), { className: 'sep' }), lbl('Other apps'), ...show(OTHER).map(link));
+    document.body.append(bar);
+  }
+  function setFold(f) { folded = f; try { localStorage.setItem(KEY, f ? 'folded' : 'open'); } catch (e) { /* blocked */ } paint(); window.dispatchEvent(new Event('resize')); }
+  // the apps on this site (logged in, on a web address): only those that are there and that your account may use
+  async function learn() {
+    const A = window.CraftAccount; if (!A || !A.user || !A.user() || !/^https?:/.test(location.protocol)) { allowed = null; return paint(); }
+    try { const r = await A.api('GET', 'apps'), mine = A.user().apps; allowed = (r.apps || []).filter((a) => !mine || mine.includes(a)).concat(['accountcraft', me]); } catch (e) { allowed = null; }
+    paint();
+  }
+  const go = () => { paint(); learn(); window.addEventListener('craft-account', learn); };
+  if (document.body) go(); else document.addEventListener('DOMContentLoaded', go);
+  window.CraftRail = { UNIFIED, OTHER, fold: setFold, refresh: learn };
+})();
