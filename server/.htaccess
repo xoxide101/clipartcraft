@@ -1,5 +1,10 @@
 # Nice links (/clipart/Name.png, /api/items, /setup) for the PHP clip-art server; without this they work as clipart-server.php/...
 Options -Indexes
+# the server's own working files (login look-ups) are never handed out
+RedirectMatch 403 /data/
+<FilesMatch "^acct-.*\.json$">
+  Require all denied
+</FilesMatch>
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteRule ^(api|clipart)(/.*)?$ clipart-server.php/$1$2 [L,QSA]

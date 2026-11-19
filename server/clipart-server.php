@@ -219,7 +219,8 @@ function acct_who(string $tok, string $url): ?array {
   if (is_file($f) && filemtime($f) > time() - 60) { $u = json_decode((string) file_get_contents($f), true); return is_array($u) && $u ? $u : null; }
   $me = acct_get($tok, $url, 'me'); $u = is_array($me) && isset($me['user']['id']) && ($me['user']['status'] ?? '') === 'active' ? $me['user'] : null;
   if ($u) { $l = acct_get($tok, $url, 'locations'); $g = []; foreach ((array) ($l['locations'] ?? []) as $x) { $g[] = 'loc:' . $x['id']; if (!empty($x['company'])) $g[] = 'co:' . $x['company']; } $u['groups'] = array_values(array_unique($g)); }
-  if (!is_dir($dir)) @mkdir($dir, 0775, true); @file_put_contents($f, json_encode($u ?: false));
+  if (!is_dir($dir)) @mkdir($dir, 0775, true); if (!is_file("$dir/.htaccess")) @file_put_contents("$dir/.htaccess", "Require all denied
+"); @file_put_contents($f, json_encode($u ?: false));
   if (mt_rand(1, 50) === 1) foreach ((array) glob("$dir/acct-*.json") as $g) if (filemtime($g) < time() - 3600) @unlink($g);
   return $u;
 }
