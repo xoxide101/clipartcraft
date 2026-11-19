@@ -309,7 +309,15 @@
       await fit(limit * 0.95);
       // sent; refused as too big (by the server, or a proxy in front of it): made smaller and tried again (twice at most)
       const send = async () => { try { return await call(it.serverId ? '/api/items/' + it.serverId : '/api/items', { method: it.serverId ? 'PATCH' : 'POST', body: JSON.stringify(j) }); } catch (e) { if (!it.serverId || !/No such item/.test(e.message)) throw e; delete it.serverId; return call('/api/items', { method: 'POST', body: JSON.stringify(j) }); } };
-      let s; for (let tries = 0; ; tries++) { try { s = await send(); break; } catch (e) { if (tries < 2 && /413|too big|too large|entity/i.test(e.message)) { await fit(size() * 0.5); continue; } throw e; } }
+      // a server that is busy for a while (it cut the line, or did not answer): wait and try again (3, 8, then 15 seconds);
+      // a new picture is first looked for by name, so one the server did take before the line was cut is not added twice
+      const busy = (e) => /did not answer|50[234]/.test(e.message || '') || e.status === 502 || e.status === 503 || e.status === 504;
+      const already = async () => { if (it.serverId) return null; try { const got = await call('/api/items/' + encodeURIComponent(j.name), { method: 'GET' }); return got && got.id && (!j.name || got.name === j.name) ? got : null; } catch (e) { return null; } };
+      let s, waits = [3, 8, 15];
+      for (let tries = 0; ; tries++) { try { s = await send(); break; } catch (e) {
+        if (tries < 2 && /413|too big|too large|entity/i.test(e.message)) { await fit(size() * 0.5); continue; }
+        if (busy(e) && waits.length) { const w = waits.shift(); progress(`The clip-art server is busy: trying ${it.name || 'it'} again in ${w} s…`); await new Promise((ok) => setTimeout(ok, w * 1000)); const got = await already(); if (got) { s = got; break; } continue; }
+        throw e; } }
       if (j.shrunk || j.animLeftHome || j.svgLeftHome) it.serverNote = `made to fit the server (${Math.round(limit / 1048576 * 10) / 10} MB at a time): ${[j.shrunk && 'a smaller picture', j.animLeftHome && 'without its moving version', j.svgLeftHome && 'without its drawing'].filter(Boolean).join(', ')}; this computer keeps the full one`;
       it.serverId = s.id; it.links = s.links; it.name = s.name; it.serverChanged = s.changed; it.thumbFrom = s.changed; delete it.changed; if (here) await tx('items', 'readwrite', (st) => req(st.put(it))); out.push(it); progress(++n, items.length);
       if (here) { left.delete(it.id); await meta('pushQueue', [...left]); }
