@@ -27,8 +27,11 @@
     for (const u of tries) if (await answers(u)) return u;
     return '';
   }
+  // your Craft login (AccountCraft), for a clip-art server on the same website as your account: it shows what your login
+  // may see there (your own pictures, your companies' and locations'), as set in AccountCraft
+  const loginFor = (u) => { try { const A = window.CraftAccount, s = JSON.parse(localStorage.getItem('craft-account') || 'null'); if (!A || !A.user || !A.user() || !s || !s.token) return null; return new URL(u, location.href).origin === new URL(A.server(), location.href).origin ? { token: s.token, name: (A.user() || {}).name || '' } : null; } catch (e) { return null; } };
   // the key ClipArtCraft is connected with (kept in the shared library), sent to that same server: pictures only for me show too
-  async function keyFor(u) { try { if (tidy(await read('meta', 'server')) === tidy(u)) { const k = await read('meta', 'serverKey'); if (k) return { headers: { 'x-craft-key': k } }; } } catch (e) { /* no library yet */ } return {}; }
+  async function keyFor(u) { const h = {}, L = loginFor(u); if (L) h['x-craft-token'] = L.token; try { if (tidy(await read('meta', 'server')) === tidy(u)) { const k = await read('meta', 'serverKey'); if (k) h['x-craft-key'] = k; } } catch (e) { /* no library yet */ } return Object.keys(h).length ? { headers: h } : {}; }
   async function serverItems(u, q, category, offset) { const r = await fetch(`${u}/api/items?limit=120&offset=${offset || 0}&q=${encodeURIComponent(q || '')}${category ? `&category=${encodeURIComponent(category)}` : ''}`, await keyFor(u)); if (!r.ok) throw new Error('The server did not answer.'); return r.json(); }
   async function serverCats(u) { try { return (await (await fetch(u + '/api/categories', await keyFor(u))).json()).filter((c) => c.category); } catch (e) { return []; } }
 
@@ -73,7 +76,7 @@
     async function drawTabs() {
       const nLocal = (await read('items').catch(() => [])).length;
       $('[data-src]').innerHTML = [['server', `Clip-art server${server ? '' : ' (none)'}`], ['local', `This browser (${nLocal})`]].map(([k, l]) => `<button type="button" role="tab" data-s="${k}" aria-selected="${source === k}" class="btn ${source === k ? 'primary' : 'outline'}">${l}</button>`).join('');
-      $('[data-where]').textContent = source === 'server' ? (server ? `From ${server.replace(/^https?:\/\//, '').replace(/\/clipart-server\.php$/, '')}: only the picture you insert is fetched.` : 'No server found.') : 'The library kept in this browser (ClipArtCraft).';
+      $('[data-where]').textContent = source === 'server' ? (server ? `From ${server.replace(/^https?:\/\//, '').replace(/\/clipart-server\.php$/, '')}${loginFor(server) ? ` as ${loginFor(server).name || 'you'} (what your login may see)` : ''}: only the picture you insert is fetched.` : 'No server found.') : 'The library kept in this browser (ClipArtCraft).';
       const cl = source === 'server' ? cats.map((c) => [c.category, `${c.category} (${c.n})`]) : [...new Set((localAll || []).map((it) => it.category).filter(Boolean))].sort().map((c) => [c, c]);
       $('[data-cat]').innerHTML = `<option value="">All categories</option>${cl.map(([v, l]) => `<option value="${esc(v)}" ${v === cat ? 'selected' : ''}>${esc(l)}</option>`).join('')}`;
     }
