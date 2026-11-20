@@ -146,7 +146,7 @@
   function loadGroups() { const A = window.CraftAccount; if (groupsAsked || !A || !A.user || !A.user()) return; groupsAsked = true;
     A.api('GET', 'locations').then((r) => { const out = [], seen = new Set(); for (const l of r.locations || []) { if (l.company && !seen.has('co:' + l.company)) { seen.add('co:' + l.company); out.push(['co:' + l.company, `Everyone at ${l.companyName || 'the company'}`]); } out.push(['loc:' + l.id, `Everyone at ${l.name}${l.number && !String(l.name).includes(l.number) ? ' #' + l.number : ''}`]); } groupsCache = out; }).catch(() => { groupsAsked = false; }); }
   window.addEventListener('craft-account', () => { groupsCache = null; groupsAsked = false; });
-  const keyFetch = async (url) => { const k = await L.serverKey(); return fetch(url, k ? { headers: { 'x-craft-key': k } } : {}); };
+  const keyFetch = async (url, opts = {}) => fetch(url, { ...opts, headers: await L.headersFor(url, opts.headers) });
   // A picture that is on the server, changed here (saved in Touch up or Edit the drawing, its details changed): sent
   // straight away when the server answers (else it stays marked, and Sync sends it). One send at a time, the rest queued.
   let sending = Promise.resolve();
@@ -228,8 +228,8 @@
       if (!serverUrl || !serverOk) return toast('Connect to a server first.'); busy('Reading the server’s list…');
       let all = []; try { for (let off = 0; ; off += 500) { const r = await (await keyFetch(`${serverUrl}/api/items?limit=500&offset=${off}`)).json(); all = all.concat(r.items); if (all.length >= r.total || !r.items.length) break; } } catch (e) { busy(); return fail(e); } busy();
       return ClipArtDupes.open({ where: 'server', toast, list: all.map((x) => ({ id: x.id, name: x.name, thumb: (x.links || {}).thumb || (x.links || {}).png || (x.links || {}).svg, width: x.width, height: x.height, svg: !!(x.links || {}).svg, tags: x.tags || [] })),
-        tag: async (ids) => { const key = await L.serverKey(); for (const x of all.filter((y) => ids.includes(y.id))) { if ((x.tags || []).includes('duplicate')) continue; const r = await fetch(`${serverUrl}/api/items/${encodeURIComponent(x.id)}`, { method: 'PATCH', headers: { 'content-type': 'application/json', ...(key ? { 'x-craft-key': key } : {}) }, body: JSON.stringify({ tags: [...(x.tags || []), 'duplicate'] }) }); if (r.status === 403) throw new Error('the server needs its key to change pictures (Server › Connect…, the place’s Key)'); if (!r.ok) throw new Error(`the server said ${r.status}`); } srv.items = []; srv.at = ''; },
-        remove: async (ids) => { const key = await L.serverKey(); for (const id of ids) { const r = await fetch(`${serverUrl}/api/items/${encodeURIComponent(id)}`, { method: 'DELETE', headers: key ? { 'x-craft-key': key } : {} }); if (r.status === 403) throw new Error('the server needs its key to remove pictures (Server › Connect…, the place’s Key)'); if (!r.ok && r.status !== 404) throw new Error(`the server said ${r.status}`); } srv.items = []; srv.at = ''; srv.total = 0; },
+        tag: async (ids) => { const key = await L.serverKey(); for (const x of all.filter((y) => ids.includes(y.id))) { if ((x.tags || []).includes('duplicate')) continue; const r = await fetch(`${serverUrl}/api/items/${encodeURIComponent(x.id)}`, { method: 'PATCH', headers: await L.headersFor(serverUrl, { 'content-type': 'application/json' }), body: JSON.stringify({ tags: [...(x.tags || []), 'duplicate'] }) }); if (r.status === 403) throw new Error('the server needs its key to change pictures (Server › Connect…, the place’s Key)'); if (!r.ok) throw new Error(`the server said ${r.status}`); } srv.items = []; srv.at = ''; },
+        remove: async (ids) => { const key = await L.serverKey(); for (const id of ids) { const r = await fetch(`${serverUrl}/api/items/${encodeURIComponent(id)}`, { method: 'DELETE', headers: await L.headersFor(serverUrl) }); if (r.status === 403) throw new Error('the server needs its key to remove pictures (Server › Connect…, the place’s Key)'); if (!r.ok && r.status !== 404) throw new Error(`the server said ${r.status}`); } srv.items = []; srv.at = ''; srv.total = 0; },
         done: () => loadServer() });
     }
     return ClipArtDupes.open({ where: 'local', toast, list: items.map((it) => ({ id: it.id, name: it.name, thumb: it.thumb, width: it.width, height: it.height, svg: !!it.svg, hash: it.hash })), remove: async (ids) => { const S = items.filter((it) => ids.includes(it.id)); return deletePictures(S, true); },
@@ -359,11 +359,13 @@
   const live = { total: null, was: null, at: 0 };
   async function serverCount() { if (!serverUrl || !serverOk) return; try { const r = await (await keyFetch(`${serverUrl}/api/items?limit=1`)).json(); srv.hidden = r.hidden || 0; if (live.total !== null && r.total !== live.total) live.was = { n: live.total, t: live.at }; live.total = r.total; live.at = Date.now(); const c = $('gridnav').querySelector('.countline'); if (c) c.outerHTML = countLine(); status(); } catch (e) { /* the next time */ } }
   setInterval(() => { if (!document.hidden) serverCount(); }, 30000);
+  // logging in or out: the server is asked again (what your login may see and change)
+  window.addEventListener('craft-account', async () => { srv.hidden = 0; groupsAsked = false; try { await checkServer(); } catch (e) { /* no server */ } serverCount(); loadGroups(); });
   function countLine() {
     if (!serverUrl || !serverOk || live.total === null) return '';
     const known = items.filter((it) => it.serverId && !L.inBook(it.id)).length + bookRows.reduce((a, r) => a + r.n, 0), miss = Math.max(0, live.total - known), grew = live.was && live.total > live.was.n ? live.total - live.was.n : 0;
     const growth = grew ? ` <small class="hint">(+${grew.toLocaleString()} in the last ${Math.max(1, Math.round((live.at - live.was.t) / 1000))} s)</small>` : '';
-    const hid = srv.hidden ? `<div class="countline warn"><b>${srv.hidden.toLocaleString()}</b> pictures on this server are <b>Only me</b> and stay hidden: this page has no key for this server (or not the right one). <button type="button" class="btn outline sm" data-act="connect">Enter the key…</button></div>` : '';
+    const hid = srv.hidden ? `<div class="countline warn"><b>${srv.hidden.toLocaleString()}</b> pictures on this server are <b>Only me</b> and stay hidden: ${window.CraftAccount && CraftAccount.user() ? 'your login may not see them (an editor or the admin sees all: AccountCraft › People › Apps… gives the right).' : 'log in (👤, top right) with your Craft account, or enter the server’s key. <button type="button" class="btn outline sm" data-act="connect">Enter the key…</button>'}</div>` : '';
     return hid + (onServer()
       ? `<div class="countline">On the server: <b>${live.total.toLocaleString()}</b> pictures${growth} · this browser knows <b>${known.toLocaleString()}</b>${miss ? ` <button type="button" class="btn outline sm" data-act="sync">Sync: get ${miss.toLocaleString()} more</button>` : ''}</div>`
       : `<div class="countline">This browser knows <b>${known.toLocaleString()}</b> of the server’s <b>${live.total.toLocaleString()}</b> pictures${growth}${items.length > known ? ` · ${(items.length - known).toLocaleString()} only here` : ''} · ${miss ? `<button type="button" class="btn outline sm" data-act="sync">Sync: get ${miss.toLocaleString()} more</button>` : 'in step with the server'}</div>`);
@@ -636,7 +638,7 @@
         await need(); const v = await ask('A copy of the database', `The whole library on <b>${esc(serverUrl.replace(/^https?:\/\//, ''))}</b>, pictures included, as one SQL file.<br><br><b>MySQL / MariaDB</b>: load it into a database on this computer or another server (phpMyAdmin › Import, or <code>mysql -u USER -p DATABASE &lt; file.sql</code>).<br><b>SQLite</b>: a copy to keep offline, no database server needed (<code>sqlite3 clipart.sqlite &lt; file.sql</code>).`,
           [{ label: 'MySQL / MariaDB', value: 'mysql' }, { label: 'SQLite (offline)', value: 'sqlite' }, { label: 'Cancel', value: null, primary: true }]); if (!v) return;
         busy('Making the copy (the pictures are in it: this takes a while)…'); const key = await L.serverKey(); let r;
-        try { r = await fetch(`${serverUrl}/api/export.sql?dialect=${v}`, { headers: key ? { 'x-craft-key': key } : {} }); } catch (e) { busy(); throw new Error(`The server at ${serverUrl} did not answer.`); }
+        try { r = await fetch(`${serverUrl}/api/export.sql?dialect=${v}`, { headers: await L.headersFor(serverUrl) }); } catch (e) { busy(); throw new Error(`The server at ${serverUrl} did not answer.`); }
         if (!r.ok) { busy(); const j = await r.json().catch(() => ({})); throw Object.assign(new Error(j.error || `The server said ${r.status}.`), { status: r.status }); }
         const b = await r.blob(), name = (/filename="([^"]+)"/.exec(r.headers.get('content-disposition') || '') || [])[1] || `clip art${v === 'sqlite' ? ' (SQLite)' : ''}.sql`;
         const u = URL.createObjectURL(b), ln = document.createElement('a'); ln.href = u; ln.download = name; document.body.append(ln); ln.click(); ln.remove(); setTimeout(() => URL.revokeObjectURL(u), 60000);
@@ -792,7 +794,7 @@
   async function probe(url, key) {
     url = tidyUrl(url); if (!url) return { ok: false, why: 'No address' };
     if (location.protocol === 'https:' && url.startsWith('http:')) return { ok: false, why: 'blocked', note: 'This page is on https, so the browser will not let it talk to an http address.' };
-    try { const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 2500); const r = await fetch(url + '/api/info', { headers: key ? { 'x-craft-key': key } : {}, signal: ctl.signal }); clearTimeout(t);
+    try { const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 2500); const r = await fetch(url + '/api/info', { headers: await L.headersFor(url, key ? { 'x-craft-key': key } : {}), signal: ctl.signal }); clearTimeout(t);
       const j = await r.json(); if (!j || !j.server) return { ok: false, why: 'Something answers, but it is not a clip-art server' }; return { ok: true, info: j }; }
     catch (e) { return { ok: false, why: 'No answer' }; }
   }

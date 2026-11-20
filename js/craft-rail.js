@@ -35,6 +35,9 @@
 .craft-rail a .tip{display:none;position:fixed;left:${W + 4}px;padding:4px 9px;border-radius:7px;background:#000d;color:#fff;white-space:nowrap;font-size:12.5px;pointer-events:none;z-index:2401}
 .craft-rail a:hover .tip{display:block}.craft-rail-tab{position:fixed;left:0;top:50%;transform:translateY(-50%);z-index:2400;width:12px;height:56px;border:0;border-radius:0 7px 7px 0;background:#2f5bea;color:#fff;cursor:pointer;padding:0;font-size:11px}
 html.craft-railed body{margin-left:var(--craft-rail,0px)!important}
+/* the apps' start pages (What do you want to make?) cover the window: they begin right of the bar, and on tablets and phones everything on them is 10% smaller */
+html.craft-railed :is(#start.start,#lc-start.lc-start){left:var(--craft-rail,0px)!important}
+@media (max-width:1100px){:is(#start.start,#lc-start.lc-start)>*{zoom:.9}}
 @media print{.craft-rail,.craft-rail-tab{display:none!important}html.craft-railed body{margin-left:0!important}}`;
   function paint() {
     document.querySelectorAll('.craft-rail, .craft-rail-tab').forEach((x) => x.remove());

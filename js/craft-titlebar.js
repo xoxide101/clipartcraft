@@ -191,6 +191,29 @@ button.ctb-chip:hover { background: rgba(255,255,255,.3); }
 .crb-big[aria-pressed="true"], .crb-small[aria-pressed="true"] { background: var(--hue-soft); color: var(--hue); }
 .crb-big:disabled, .crb-small:disabled { opacity: .45; cursor: default; background: transparent; }
 .crb-el { display: flex; align-items: center; }
+/* wide rows (the ribbon, its tabs): no scrollbar; Office-style ‹ › at the edges, only when there is more that way */
+.es-host { position: relative; min-width: 0; max-width: 100%; }
+.es-wrap { scrollbar-width: none; -ms-overflow-style: none; }
+.es-wrap::-webkit-scrollbar { display: none; }
+.es-btn { position: absolute; top: 0; bottom: 0; z-index: 6; width: 24px; padding: 0; border: 0; cursor: pointer; color: var(--fg, #1f2430); display: block; }
+.es-btn[hidden] { display: none; }
+.es-btn.l { left: 0; background: linear-gradient(to right, color-mix(in srgb, var(--panel, #fff) 96%, transparent), color-mix(in srgb, var(--panel, #fff) 70%, transparent)); box-shadow: 3px 0 6px -3px rgba(0, 0, 0, .35); }
+.es-btn.r { right: 0; background: linear-gradient(to left, color-mix(in srgb, var(--panel, #fff) 96%, transparent), color-mix(in srgb, var(--panel, #fff) 70%, transparent)); box-shadow: -3px 0 6px -3px rgba(0, 0, 0, .35); }
+.es-btn .es-ch { position: absolute; left: 1px; top: 8px; display: block; width: 22px; height: 36px; line-height: 33px; font-size: 24px; font-weight: 700; text-align: center; border-radius: 7px; background: var(--panel-2, #eef0f4); border: 1px solid var(--line, #d5d9e1); box-sizing: border-box; }
+.es-host:has(> .crb-tabs) .es-btn .es-ch { height: 24px; line-height: 21px; font-size: 18px; top: 3px; }
+.es-btn:hover .es-ch { background: var(--accent, #2f6fdd); color: #fff; }
+.es-btn:focus-visible { outline: 2px solid var(--accent, #2f6fdd); }
+.crb-tabs .crb-tab { flex: none; }
+/* phones and flip phones: the title bar's buttons scroll sideways in their row, nothing wider than the screen */
+@media (max-width: 760px) {
+  .ctb.ctb { flex-wrap: wrap; height: auto; min-height: 40px; padding: 4px 6px; row-gap: 4px; }
+  .ctb.ctb > .ctb-left:first-child { order: 1; }
+  .ctb.ctb > .ctb-left:not(:first-child) { order: 2; flex: 1 1 0; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  .ctb.ctb > .ctb-left::-webkit-scrollbar { display: none; }
+  .ctb.ctb > .ctb-right { order: 3; }
+  .ctb.ctb > .ctb-mid { display: none; }
+}
+@media print { .es-btn { display: none !important; } }
 @media print { .ctb, .crb, .ctb-mega, .ctb-pop { display: none !important; } }`;
     document.head.append(s);
   }
@@ -473,6 +496,35 @@ button.ctb-chip:hover { background: rgba(255,255,255,.3); }
   //   tabs: [{ id, label, hue, soft, onSelect, show, groups: [[label, [item…]]] }]
   //   item: { label, icon, run, big, iconOnly, title, key, pressed: () => bool, disabled: () => bool } | { col: [item…] } | { row: [item… or '|'] } | { el: element }
   // =====================================================================
+
+  // =====================================================================
+  // Office-style ‹ › at the left and right edges of a row wider than the screen (the ribbon and its tabs): only when
+  // there is more that way. Click scrolls most of a screen; hold keeps going; Shift+wheel, touchpads and a swipe still scroll.
+  // =====================================================================
+  function edgeScroll(w) {
+    if (!w || w.dataset.es || !w.parentNode) return;
+    w.dataset.es = '1';
+    const host = document.createElement('div'); host.className = 'es-host';
+    w.parentNode.insertBefore(host, w); host.append(w); w.classList.add('es-wrap');
+    const btn = (dir) => {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'es-btn no-print ' + (dir < 0 ? 'l' : 'r');
+      b.title = dir < 0 ? 'Scroll left (hold to keep going)' : 'Scroll right (hold to keep going)'; b.setAttribute('aria-label', dir < 0 ? 'Scroll left' : 'Scroll right');
+      b.innerHTML = `<span class="es-ch">${dir < 0 ? '‹' : '›'}</span>`;
+      let t = null;
+      const step = (smooth) => w.scrollBy({ left: dir * Math.max(80, w.clientWidth * (smooth ? 0.8 : 0.25)), behavior: smooth ? 'smooth' : 'auto' });
+      const stop = () => { clearTimeout(t); clearInterval(t); t = null; };
+      b.addEventListener('pointerdown', (e) => { if (e.button !== 0) return; e.preventDefault(); step(true); t = setTimeout(() => { t = setInterval(() => step(false), 90); }, 380); });
+      ['pointerup', 'pointerleave', 'pointercancel'].forEach((k) => b.addEventListener(k, stop));
+      b.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); step(true); } });
+      host.append(b); return b;
+    };
+    const L = btn(-1), R = btn(1);
+    const sync = () => { const max = w.scrollWidth - w.clientWidth; L.hidden = !(max > 2 && w.scrollLeft > 2); R.hidden = !(max > 2 && w.scrollLeft < max - 2); };
+    w.addEventListener('scroll', sync, { passive: true });
+    if (window.ResizeObserver) { const ro = new ResizeObserver(sync); ro.observe(w); for (const c of w.children) ro.observe(c); new MutationObserver(() => { for (const c of w.children) ro.observe(c); sync(); }).observe(w, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] }); }
+    sync(); setTimeout(sync, 300);
+  }
+  window.CraftEdgeScroll = edgeScroll;
   window.CraftRibbon = function (cfg) {
     const key = (cfg.storageKey || 'craft');
     const rb = mk('div', 'crb');
@@ -542,6 +594,7 @@ button.ctb-chip:hover { background: rgba(255,255,255,.3); }
     setInterval(refresh, 600);
     if (store.get(key + '-ribbon-collapsed', false)) toggle();
     if (cfg.after) cfg.after.after(rb); else (cfg.mount || document.body).prepend(rb);
+    edgeScroll(body); edgeScroll(tabs);
     select(cfg.start || store.get(key + '-ribbon-tab', cfg.tabs[0].id));
     return {
       el: rb, select, refresh, current: () => current,
