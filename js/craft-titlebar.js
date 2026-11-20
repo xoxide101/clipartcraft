@@ -213,6 +213,13 @@ button.ctb-chip:hover { background: rgba(255,255,255,.3); }
   .ctb.ctb > .ctb-right { order: 3; }
   .ctb.ctb > .ctb-mid { display: none; }
 }
+/* the status bar along the bottom: one line that scrolls sideways (‹ › at its edges) instead of losing what does not fit */
+.statusbar.es-wrap { overflow-x: auto !important; overflow-y: hidden; flex-wrap: nowrap !important; }
+.statusbar.es-wrap > * { flex-shrink: 0; }
+.es-host.es-status { flex: none; }
+.es-host.es-status .es-btn .es-ch { height: 22px; line-height: 19px; font-size: 17px; top: calc(50% - 11px) !important; }
+/* phones: the logo and quick buttons scroll sideways when they do not fit (a swipe), nothing cut off */
+@media (max-width: 760px) { .ctb.ctb > .ctb-left:first-child { min-width: 0; flex: 0 1 auto; overflow-x: auto; scrollbar-width: none; } .ctb.ctb > .ctb-left:first-child::-webkit-scrollbar { display: none; } .ctb.ctb > .ctb-left:first-child > * { flex: none; } }
 @media print { .es-btn { display: none !important; } }
 @media print { .ctb, .crb, .ctb-mega, .ctb-pop { display: none !important; } }`;
     document.head.append(s);
@@ -525,6 +532,25 @@ button.ctb-chip:hover { background: rgba(255,255,255,.3); }
     sync(); setTimeout(sync, 300);
   }
   window.CraftEdgeScroll = edgeScroll;
+
+  // =====================================================================
+  // Phones and folded phones: the side panels open and close from two buttons at the bottom corners
+  //   CraftSideTabs({ width: 980, left: { label, title, toggle, isOpen }, right: { … } })
+  // =====================================================================
+  window.CraftSideTabs = function (o) {
+    const w = o.width || 980;
+    if (!document.getElementById('cst-css')) { const s = document.createElement('style'); s.id = 'cst-css'; s.textContent = `.cst{display:none;position:fixed;bottom:calc(46px + env(safe-area-inset-bottom,0px));z-index:2300;align-items:center;gap:6px;padding:8px 13px;border-radius:999px;border:1px solid var(--line,#3a3e4c);background:var(--panel,#1f2129);color:var(--fg,#e8e9ee);font:600 13px/1 system-ui,"Segoe UI",sans-serif;box-shadow:0 4px 16px rgba(0,0,0,.35);cursor:pointer;touch-action:manipulation}.cst.l{left:calc(10px + var(--craft-rail,0px))}.cst.r{right:10px}.cst.on{background:var(--accent,#2f6fdd);border-color:var(--accent,#2f6fdd);color:#fff}@media(max-width:${w}px){.cst{display:inline-flex}}@media print{.cst{display:none!important}}`; document.head.append(s); }
+    const make = (side, c) => { if (!c) return null; const b = document.createElement('button'); b.type = 'button'; b.className = 'cst ' + side; b.title = c.title || c.label; b.innerHTML = side === 'l' ? `☰ ${c.label}` : `${c.label} ⚙`; b.onclick = () => { c.toggle(); sync(); }; document.body.append(b); return b; };
+    const L = make('l', o.left), R = make('r', o.right);
+    // where the panels may start: under the ribbon (--cst-top), whatever height the title bar has on this screen
+    const sync = () => { if (L) L.classList.toggle('on', !!o.left.isOpen()); if (R) R.classList.toggle('on', !!o.right.isOpen()); const rb = document.querySelector('.crb'); if (rb) document.documentElement.style.setProperty('--cst-top', Math.round(rb.getBoundingClientRect().bottom) + 'px'); };
+    window.addEventListener('resize', () => sync());
+    setInterval(sync, 500); sync();
+    return { sync };
+  };
+  // the status bar (footer.statusbar): the same, once it is on the page
+  function statusScan() { document.querySelectorAll('footer.statusbar').forEach((f) => { if (f.dataset.es) return; edgeScroll(f); if (f.parentNode && f.parentNode.classList.contains('es-host')) f.parentNode.classList.add('es-status'); }); }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', statusScan); else setTimeout(statusScan, 0);
   window.CraftRibbon = function (cfg) {
     const key = (cfg.storageKey || 'craft');
     const rb = mk('div', 'crb');
@@ -594,7 +620,7 @@ button.ctb-chip:hover { background: rgba(255,255,255,.3); }
     setInterval(refresh, 600);
     if (store.get(key + '-ribbon-collapsed', false)) toggle();
     if (cfg.after) cfg.after.after(rb); else (cfg.mount || document.body).prepend(rb);
-    edgeScroll(body); edgeScroll(tabs);
+    edgeScroll(body); edgeScroll(tabs); statusScan();
     select(cfg.start || store.get(key + '-ribbon-tab', cfg.tabs[0].id));
     return {
       el: rb, select, refresh, current: () => current,

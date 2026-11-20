@@ -20,7 +20,11 @@
   const all = UNIFIED.concat(OTHER), me = all.find((a) => a[0] === here) ? here : (all.find((a) => location.pathname.toLowerCase().includes('/' + a[0] + '/')) || [''])[0];
   const baseOf = () => { const i = location.href.toLowerCase().lastIndexOf('/' + me + '/'); return i < 0 ? null : location.href.slice(0, i + 1); };
   const urlOf = (app) => { const b = baseOf(); if (!b) return null; return b + app + '/' + (location.protocol === 'file:' ? 'index.html' : ''); };
-  let folded = false; try { folded = localStorage.getItem(KEY) === 'folded'; } catch (e) { /* blocked */ }
+  // folded or open, remembered: phones and folded phones (narrower than 600) on their own, and folded at first there (the page needs the room)
+  const SMALL = () => innerWidth < 600, FKEY = () => (SMALL() ? KEY + '-phone' : KEY);
+  const foldedNow = () => { let v = null; try { v = localStorage.getItem(FKEY()); } catch (e) { /* blocked */ } return v ? v === 'folded' : SMALL(); };
+  let folded = foldedNow(), wasSmall = SMALL();
+  window.addEventListener('resize', () => { if (SMALL() === wasSmall) return; wasSmall = SMALL(); const f = foldedNow(); if (f !== folded) { folded = f; paint(); } });
   // wide: the bar opened out to show the apps' names (» / «, remembered); WW its width
   let wide = false; try { wide = localStorage.getItem(KEY + '-wide') === '1'; } catch (e) { /* blocked */ }
   const WW = 196;
@@ -33,11 +37,12 @@
 .craft-rail .nm{display:none}.craft-rail.wide a{width:auto;grid-template-columns:28px 1fr;justify-items:start;gap:8px;padding:0 8px;font-size:18px}.craft-rail.wide a .nm{display:block;font-size:13px;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}.craft-rail.wide a .nm small{display:block;font-size:10.5px;color:#9aa0b0;overflow:hidden;text-overflow:ellipsis}.craft-rail.wide a.on .nm small{color:#dfe6ff}.craft-rail.wide a .tip{display:none!important}.craft-rail.wide .lbl{text-align:left;padding-left:8px}
 .craft-rail .fold{width:40px;height:22px;border:0;border-radius:7px;background:none;color:#7d8394;cursor:pointer;font-size:13px}.craft-rail .fold:hover{background:#2a2d38;color:#e8e9ee}
 .craft-rail a .tip{display:none;position:fixed;left:${W + 4}px;padding:4px 9px;border-radius:7px;background:#000d;color:#fff;white-space:nowrap;font-size:12.5px;pointer-events:none;z-index:2401}
-.craft-rail a:hover .tip{display:block}.craft-rail-tab{position:fixed;left:0;top:50%;transform:translateY(-50%);z-index:2400;width:12px;height:56px;border:0;border-radius:0 7px 7px 0;background:#2f5bea;color:#fff;cursor:pointer;padding:0;font-size:11px}
+.craft-rail a:hover .tip{display:block}.craft-rail-tab{position:fixed;left:0;top:50%;transform:translateY(-50%);z-index:2400;width:12px;height:56px;touch-action:manipulation;border:0;border-radius:0 7px 7px 0;background:#2f5bea;color:#fff;cursor:pointer;padding:0;font-size:11px}
 html.craft-railed body{margin-left:var(--craft-rail,0px)!important}
 /* the apps' start pages (What do you want to make?) cover the window: they begin right of the bar, and on tablets and phones everything on them is 10% smaller */
 html.craft-railed :is(#start.start,#lc-start.lc-start){left:var(--craft-rail,0px)!important}
 @media (max-width:1100px){:is(#start.start,#lc-start.lc-start)>*{zoom:.9}}
+@media (pointer:coarse){.craft-rail-tab{width:18px;height:64px;font-size:14px}}
 @media print{.craft-rail,.craft-rail-tab{display:none!important}html.craft-railed body{margin-left:0!important}}`;
   function paint() {
     document.querySelectorAll('.craft-rail, .craft-rail-tab').forEach((x) => x.remove());
@@ -60,7 +65,7 @@ html.craft-railed :is(#start.start,#lc-start.lc-start){left:var(--craft-rail,0px
     document.body.append(bar);
   }
   function setWide(f) { wide = f; try { localStorage.setItem(KEY + '-wide', f ? '1' : '0'); } catch (e) { /* blocked */ } paint(); window.dispatchEvent(new Event('resize')); }
-  function setFold(f) { folded = f; try { localStorage.setItem(KEY, f ? 'folded' : 'open'); } catch (e) { /* blocked */ } paint(); window.dispatchEvent(new Event('resize')); }
+  function setFold(f) { folded = f; try { localStorage.setItem(FKEY(), f ? 'folded' : 'open'); } catch (e) { /* blocked */ } paint(); window.dispatchEvent(new Event('resize')); }
   // the apps on this site (logged in, on a web address): only those that are there and that your account may use
   async function learn() {
     const A = window.CraftAccount; if (!A || !A.user || !A.user() || !/^https?:/.test(location.protocol)) { allowed = null; return paint(); }

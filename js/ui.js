@@ -1052,6 +1052,9 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
   function syncTouchTab() { if (!E()) return; if (!fontSel.options.length) fontSel.innerHTML = E().FONTS.map((f) => `<option style="font-family:'${f}'">${f}</option>`).join(''); fontSel.value = E().T().font; fontSel.disabled = off(); [sizeSlide, tolSlide, fsSlide, opSlide, stepSlide, fxSlide, vcSlide, bgSel, vecSel].forEach((w) => w.sync()); navPos.textContent = off() ? '' : touchLabel(); drawCols(); if (typeof ribbon !== 'undefined') ribbon.refresh(); }
   [opSlide, stepSlide, fxSlide, vcSlide].forEach((w) => w.classList.add('narrow'));
   document.addEventListener('clipart-editor', syncTouchTab);
+  // phones and folded phones: the side panels from two buttons at the bottom corners (one open at a time)
+  if (window.CraftSideTabs) { const wk = () => document.querySelector('.work'), flip = (on, off) => { wk().classList.remove(off); wk().classList.toggle(on); };
+    window.CraftSideTabs({ width: 900, left: { label: 'Groups', title: 'Categories and groups', toggle: () => flip('show-left', 'show-right'), isOpen: () => wk().classList.contains('show-left') }, right: { label: 'Settings', title: 'The details of the picture chosen', toggle: () => flip('show-right', 'show-left'), isOpen: () => wk().classList.contains('show-right') } }); }
   const ribbon = window.CraftRibbon({
     mount: $('app'), storageKey: 'clipartcraft',
     tabs: [
@@ -1104,7 +1107,7 @@ window.CLIPARTCRAFT_CONFIG = ${JSON.stringify(cfg, null, 2)};
   const touchEmpty = document.createElement('div'); touchEmpty.className = 'touch-empty'; touchEmpty.hidden = true;
   touchEmpty.innerHTML = '<b>Touch up</b><p class="hint"></p><div><button class="btn outline" type="button" data-touch-back>Back to the library</button></div>';
   touchEmpty.addEventListener('click', (e) => { if (e.target.closest('[data-touch-back]')) ribbon.select('home', true); });
-  app.insertBefore(touchEmpty, $('status'));
+  { const st = $('status'), at = st && st.parentNode === app ? st : st && st.closest('.es-host') && st.closest('.es-host').parentNode === app ? st.closest('.es-host') : null; app.insertBefore(touchEmpty, at); } // (the status bar may sit in its ‹ › box)
   function touchUp(it) { touchWant = it || null; ribbon.select('touch', true); }
   // Previous / Next in Touch up: through the pictures chosen (when several), or all the library is showing (the
   // category or search), or the server's when looking at it; changes not saved are asked about first
