@@ -238,13 +238,29 @@ function acct_who(string $tok, string $url): ?array {
   return $u;
 }
 $acct = acct_who((string) ($_SERVER['HTTP_X_CRAFT_TOKEN'] ?? ''), acct_url($prefix));
+// a key issued for a purpose (AccountCraft › App keys: ck-…, sent as x-craft-key): the right it gives here, asked once a minute per key
+function issued_key(string $k, string $url): ?array {
+  if (!preg_match('/^ck-[a-f0-9]{32}$/', $k)) return null;
+  $dir = __DIR__ . '/data'; $f = "$dir/akey-" . hash('sha256', $k) . '.json';
+  if (is_file($f) && filemtime($f) > time() - 60) { $u = json_decode((string) file_get_contents($f), true); return is_array($u) && $u ? $u : null; }
+  $ctx = stream_context_create(['http' => ['method' => 'GET', 'timeout' => 4, 'ignore_errors' => true, 'header' => "x-craft-appkey: $k
+Host: " . ($_SERVER['HTTP_HOST'] ?? 'localhost') . "
+"]]);
+  $r = json_decode((string) @file_get_contents('http://127.0.0.1:' . ($_SERVER['SERVER_PORT'] ?? 80) . "$url/api/appkeys/check?app=clipartcraft", false, $ctx), true);
+  $u = is_array($r) && !empty($r['ok']) ? ['name' => (string) $r['name'], 'right' => (string) $r['right']] : null;
+  if (!is_dir($dir)) @mkdir($dir, 0775, true); if (!is_file("$dir/.htaccess")) @file_put_contents("$dir/.htaccess", "Require all denied
+"); @file_put_contents($f, json_encode($u ?: false));
+  return $u;
+}
+$issued = !$key_ok && $key !== '' ? issued_key($key, acct_url($prefix)) : null;
 // rights here: the main site admin is admin; others as AccountCraft says (People › Apps…): look, add, editor, admin
 $arole = null;
 if ($acct) { $apps = $acct['apps'] ?? null; if (($acct['role'] ?? '') === 'owner') $arole = 'admin'; elseif ($apps === null || in_array('clipartcraft', (array) $apps, true)) { $r = (string) (($acct['approles'] ?? [])['clipartcraft'] ?? 'look'); $arole = in_array($r, ['look', 'add', 'editor', 'admin'], true) ? $r : 'look'; } }
+if ($issued && !$arole) $arole = in_array($issued['right'], ['look', 'add', 'editor', 'admin'], true) ? $issued['right'] : 'look';
 $may_write = $key_ok || in_array($arole, ['add', 'editor', 'admin'], true);
 $see_all = $key_ok || in_array($arole, ['editor', 'admin'], true);
 $login_ok = $login_ok || $arole === 'admin';
-$me_name = (string) ($acct['name'] ?? ''); $groups = (array) ($acct['groups'] ?? []);
+$me_name = (string) ($acct['name'] ?? ($issued ? 'key: ' . $issued['name'] : '')); $groups = (array) ($acct['groups'] ?? []);
 $can_see = fn (?array $it): bool => $it !== null && ($see_all || ($it['privacy'] ?? '') === '' || (($it['privacy'] ?? '') === 'me' && $me_name !== '' && ($it['owner'] ?? '') === $me_name) || in_array($it['privacy'] ?? '', $groups, true));
 // changing one: editors and admins (and the key) any; others only their own
 $can_change = fn (?array $it): bool => $it !== null && ($see_all || ($me_name !== '' && ($it['owner'] ?? '') === $me_name));
