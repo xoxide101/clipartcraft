@@ -9,15 +9,14 @@
   'use strict';
   if (window.CraftRail || window.top !== window) return;   // once, and not inside a frame
   const UNIFIED = [['accountcraft', 'AccountCraft', '👤', 'your account: people, companies, locations, keys'], ['shiftcraft', 'ShiftCraft', '📅', 'schedules'], ['icalcraft', 'ICalCraft', '🗓', 'calendars: check, change, share'], ['filecraft', 'FileCraft', '📁', 'your files from every app'], ['labelcraft', 'LabelCraft', '🏷', 'labels'], ['logocraft', 'LogoCraft', '🔰', 'logos and seals'], ['presscraft', 'PressCraft', '📰', 'signs, cards, newsletters'],
-    ['clipartcraft', 'ClipArtCraft', '🖼', 'clip-art library'], ['imagecraft', 'ImageCraft', '🎨', 'pictures: restore, convert'], ['barcodecraft', 'BarcodeCraft', '▥', 'barcodes and QR codes'], ['wordcraft', 'WordCraft', '📝', 'documents'], ['sitecraft', 'SiteCraft', '🌐', 'web sites']];
-  const OTHER = [
-    ['3dcraft', '3DCraft', '🧊', '3D titles and logos'], ['deckcraft', 'DeckCraft', '🖥', 'slides'], ['pdfcraft', 'PdfCraft', '📄', 'PDF'], ['photocraft', 'PhotoCraft', '📷', 'photos'],
-    ['vectorcraft', 'VectorCraft', '✒', 'vector drawing'], ['designcraft', 'DesignCraft', '✏', 'design'], ['gridcraft', 'GridCraft', '▦', 'grids and sheets'], ['cadcraft', 'CadCraft', '📐', 'CAD'], ['figcraft', 'FigCraft', '🧩', 'figures'],
-    ['effectcraft', 'EffectCraft', '✨', 'effects'], ['filmcraft', 'FilmCraft', '🎬', 'film'], ['soundcraft', 'SoundCraft', '🎵', 'sound'], ['lightcraft', 'LightCraft', '💡', 'lighting'], ['materialcraft', 'MaterialCraft', '🧱', 'materials'], ['texturecraft', 'TextureCraft', '🪵', 'textures']];
+    ['clipartcraft', 'ClipArtCraft', '🖼', 'clip-art library'], ['imagecraft', 'ImageCraft', '🎨', 'pictures: restore, convert'], ['barcodecraft', 'BarcodeCraft', '▥', 'barcodes and QR codes'], ['sitecraft', 'SiteCraft', '🌐', 'web sites']];
+  // ArtCraft's apps (storytold), each with the Craft bar round it: the account and My files
+  const ARTCRAFT = [['wordcraft', 'WordCraft', '📝', 'documents'], ['deckcraft', 'DeckCraft', '🖥', 'slides'], ['pdfcraft', 'PdfCraft', '📄', 'PDF'], ['photocraft', 'PhotoCraft', '📷', 'photos'], ['vectorcraft', 'VectorCraft', '✒', 'vector drawing'], ['designcraft', 'DesignCraft', '✏', 'design'], ['gridcraft', 'GridCraft', '▦', 'grids and sheets'], ['cadcraft', 'CadCraft', '📐', 'CAD'], ['figcraft', 'FigCraft', '🧩', 'figures'], ['effectcraft', 'EffectCraft', '✨', 'effects'], ['filmcraft', 'FilmCraft', '🎬', 'film'], ['soundcraft', 'SoundCraft', '🎵', 'sound'], ['lightcraft', 'LightCraft', '💡', 'lighting'], ['materialcraft', 'MaterialCraft', '🧱', 'materials'], ['texturecraft', 'TextureCraft', '🪵', 'textures']];
+  const OTHER = [['3dcraft', '3DCraft', '🧊', '3D titles and logos']];
   const W = 52, KEY = 'craft-rail';
   // where this app is, and where its neighbours are (a web address, or a folder on this computer)
   const parts = location.pathname.split('/'), file = /\.html?$/i.test(parts[parts.length - 1]) ? parts.pop() : (parts.pop(), ''), here = (parts[parts.length - 1] || '').toLowerCase();
-  const all = UNIFIED.concat(OTHER), me = all.find((a) => a[0] === here) ? here : (all.find((a) => location.pathname.toLowerCase().includes('/' + a[0] + '/')) || [''])[0];
+  const all = UNIFIED.concat(ARTCRAFT, OTHER), me = all.find((a) => a[0] === here) ? here : (all.find((a) => location.pathname.toLowerCase().includes('/' + a[0] + '/')) || [''])[0];
   const baseOf = () => { const i = location.href.toLowerCase().lastIndexOf('/' + me + '/'); return i < 0 ? null : location.href.slice(0, i + 1); };
   const urlOf = (app) => { const b = baseOf(); if (!b) return null; return b + app + '/' + (location.protocol === 'file:' ? 'index.html' : ''); };
   // folded or open, remembered: phones and folded phones (narrower than 600) on their own, and folded at first there (the page needs the room)
@@ -61,7 +60,7 @@ html.craft-railed :is(#start.start,#lc-start.lc-start){left:var(--craft-rail,0px
     const widen = document.createElement('button'); widen.className = 'fold'; widen.title = wide ? 'Narrow: icons only' : 'Open out: the apps with their names'; widen.textContent = wide ? '«' : '»'; widen.onclick = () => setWide(!wide);
     const ends = document.createElement('div'); ends.className = 'ends'; ends.append(fold, widen);
     const show = (list) => list.filter(([id]) => !allowed || allowed.includes(id) || id === me || id === 'accountcraft');
-    bar.append(ends, lbl('One account'), ...show(UNIFIED).map(link), Object.assign(document.createElement('div'), { className: 'sep' }), lbl('Other apps'), ...show(OTHER).map(link));
+    bar.append(ends, lbl('One account'), ...show(UNIFIED).map(link), Object.assign(document.createElement('div'), { className: 'sep' }), lbl('ArtCraft apps'), ...show(ARTCRAFT).map(link), Object.assign(document.createElement('div'), { className: 'sep' }), lbl('Other apps'), ...show(OTHER).map(link));
     document.body.append(bar);
   }
   function setWide(f) { wide = f; try { localStorage.setItem(KEY + '-wide', f ? '1' : '0'); } catch (e) { /* blocked */ } paint(); window.dispatchEvent(new Event('resize')); }
@@ -74,5 +73,5 @@ html.craft-railed :is(#start.start,#lc-start.lc-start){left:var(--craft-rail,0px
   }
   const go = () => { paint(); learn(); window.addEventListener('craft-account', learn); };
   if (document.body) go(); else document.addEventListener('DOMContentLoaded', go);
-  window.CraftRail = { UNIFIED, OTHER, fold: setFold, wide: setWide, refresh: learn };
+  window.CraftRail = { UNIFIED, ARTCRAFT, OTHER, fold: setFold, wide: setWide, refresh: learn };
 })();
