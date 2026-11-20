@@ -104,8 +104,8 @@
   async function forget(id) { await picTx('readwrite', (s) => s.delete(id)).catch(() => {}); const A = acct(); if (A) await A.remove('pictures', id).catch(() => {}); }
 
   // ------------------------------------------------------------------ the window
-  function open({ app = 'Craft', svg: takesSvg = true, onPick, onSource } = {}) {
-    let source = 'server', server = '', q = '', cat = '', items = [], total = 0, cats = [], chosen = null, localAll = null, timer = 0, minePics = null;
+  function open({ app = 'Craft', svg: takesSvg = true, onPick, onSource, tab } = {}) {
+    let source = tab === 'mine' || tab === 'local' ? tab : 'server', server = '', q = '', cat = '', items = [], total = 0, cats = [], chosen = null, localAll = null, timer = 0, minePics = null;
     const back = document.createElement('div'); back.className = 'craft-clip'; back.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;box-sizing:border-box;z-index:2147483000;display:grid;place-items:center;grid-template-rows:100%;padding:16px;background:rgba(0,0,0,.5)';
     const shut = () => back.remove();
     back.innerHTML = `<div role="dialog" aria-modal="true" aria-label="Clip art" style="width:min(1100px,100%);height:min(760px,calc(100vh - 32px));min-height:0;display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;gap:10px;padding:16px;border-radius:12px;border:1px solid var(--line,#555);background:var(--panel,#222);color:var(--fg,#eee);font:14px system-ui,sans-serif">
@@ -192,7 +192,7 @@
     back.addEventListener('change', (e) => { if (e.target.matches('[data-cat]')) { cat = e.target.value; load(); } });
     back.addEventListener('keydown', (e) => { if (e.key === 'Escape') shut(); if (e.key === 'Enter' && chosen && !e.target.matches('[data-q]')) insert(); });
     (document.body || document.documentElement).append(back); $('[data-q]').focus();
-    (async () => { $('[data-count]').textContent = 'Looking for the clip-art server…'; server = await findServer(); if (server) cats = await serverCats(server); else source = 'local'; await drawTabs(); await load(); })().catch((e) => { console.error(e); $('[data-count]').textContent = 'The clip art could not be read: ' + (e.message || e); });
+    (async () => { $('[data-count]').textContent = 'Looking for the clip-art server…'; server = await findServer(); if (server) cats = await serverCats(server); else if (source === 'server') source = 'local'; await drawTabs(); await load(); })().catch((e) => { console.error(e); $('[data-count]').textContent = 'The clip art could not be read: ' + (e.message || e); });
   }
   // an SVG drawn as a PNG (for an app that takes pictures only)
   async function svgToPng(svg) { const u = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' })); try { const img = new Image(); img.src = u; await img.decode(); const w = img.naturalWidth || 512, h = img.naturalHeight || 512, k = Math.max(1, 1024 / Math.max(w, h)), c = document.createElement('canvas'); c.width = Math.round(w * k); c.height = Math.round(h * k); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); return await new Promise((ok) => c.toBlob(ok, 'image/png')); } finally { URL.revokeObjectURL(u); } }
