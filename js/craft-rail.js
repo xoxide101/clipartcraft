@@ -9,9 +9,9 @@
   'use strict';
   if (window.CraftRail || window.top !== window) return;   // once, and not inside a frame
   const UNIFIED = [['accountcraft', 'AccountCraft', '👤', 'your account: people, companies, locations, keys'], ['shiftcraft', 'ShiftCraft', '📅', 'schedules'], ['icalcraft', 'ICalCraft', '🗓', 'calendars: check, change, share'], ['filecraft', 'FileCraft', '📁', 'your files from every app'], ['labelcraft', 'LabelCraft', '🏷', 'labels'], ['logocraft', 'LogoCraft', '🔰', 'logos and seals'], ['presscraft', 'PressCraft', '📰', 'signs, cards, newsletters'],
-    ['clipartcraft', 'ClipArtCraft', '🖼', 'clip-art library'], ['imagecraft', 'ImageCraft', '🎨', 'pictures: restore, convert'], ['barcodecraft', 'BarcodeCraft', '▥', 'barcodes and QR codes']];
-  const OTHER = [['sitecraft', 'SiteCraft', '🌐', 'web sites'],
-    ['3dcraft', '3DCraft', '🧊', '3D titles and logos'], ['wordcraft', 'WordCraft', '📝', 'documents'], ['deckcraft', 'DeckCraft', '🖥', 'slides'], ['pdfcraft', 'PdfCraft', '📄', 'PDF'], ['photocraft', 'PhotoCraft', '📷', 'photos'],
+    ['clipartcraft', 'ClipArtCraft', '🖼', 'clip-art library'], ['imagecraft', 'ImageCraft', '🎨', 'pictures: restore, convert'], ['barcodecraft', 'BarcodeCraft', '▥', 'barcodes and QR codes'], ['wordcraft', 'WordCraft', '📝', 'documents'], ['sitecraft', 'SiteCraft', '🌐', 'web sites']];
+  const OTHER = [
+    ['3dcraft', '3DCraft', '🧊', '3D titles and logos'], ['deckcraft', 'DeckCraft', '🖥', 'slides'], ['pdfcraft', 'PdfCraft', '📄', 'PDF'], ['photocraft', 'PhotoCraft', '📷', 'photos'],
     ['vectorcraft', 'VectorCraft', '✒', 'vector drawing'], ['designcraft', 'DesignCraft', '✏', 'design'], ['gridcraft', 'GridCraft', '▦', 'grids and sheets'], ['cadcraft', 'CadCraft', '📐', 'CAD'], ['figcraft', 'FigCraft', '🧩', 'figures'],
     ['effectcraft', 'EffectCraft', '✨', 'effects'], ['filmcraft', 'FilmCraft', '🎬', 'film'], ['soundcraft', 'SoundCraft', '🎵', 'sound'], ['lightcraft', 'LightCraft', '💡', 'lighting'], ['materialcraft', 'MaterialCraft', '🧱', 'materials'], ['texturecraft', 'TextureCraft', '🪵', 'textures']];
   const W = 52, KEY = 'craft-rail';
