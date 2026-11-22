@@ -13,10 +13,14 @@
      CraftAccount.keyUse(app, provider, key, status, note)          (an app notes how a key did: only the key's ID is kept)
      A site's AccountCraft can name the one account server for every Craft app (Site › One account server): the apps follow it.
      CraftAccount.button(el)             a Log in / your-name button that opens the account page
+     Home: CraftAccount.setHome(name) / revokeHome(id) / isHome() / homes(). A computer set as home keeps a key in this
+     browser (localStorage 'craft-home'); every check uses the key up and brings a new one (a copied key stops working and
+     revokes the home). Away from home, a login ends after 30 minutes without anyone at the keyboard (in any Craft tab;
+     the account server ends it too, also when the page is closed).
    Changes fire window 'craft-account' (also when another app or tab logs in or out). */
 (function () {
   'use strict';
-  const STATE = 'craft-account', SERVER = 'craft-account-server', KEYS = 'craft-ai-keys', ROUNDS = 250000;
+  const STATE = 'craft-account', SERVER = 'craft-account-server', KEYS = 'craft-ai-keys', HOME = 'craft-home', ACT = 'craft-active', ROUNDS = 250000;
   const enc = new TextEncoder(), dec = new TextDecoder();
   const b64 = (u8) => btoa(String.fromCharCode(...u8)), unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
   const read = (k) => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } };
@@ -41,7 +45,7 @@
     let r; try { r = await fetch(server() + '/api/' + path, { method, headers: h, body: body === undefined ? undefined : JSON.stringify(body) }); }
     catch (e) { throw new Error('The account server could not be reached.'); }
     const j = await r.json().catch(() => ({}));
-    if (r.status === 401 && j.login && s) { write(STATE, null); tell(); }
+    if (r.status === 401 && j.login && s) { write(STATE, null); tell(); if (j.idle) setTimeout(() => idleNote(), 0); }
     if (!r.ok) { const err = new Error(j.error || `The account server said ${r.status}.`); err.status = r.status; err.info = j; throw err; }
     return j;
   }
@@ -68,7 +72,7 @@
 
   async function login(name, password) {
     const r = await api('POST', 'login', { name, password });
-    write(STATE, { server: server(), token: r.token, user: r.user }); tell();
+    write(STATE, { server: server(), token: r.token, user: r.user }); markActive(true); await homeCheck(); tell();
     // your keys come with you; the first time, the keys this browser already has go into the vault
     try { const v = await unlockKeys(password); if (!v) { const l = localKeys(); if (Object.keys(l.keys).length && hasCrypto()) await lockKeys(l, password); } }
     catch (e) { console.warn('Craft account: the keys could not be unlocked', e); }
@@ -85,12 +89,57 @@
   const all = (app) => api('GET', `data/${app}`);
   const remove = (app, key) => api('DELETE', `data/${app}/${encodeURIComponent(key)}`);
 
+  // ------------------------------------------------------------------ home, and logging out when nobody is there
+  const isHome = () => { const s = state(); return !!(s && s.token && s.server === server() && s.home); };
+  const setState = (k, v) => { const s = state(); if (s) { s[k] = v; write(STATE, s); } };
+  async function homeCheck() {
+    const h = read(HOME);
+    if (!h || h.server !== server() || !h.key) { if (isHome()) { setState('home', null); tell(); } return null; }
+    let r; try { r = await api('POST', 'home/check', { key: h.key }); } catch (e) { return isHome() ? state().home : null; }   // (not reachable: as it was)
+    if (r.key) { const now = read(HOME); if (now && now.key === h.key) write(HOME, { ...h, key: r.key, id: r.home.id, name: r.home.name }); }
+    if (r.home) { setState('home', r.home); tell(); return r.home; }
+    if (r.ended) write(HOME, null);
+    setState('home', null); tell();
+    if (r.ended) setTimeout(() => note('🏠 Not home any more', esc(r.why || 'This computer is no longer set as home.') + '<br><br>Away from home you are logged out after 30 minutes without activity.'), 0);
+    return null;
+  }
+  async function setHome(name) {
+    const r = await api('POST', 'home/set', { name: name || 'Home computer' });
+    write(HOME, { server: server(), key: r.key, id: r.home.id, name: r.home.name }); setState('home', r.home); tell(); return r.home;
+  }
+  async function revokeHome(id) {
+    const h = read(HOME), here = id || (h && h.id);
+    if (here) await api('DELETE', 'me/homes/' + encodeURIComponent(here));
+    if (!id || (h && h.id === id)) { write(HOME, null); setState('home', null); markActive(true); }
+    tell();
+  }
+  const homes = () => api('GET', 'me/homes');
+  // activity: any Craft tab on this site notes when someone last used it (mouse, keys, touch); the server hears it now and then
+  let idleMin = 30, lastPing = 0;
+  const lastActive = () => { const v = +(localStorage.getItem(ACT) || 0); return v || Date.now(); };
+  function markActive(force) {
+    const n = Date.now(); try { if (force || n - lastActive() > 15000) localStorage.setItem(ACT, String(n)); } catch (e) { /* blocked */ }
+    if (user() && (force || n - lastPing > 240000)) { lastPing = n; api('POST', 'active').then((r) => { if (r && r.idleMinutes) idleMin = r.idleMinutes; }).catch(() => {}); }
+  }
+  ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach((e) => window.addEventListener(e, () => markActive(false), { passive: true, capture: true }));
+  let moved = 0; window.addEventListener('mousemove', () => { const n = Date.now(); if (n - moved > 20000) { moved = n; markActive(false); } }, { passive: true });
+  function idleNote() { note('Logged out', `Nobody was at the keyboard for ${idleMin} minutes and this computer is not set as home, so you were logged out of every Craft app.<br><br>At home? Log in again and choose <b>🏠 Set this computer as home</b> in your account menu.`, true); }
+  async function idleCheck() {
+    if (!user() || isHome()) return;
+    if (Date.now() - lastActive() > idleMin * 60000) { await logout({ keepKeys: false }); idleNote(); }
+  }
+  setInterval(idleCheck, 30000);
+  function note(title, html, login) {
+    const b = box(`<h3>${title}</h3><p class="dim" style="margin:0 0 10px;font-size:13.5px">${html}</p><div class="row"><button type="button" data-x>OK</button>${login ? '<button type="button" class="main" data-f="in">Log in</button>' : ''}</div>`);
+    const i = b.querySelector('[data-f=in]'); if (i) i.onclick = () => { b.remove(); loginDialog(); };
+  }
+
   // a Log in / your-name button for an app's title bar: it opens the account page (log in there once for every app)
   function button(el) {
     if (!el) { el = document.createElement('button'); el.type = 'button'; }
     el.classList.add('craft-acct-btn');
     if (!document.getElementById('craft-acct-css')) { const s = document.createElement('style'); s.id = 'craft-acct-css'; s.textContent = '.craft-acct-btn{border:1px solid rgba(255,255,255,.55);background:transparent;color:#fff;border-radius:14px;padding:3px 11px;font:inherit;font-size:12.5px;cursor:pointer;white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis}.craft-acct-btn:hover{background:rgba(255,255,255,.2)}.craft-acct-btn[hidden]{display:none}'; document.head.append(s); }
-    const draw = () => { const u = user(); el.textContent = u ? `👤 ${u.display || u.name}` : 'Log in'; el.title = u ? `Logged in as ${u.name}: your account, keys and settings` : 'Log in for your own settings, keys and saved work in every Craft app (the apps work without it too)'; };
+    const draw = () => { const u = user(), hm = isHome(); el.textContent = u ? `${hm ? '🏠' : '👤'} ${u.display || u.name}` : 'Log in'; el.title = u ? `Logged in as ${u.name}: your account, keys and settings` + (hm ? `\n🏠 This computer is set as home (${state().home.name}): you stay logged in. Revoke it in the account menu.` : `\nNot a home computer: logged out after ${idleMin} minutes without activity.`) : 'Log in for your own settings, keys and saved work in every Craft app (the apps work without it too)'; };
     el.addEventListener('click', () => (user() ? accountMenu(el) : loginDialog()));
     window.addEventListener('craft-account', draw); draw(); return el;
   }
@@ -139,9 +188,20 @@
   }
   function accountMenu() {
     const u = user(), b = box(`<h3>👤 ${esc(u.display || u.name)}</h3><p class="dim" style="margin:0 0 10px">Logged in as <b>${esc(u.name)}</b>${u.role === 'owner' ? ' (main site admin)' : u.role === 'admin' ? ' (admin)' : ''} at ${esc(server().replace(/\/account\.php$/, ''))}.</p>
+      <div data-f="home" style="margin:0 0 10px;padding:8px 10px;border:1px solid var(--line,#3a3e4c);border-radius:8px"></div>
       <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-f="forget" checked style="width:auto"> Forget my keys in this browser when I log out</label>
       <div class="row"><button type="button" data-f="page" style="margin-right:auto">My account…</button><button type="button" data-x>Close</button><button type="button" class="main" data-f="out">Log out</button></div>`);
     b.querySelector('[data-f=page]').addEventListener('click', () => { window.open(pageUrl(), 'craft-account'); b.remove(); });
+    const hb = b.querySelector('[data-f=home]');
+    const drawHome = () => {
+      const hm = isHome() && state().home;
+      hb.innerHTML = hm ? `🏠 <b>This computer is set as home</b> (${esc(hm.name)}): you stay logged in here.<div class="row" style="justify-content:flex-start"><button type="button" data-f="rv">Revoke home</button><span class="dim">its key is ended and can never be used again</span></div>`
+        : `<b>Not a home computer:</b> you are logged out after ${idleMin} minutes without activity.<div class="row" style="justify-content:flex-start"><input data-f="hn" placeholder="Name it (Home PC, Laptop…)" style="flex:1;min-width:140px"><button type="button" class="main" data-f="sh">🏠 Set this computer as home</button></div>`;
+      const rv = hb.querySelector('[data-f=rv]'), sh = hb.querySelector('[data-f=sh]');
+      if (rv) rv.onclick = async () => { rv.disabled = true; try { await revokeHome(); } catch (e) { hb.insertAdjacentHTML('beforeend', `<div class="bad">${esc(e.message)}</div>`); } drawHome(); };
+      if (sh) sh.onclick = async () => { sh.disabled = true; try { await setHome(hb.querySelector('[data-f=hn]').value.trim()); } catch (e) { hb.insertAdjacentHTML('beforeend', `<div class="bad">${esc(e.message)}</div>`); } drawHome(); };
+    };
+    drawHome();
     b.querySelector('[data-f=out]').addEventListener('click', async () => { await logout({ keepKeys: !b.querySelector('[data-f=forget]').checked }); b.remove(); });
   }
 
@@ -164,7 +224,7 @@
   let was = user() && user().id;
   window.addEventListener('craft-account', () => { const now = user() && user().id; if (now && now !== was) pullShared(); was = now; });
   // on opening: is the login still good (ended elsewhere, or switched off)? then your shared settings
-  if (user()) refresh().then((r) => { if (r) pullShared(); });
+  if (user()) { if (!isHome() && Date.now() - lastActive() > idleMin * 60000) { setTimeout(idleCheck, 0); } else { markActive(true); homeCheck().then(() => refresh()).then((r) => { if (r) pullShared(); }); } }
 
   const allowed = (app) => { const u = user(); return !u || !Array.isArray(u.apps) || u.apps.includes(app); };   // (an app not given to this user keeps nothing in the account)
   // ------------------------------------------------------------------ key use: which app used which key, and how it went
@@ -204,5 +264,5 @@
       else if (had) { localStorage.removeItem(HOME); if (set === had) { localStorage.removeItem(SERVER); tell(); } }
     } catch (err) { /* not there */ }
   })();
-  window.CraftAccount = { user, server, pageUrl, button, loginDialog, api, allowed, login, signup, logout, changePassword, refresh, get, put, all, remove, lockKeys, unlockKeys, localKeys, useKeys, hasCrypto, lock, unlock, keyUse, keyId, choosePassword };
+  window.CraftAccount = { user, server, pageUrl, button, loginDialog, api, allowed, login, signup, logout, changePassword, refresh, get, put, all, remove, lockKeys, unlockKeys, localKeys, useKeys, hasCrypto, lock, unlock, keyUse, keyId, choosePassword, isHome, setHome, revokeHome, homes, homeCheck };
 })();
