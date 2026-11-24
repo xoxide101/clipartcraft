@@ -159,7 +159,9 @@
   let actHook = null; const onActivity = (fn) => { actHook = fn; };
   async function run1(k, fn) {
     const key = k + ':' + (k === 'cutout' ? cutoutId() : deviceFor(k)), e = { kind: 'ai', at: Date.now(), level: LEVELS[lastLevel] ? LEVELS[lastLevel].name : '', model: MODELS[k].name, device: deviceFor(k) === 'webgpu' ? 'graphics card' : 'processor', first: !loaded[key], state: 'running' }; if (actHook) actHook(e);
-    const end = (state, err) => { e.state = state; e.secs = (Date.now() - e.at) / 1000; if (err) e.error = String(err.message || err); if (actHook) actHook(e); };
+    if (window.CraftKeys && CraftKeys.working) CraftKeys.working('browser', true, `${MODELS[k].name} (${e.device})`);   // (the page's own AI: the amber light)
+    const end = (state, err) => { e.state = state; e.secs = (Date.now() - e.at) / 1000; if (err) e.error = String(err.message || err); if (actHook) actHook(e);
+      if (window.CraftKeys && CraftKeys.working) { CraftKeys.working('browser', false); CraftKeys.activity('browser', { what: MODELS[k].name, engine: 'Transformers.js', model: MODELS[k].id || MODELS[k].name, device: e.device, ms: Math.round(e.secs * 1000), ok: state === 'done', came: err ? String(err.message || err) : (e.first ? 'downloaded, then ran' : 'ran') }); } };
     try { const r = await fn(await ready(k)); end('done'); return r; }
     catch (err) {
       if (deviceFor(k) !== 'webgpu' || !/OrtRun|webgpu|shader|GPU/i.test(err.message)) { end('failed', err); throw err; }

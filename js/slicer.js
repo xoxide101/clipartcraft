@@ -1173,7 +1173,7 @@
         let said = '';
         for (const make of TRIES) {
           const part = make(raw), readIt = () => N.read(squareOf(part), { progress: (a, t) => sayReading(`Getting the AI: ${Math.round((a / t) * 100)}%`) });
-          said = String((window.CraftKeys ? await CraftKeys.track('local', readIt) : await readIt()) || '').trim(); if (sheet !== mine) { sayReading(''); return; }
+          said = String((window.CraftKeys ? await CraftKeys.track('browser', readIt, { engine: 'Florence-2 (reading, in this page)' }) : await readIt()) || '').trim(); if (sheet !== mine) { sayReading(''); return; }
           if (readsLikeWords(said)) break; said = '';
         }
         j.set(said); if (k % 4 === 0) { renderNames(); draw(); }
