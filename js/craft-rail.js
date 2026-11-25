@@ -1,5 +1,5 @@
 /* Craft rail (window.CraftRail): a slim bar down the left of every Craft app, to go from one app to another.
-     Top: the unified apps (one account; your work saved on the server too: AccountCraft, ShiftCraft, ICalCraft, ClipArtCraft,
+     Top: the unified apps (one account; your work saved on the server too: AccountCraft, PluginsCraft (the mini tools), ShiftCraft, ICalCraft, ClipArtCraft,
           ImageCraft, BarcodeCraft).  Bottom: the other apps (they keep their work on this computer).
    Logged in on a web address, it shows the apps on that site your account may use (AccountCraft's api/apps); otherwise the
    usual list. The app you are in is marked. The bar folds to a thin edge (remembered). Each app keeps what it has as you
@@ -8,7 +8,7 @@
 (function () {
   'use strict';
   if (window.CraftRail || window.top !== window) return;   // once, and not inside a frame
-  const UNIFIED = [['accountcraft', 'AccountCraft', '👤', 'your account: people, companies, locations, keys'], ['shiftcraft', 'ShiftCraft', '📅', 'schedules'], ['icalcraft', 'ICalCraft', '🗓', 'calendars: check, change, share'], ['filecraft', 'FileCraft', '📁', 'your files from every app'], ['emailcraft', 'EmailCraft', '✉', 'your mail from every account'], ['labelcraft', 'LabelCraft', '🏷', 'labels'], ['logocraft', 'LogoCraft', '🔰', 'logos and seals'], ['presscraft', 'PressCraft', '📰', 'signs, cards, newsletters'],
+  const UNIFIED = [['accountcraft', 'AccountCraft', '👤', 'your account: people, companies, locations, keys'], ['pluginscraft', 'PluginsCraft', '🧩', 'mini tools: domains, DNS, weather, encoders, passwords'], ['shiftcraft', 'ShiftCraft', '📅', 'schedules'], ['icalcraft', 'ICalCraft', '🗓', 'calendars: check, change, share'], ['filecraft', 'FileCraft', '📁', 'your files from every app'], ['emailcraft', 'EmailCraft', '✉', 'your mail from every account'], ['labelcraft', 'LabelCraft', '🏷', 'labels'], ['logocraft', 'LogoCraft', '🔰', 'logos and seals'], ['presscraft', 'PressCraft', '📰', 'signs, cards, newsletters'],
     ['clipartcraft', 'ClipArtCraft', '🖼', 'clip-art library'], ['imagecraft', 'ImageCraft', '🎨', 'pictures: restore, convert'], ['barcodecraft', 'BarcodeCraft', '▥', 'barcodes and QR codes'], ['sitecraft', 'SiteCraft', '🌐', 'web sites'], ['3dcraft', '3DCraft', '🧊', '3D titles and logos']];
   // ArtCraft's apps (storytold), each with the Craft bar round it: the account and My files
   const ARTCRAFT = [['wordcraft', 'WordCraft', '📝', 'documents'], ['deckcraft', 'DeckCraft', '🖥', 'slides'], ['pdfcraft', 'PdfCraft', '📄', 'PDF'], ['photocraft', 'PhotoCraft', '📷', 'photos'], ['vectorcraft', 'VectorCraft', '✒', 'vector drawing'], ['designcraft', 'DesignCraft', '✏', 'design'], ['gridcraft', 'GridCraft', '▦', 'grids and sheets'], ['cadcraft', 'CadCraft', '📐', 'CAD'], ['figcraft', 'FigCraft', '🧩', 'figures'], ['effectcraft', 'EffectCraft', '✨', 'effects'], ['filmcraft', 'FilmCraft', '🎬', 'film'], ['soundcraft', 'SoundCraft', '🎵', 'sound'], ['lightcraft', 'LightCraft', '💡', 'lighting'], ['materialcraft', 'MaterialCraft', '🧱', 'materials'], ['texturecraft', 'TextureCraft', '🪵', 'textures']];
