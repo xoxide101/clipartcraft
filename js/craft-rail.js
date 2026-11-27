@@ -13,13 +13,17 @@
     ['clipartcraft', 'ClipArtCraft', '🖼', 'clip-art library'], ['imagecraft', 'ImageCraft', '🎨', 'pictures: restore, convert'], ['barcodecraft', 'BarcodeCraft', '▥', 'barcodes and QR codes'], ['sitecraft', 'SiteCraft', '🌐', 'web sites'], ['3dcraft', '3DCraft', '🧊', '3D titles and logos']];
   // ArtCraft's apps (storytold), each with the Craft bar round it: the account and My files
   const ARTCRAFT = [['wordcraft', 'WordCraft', '📝', 'documents'], ['deckcraft', 'DeckCraft', '🖥', 'slides'], ['pdfcraft', 'PdfCraft', '📄', 'PDF'], ['photocraft', 'PhotoCraft', '📷', 'photos'], ['vectorcraft', 'VectorCraft', '✒', 'vector drawing'], ['designcraft', 'DesignCraft', '✏', 'design'], ['gridcraft', 'GridCraft', '▦', 'grids and sheets'], ['cadcraft', 'CadCraft', '📐', 'CAD'], ['figcraft', 'FigCraft', '🧩', 'figures'], ['effectcraft', 'EffectCraft', '✨', 'effects'], ['filmcraft', 'FilmCraft', '🎬', 'film'], ['soundcraft', 'SoundCraft', '🎵', 'sound'], ['lightcraft', 'LightCraft', '💡', 'lighting'], ['materialcraft', 'MaterialCraft', '🧱', 'materials'], ['texturecraft', 'TextureCraft', '🪵', 'textures']];
-  const OTHER = []; // every app now has the one account
+  // more apps, whose start page is in a folder of theirs (ENTRY): DataCraft (app/), AtariCraft (web/), VerseCraft (realmcraft/)
+  const OTHER = [['datacraft', 'DataCraft', '🗄', 'databases and the sites made from them'], ['ataricraft', 'AtariCraft', '🕹', 'Atari 8-bit: consoles, studio, tools'], ['versecraft', 'VerseCraft', '🌌', 'stories and worlds']];
+  const ENTRY = { datacraft: 'app/', ataricraft: 'web/', versecraft: 'realmcraft/' };
   const W = 52, KEY = 'craft-rail';
   // where this app is, and where its neighbours are (a web address, or a folder on this computer)
   const parts = location.pathname.split('/'), file = /\.html?$/i.test(parts[parts.length - 1]) ? parts.pop() : (parts.pop(), ''), here = (parts[parts.length - 1] || '').toLowerCase();
   const all = UNIFIED.concat(ARTCRAFT, OTHER), me = all.find((a) => a[0] === here) ? here : (all.find((a) => location.pathname.toLowerCase().includes('/' + a[0] + '/')) || [''])[0];
   const baseOf = () => { const i = location.href.toLowerCase().lastIndexOf('/' + me + '/'); return i < 0 ? null : location.href.slice(0, i + 1); };
-  const urlOf = (app) => { const b = baseOf(); if (!b) return null; return b + app + '/' + (location.protocol === 'file:' ? 'index.html' : ''); };
+  const urlOf = (app) => { const b = baseOf(); if (!b) return null; return b + app + '/' + (ENTRY[app] || '') + (location.protocol === 'file:' ? 'index.html' : ''); };
+  // the root of the Craft apps (the Craft Hub): the /craft/ folder in the address, from any page however deep; else beside this app
+  const hubRoot = () => { const h = location.href, i = h.toLowerCase().indexOf('/craft/'); return i >= 0 ? h.slice(0, i + 7) : baseOf(); };
   // folded or open, remembered: phones and folded phones (narrower than 600) on their own, and folded at first there (the page needs the room)
   const SMALL = () => innerWidth < 600, FKEY = () => (SMALL() ? KEY + '-phone' : KEY);
   const foldedNow = () => { let v = null; try { v = localStorage.getItem(FKEY()); } catch (e) { /* blocked */ } return v ? v === 'folded' : SMALL(); };
@@ -62,7 +66,7 @@ html.craft-railed :is(#start.start,#lc-start.lc-start){left:var(--craft-rail,0px
     const widen = document.createElement('button'); widen.className = 'fold'; widen.title = wide ? 'Narrow: icons only' : 'Open out: the apps with their names'; widen.textContent = wide ? '«' : '»'; widen.onclick = () => setWide(!wide);
     const ends = document.createElement('div'); ends.className = 'ends'; ends.append(fold, widen);
     // the Craft Hub: the launcher at the root of the apps (/craft/), only on a web address (as a file there is no hub)
-    const hubBase = baseOf(), hub = hubBase && /^https?:/.test(location.protocol) ? document.createElement('a') : null;
+    const hubBase = hubRoot(), hub = hubBase && /^https?:/.test(location.protocol) ? document.createElement('a') : null;
     if (hub) { hub.className = 'hub'; hub.href = hubBase; hub.setAttribute('aria-label', 'Craft Hub');
       hub.innerHTML = `<svg viewBox="0 0 64 64" aria-hidden="true"><defs><radialGradient id="rl-sph" cx="25" cy="23" r="24" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#fff"/><stop offset=".16" stop-color="#a5f3fc"/><stop offset=".45" stop-color="#22d3ee"/><stop offset=".78" stop-color="#7c3aed"/><stop offset="1" stop-color="#1e1b4b"/></radialGradient></defs>`
         + `<circle cx="32" cy="32" r="31" fill="#0b0f15"/><g class="rl-ring" fill="none" stroke-width="5.5" stroke-linecap="round">` + ['#06b6d4', '#a855f7', '#f59e0b', '#6366f1', '#10b981', '#14b8a6'].map((c, i) => `<circle cx="32" cy="32" r="25" stroke="${c}" stroke-dasharray="20.5 136.6" transform="rotate(${-84 + i * 60} 32 32)"/>`).join('')
@@ -70,7 +74,7 @@ html.craft-railed :is(#start.start,#lc-start.lc-start){left:var(--craft-rail,0px
         + `<span class="nm">Craft Hub<small>every app</small></span><span class="tip">Craft Hub · every app</span>`;
       hub.onclick = () => window.dispatchEvent(new CustomEvent('craft-leave', { detail: { to: 'hub' } })); }
     const show = (list) => list.filter(([id]) => !allowed || allowed.includes(id) || id === me || id === 'accountcraft');
-    bar.append(...(hub ? [hub] : []), ends, lbl('One account'), ...show(UNIFIED).map(link), Object.assign(document.createElement('div'), { className: 'sep' }), lbl('ArtCraft apps'), ...show(ARTCRAFT).map(link), ...(OTHER.length ? [Object.assign(document.createElement('div'), { className: 'sep' }), lbl('Other apps'), ...show(OTHER).map(link)] : []));
+    bar.append(...(hub ? [hub] : []), ends, lbl('One account'), ...show(UNIFIED).map(link), Object.assign(document.createElement('div'), { className: 'sep' }), lbl('ArtCraft apps'), ...show(ARTCRAFT).map(link), ...(OTHER.length ? [Object.assign(document.createElement('div'), { className: 'sep' }), lbl('More apps'), ...show(OTHER).map(link)] : []));
     document.body.append(bar);
   }
   function setWide(f) { wide = f; try { localStorage.setItem(KEY + '-wide', f ? '1' : '0'); } catch (e) { /* blocked */ } paint(); window.dispatchEvent(new Event('resize')); }
