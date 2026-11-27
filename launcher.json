@@ -1,0 +1,9 @@
+{
+ "name": "ClipArtCraft",
+ "icon": "🖼",
+ "about": "The shared clip-art library",
+ "group": "Make and design",
+ "order": 40,
+ "entry": "index.html",
+ "status": "alpha"
+}
