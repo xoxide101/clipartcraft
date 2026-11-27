@@ -1,4 +1,5 @@
 /* Craft rail (window.CraftRail): a slim bar down the left of every Craft app, to go from one app to another.
+     Very top: the Craft Hub (the Craft Suites logo): the launcher at /craft/ with every app (only on a web address).
      Top: the unified apps (one account; your work saved on the server too: AccountCraft, PluginsCraft (the mini tools), ShiftCraft, ICalCraft, ClipArtCraft,
           ImageCraft, BarcodeCraft).  Bottom: the other apps (they keep their work on this computer).
    Logged in on a web address, it shows the apps on that site your account may use (AccountCraft's api/apps); otherwise the
@@ -42,6 +43,7 @@ html.craft-railed body{margin-left:var(--craft-rail,0px)!important}
 html.craft-railed :is(#start.start,#lc-start.lc-start){left:var(--craft-rail,0px)!important}
 @media (max-width:1100px){:is(#start.start,#lc-start.lc-start)>*{zoom:.9}}
 @media (pointer:coarse){.craft-rail-tab{width:18px;height:64px;font-size:14px}}
+.craft-rail a.hub{height:44px;margin-bottom:2px}.craft-rail a.hub svg{width:34px;height:34px;filter:drop-shadow(0 0 5px rgba(34,211,238,.45))}.craft-rail a.hub svg .rl-ring{transform-origin:32px 32px;transition:transform 1s cubic-bezier(.2,.8,.2,1)}.craft-rail a.hub:hover svg .rl-ring{transform:rotate(120deg)}.craft-rail a.hub:hover{background:#1b2230}.craft-rail.wide a.hub{grid-template-columns:36px 1fr}.craft-rail.wide a.hub .nm{color:#7fe7f5}
 @media print{.craft-rail,.craft-rail-tab{display:none!important}html.craft-railed body{margin-left:0!important}}`;
   function paint() {
     document.querySelectorAll('.craft-rail, .craft-rail-tab').forEach((x) => x.remove());
@@ -59,8 +61,16 @@ html.craft-railed :is(#start.start,#lc-start.lc-start){left:var(--craft-rail,0px
     const fold = document.createElement('button'); fold.className = 'fold'; fold.title = 'Fold the apps bar away'; fold.textContent = '‹'; fold.onclick = () => setFold(true);
     const widen = document.createElement('button'); widen.className = 'fold'; widen.title = wide ? 'Narrow: icons only' : 'Open out: the apps with their names'; widen.textContent = wide ? '«' : '»'; widen.onclick = () => setWide(!wide);
     const ends = document.createElement('div'); ends.className = 'ends'; ends.append(fold, widen);
+    // the Craft Hub: the launcher at the root of the apps (/craft/), only on a web address (as a file there is no hub)
+    const hubBase = baseOf(), hub = hubBase && /^https?:/.test(location.protocol) ? document.createElement('a') : null;
+    if (hub) { hub.className = 'hub'; hub.href = hubBase; hub.setAttribute('aria-label', 'Craft Hub');
+      hub.innerHTML = `<svg viewBox="0 0 64 64" aria-hidden="true"><defs><radialGradient id="rl-sph" cx="25" cy="23" r="24" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#fff"/><stop offset=".16" stop-color="#a5f3fc"/><stop offset=".45" stop-color="#22d3ee"/><stop offset=".78" stop-color="#7c3aed"/><stop offset="1" stop-color="#1e1b4b"/></radialGradient></defs>`
+        + `<circle cx="32" cy="32" r="31" fill="#0b0f15"/><g class="rl-ring" fill="none" stroke-width="5.5" stroke-linecap="round">` + ['#06b6d4', '#a855f7', '#f59e0b', '#6366f1', '#10b981', '#14b8a6'].map((c, i) => `<circle cx="32" cy="32" r="25" stroke="${c}" stroke-dasharray="20.5 136.6" transform="rotate(${-84 + i * 60} 32 32)"/>`).join('')
+        + `</g><circle cx="32" cy="32" r="15.5" fill="url(#rl-sph)"/><ellipse cx="26.5" cy="25.5" rx="5" ry="3" fill="#fff" fill-opacity=".55" transform="rotate(-32 26.5 25.5)"/><path d="M32 23.5 L34 30 L40.5 32 L34 34 L32 40.5 L30 34 L23.5 32 L30 30 Z" fill="#fff"/></svg>`
+        + `<span class="nm">Craft Hub<small>every app</small></span><span class="tip">Craft Hub · every app</span>`;
+      hub.onclick = () => window.dispatchEvent(new CustomEvent('craft-leave', { detail: { to: 'hub' } })); }
     const show = (list) => list.filter(([id]) => !allowed || allowed.includes(id) || id === me || id === 'accountcraft');
-    bar.append(ends, lbl('One account'), ...show(UNIFIED).map(link), Object.assign(document.createElement('div'), { className: 'sep' }), lbl('ArtCraft apps'), ...show(ARTCRAFT).map(link), ...(OTHER.length ? [Object.assign(document.createElement('div'), { className: 'sep' }), lbl('Other apps'), ...show(OTHER).map(link)] : []));
+    bar.append(...(hub ? [hub] : []), ends, lbl('One account'), ...show(UNIFIED).map(link), Object.assign(document.createElement('div'), { className: 'sep' }), lbl('ArtCraft apps'), ...show(ARTCRAFT).map(link), ...(OTHER.length ? [Object.assign(document.createElement('div'), { className: 'sep' }), lbl('Other apps'), ...show(OTHER).map(link)] : []));
     document.body.append(bar);
   }
   function setWide(f) { wide = f; try { localStorage.setItem(KEY + '-wide', f ? '1' : '0'); } catch (e) { /* blocked */ } paint(); window.dispatchEvent(new Event('resize')); }
